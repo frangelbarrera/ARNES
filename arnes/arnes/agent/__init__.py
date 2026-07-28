@@ -1,5 +1,5 @@
-"""ARNES Agent — high-level wrapper for common use cases."""
+"""ARNES Harness — high-level wrapper for simple use cases."""
 
-from arnes.agent.agent import Agent, AgentConfig
+from arnes.agent.agent import Harness, HarnessConfig, Agent, AgentConfig
 
-__all__ = ["Agent", "AgentConfig"]
+__all__ = ["Harness", "HarnessConfig", "Agent", "AgentConfig"]

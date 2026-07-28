@@ -26,6 +26,8 @@ class MockLLMProvider(LLMProvider):
         temperature: float = 0.0,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,  # Accepted but ignored
+        **kwargs: Any,
     ) -> LLMResponse:
         self.call_count += 1
 

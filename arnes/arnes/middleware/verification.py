@@ -81,6 +81,7 @@ class VerificationLayer:
         messages: list[LLMMessage],
         *,
         model: str,
+        tools: list[dict[str, Any]] | None = None,
         response_schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
@@ -95,10 +96,12 @@ class VerificationLayer:
         if self.config.structured_outputs and response_schema:
             effective_kwargs["response_format"] = {"type": "json_object"}
 
-        # Call underlying provider
+        # Pass tools through to the underlying provider (don't filter them)
         response = await self.provider.complete(
             effective_messages,
             model=model,
+            tools=tools,
+            response_schema=response_schema,
             **effective_kwargs,
         )
 

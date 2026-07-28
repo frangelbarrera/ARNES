@@ -172,6 +172,61 @@ def eval(playbook_path: str) -> None:
     asyncio.run(_run_playbook(playbook_path, "mock/test", 0.0, mock=True, interactive=False, output=None))
 
 
+@cli.group()
+def mcp() -> None:
+    """MCP server commands."""
+    pass
+
+
+@mcp.command("serve")
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "http"]),
+    default="stdio",
+    help="Transport mechanism (stdio for Claude Desktop, http for remote)",
+)
+@click.option("--host", default="127.0.0.1", help="HTTP host (only with --transport=http)")
+@click.option("--port", default=8765, help="HTTP port (only with --transport=http)")
+def mcp_serve(transport: str, host: str, port: int) -> None:
+    """Start the ARNES MCP server.
+
+    Use this to expose ARNES as an MCP server for Claude Desktop, Cursor,
+    Cline, Zed, or any MCP-compatible client.
+
+    For Claude Desktop, add to your config:
+    {
+      "mcpServers": {
+        "arnes": {
+          "command": "arnes",
+          "args": ["mcp", "serve"]
+        }
+      }
+    }
+    """
+    asyncio.run(_serve_mcp(transport, host, port))
+
+
+async def _serve_mcp(transport: str, host: str, port: int) -> None:
+    """Run the MCP server."""
+    try:
+        from arnes.mcp.server import ArnesMCPServer
+    except ImportError as e:
+        console.print(f"[red]MCP server dependencies not installed:[/red] {e}")
+        console.print("Install with: [cyan]pip install arnes[mcp][/cyan]")
+        sys.exit(1)
+
+    server = ArnesMCPServer()
+
+    if transport == "stdio":
+        import sys as _sys
+        _sys.stderr.write("ARNES MCP server running on stdio\n")
+        _sys.stderr.flush()
+        await server.serve_stdio()
+    else:
+        console.print(f"[cyan]ARNES MCP server[/cyan] running on http://{host}:{port}")
+        await server.serve_http(host, port)
+
+
 # ============================================================
 # Helpers
 # ============================================================
@@ -204,7 +259,7 @@ async def _run_playbook(
 
     # Setup provider
     if mock or model.startswith("mock/"):
-        provider = MockLLMProvider()
+        provider = _SchemaValidMockLLMProvider()
     else:
         provider = get_provider(model)
 
@@ -238,13 +293,75 @@ async def _run_playbook(
         Path(output).write_text(result.to_markdown(), encoding="utf-8")
         console.print(f"\n[cyan]Bitácora guardada en:[/cyan] {output}")
     else:
-        # Default: save to ./bitacora-<name>-<timestamp>.md
         from datetime import datetime
 
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         default_path = f"bitacora-{playbook.metadata.nombre}-{ts}.md"
         Path(default_path).write_text(result.to_markdown(), encoding="utf-8")
         console.print(f"\n[cyan]Bitácora guardada en:[/cyan] {default_path}")
+
+
+class _SchemaValidMockLLMProvider:
+    """Mock LLM provider that returns schema-valid JSON for each specialist.
+
+    Used by `arnes ejecutar --mock` for testing without network calls.
+    Detects which specialist is being invoked based on system prompt content.
+    """
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def complete(
+        self,
+        messages,
+        *,
+        model: str = "mock",
+        tools=None,
+        temperature: float = 0.0,
+        max_tokens=None,
+        response_format=None,
+        response_schema=None,
+        **kwargs,
+    ):
+        from arnes.llm.base import LLMMessage, LLMResponse, LLMUsage
+
+        self.call_count += 1
+
+        # Detect specialist from system prompt
+        sys_msg = next((m for m in messages if m.role == "system"), None)
+        sys_content = sys_msg.content if sys_msg else ""
+
+        if "@planner" in sys_content:
+            content = '{"steps": [{"id": "s1", "specialist": "@coder", "input": {}}]}'
+        elif "@coder" in sys_content:
+            content = '{"files": [{"path": "out.py", "language": "python", "content": "# Mock code\\npass"}], "summary": "Mock implementation", "assumptions": [], "warnings": []}'
+        elif "@reviewer" in sys_content:
+            content = '{"verdict": "approve", "issues": [], "summary": "Mock review: looks good"}'
+        elif "@tester" in sys_content:
+            content = '{"test_files": [{"path": "test_mock.py", "content": "def test_mock():\\n    pass"}], "test_results": {"passed": 1, "failed": 0, "skipped": 0, "failures": []}, "summary": "Mock tests pass", "coverage_pct": 100.0}'
+        elif "@debugger" in sys_content:
+            content = '{"root_cause": "Mock root cause identified", "confidence": 0.95, "fix": {"file": "src/app.py", "line": 42, "original": "broken()", "fixed": "fixed()", "explanation": "Mock fix applied"}, "verification": "Run tests to verify", "alternative_causes": []}'
+        else:
+            content = '{"result": "mock output"}'
+
+        tokens_in = sum(len(m.content) // 4 for m in messages)
+        tokens_out = len(content) // 4
+
+        return LLMResponse(
+            content=content,
+            tool_calls=[],
+            usage=LLMUsage(
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=0.0,
+                model=model,
+                cached=False,
+            ),
+            model=model,
+        )
+
+    def list_models(self):
+        return ["mock"]
 
 
 def _scaffold_manual(name: str, idioma: str) -> None:
@@ -294,17 +411,17 @@ budget_usd: 0.50
 
 pasos:
   - id: paso_1
-    especialista: @planner
+    especialista: "@planner"
     input:
       task: "Describe la tarea a planificar"
 
   - id: paso_2
-    especialista: @coder
+    especialista: "@coder"
     input: "{{{{ pasos.paso_1.salida }}}}"
     requiere: [paso_1]
 
   - id: paso_3
-    especialista: @reviewer
+    especialista: "@reviewer"
     input:
       codigo: "{{{{ pasos.paso_2.salida }}}}"
 """
@@ -320,12 +437,12 @@ budget_usd: 0.50
 
 pasos:
   - id: step_1
-    especialista: @planner
+    especialista: "@planner"
     input:
       task: "Describe the task to plan"
 
   - id: step_2
-    especialista: @coder
+    especialista: "@coder"
     input: "{{{{ pasos.step_1.salida }}}}"
     requiere: [step_1]
 """

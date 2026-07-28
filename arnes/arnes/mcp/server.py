@@ -248,10 +248,8 @@ class ArnesMCPServer:
             return {"valid": False, "error": str(e)}
 
 
-async def serve_stdio() -> None:
+async def serve_stdio(server: ArnesMCPServer) -> None:
     """Run the MCP server over stdio (JSON-RPC)."""
-    server = ArnesMCPServer()
-
     # Read JSON-RPC messages from stdin, write responses to stdout
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
@@ -271,5 +269,51 @@ async def serve_stdio() -> None:
         print(json.dumps(response), flush=True)
 
 
+async def serve_http(server: ArnesMCPServer, host: str = "127.0.0.1", port: int = 8765) -> None:
+    """Run the MCP server over HTTP (simple POST /endpoint).
+
+    This is a minimal HTTP server for testing. For production use the
+    official MCP SDK with proper SSE transport.
+    """
+    from aiohttp import web
+
+    async def handle(request: web.Request) -> web.Response:
+        try:
+            request_data = await request.json()
+            response = await server.handle_request(request_data)
+            return web.json_response(response)
+        except Exception as e:
+            return web.json_response(
+                {"error": str(e)}, status=500
+            )
+
+    app = web.Application()
+    app.router.add_post("/", handle)
+    app.router.add_post("/mcp", handle)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host, port)
+    await site.start()
+
+    # Run forever
+    await asyncio.Event().wait()
+
+
+# Patch the ArnesMCPServer class to add serve_stdio and serve_http methods
+def _patch_server_class() -> None:
+    def serve_stdio_self(self) -> Any:
+        return serve_stdio(self)
+
+    def serve_http_self(self, host: str = "127.0.0.1", port: int = 8765) -> Any:
+        return serve_http(self, host, port)
+
+    ArnesMCPServer.serve_stdio = serve_stdio_self
+    ArnesMCPServer.serve_http = serve_http_self
+
+
+_patch_server_class()
+
+
 if __name__ == "__main__":
-    asyncio.run(serve_stdio())
+    asyncio.run(serve_stdio(ArnesMCPServer()))

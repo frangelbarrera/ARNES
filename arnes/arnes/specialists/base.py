@@ -1,32 +1,33 @@
 """
-ARNES Specialist — a pre-built, role-based agent.
+ARNES Specialist — a pre-built, role-based agent with tool-use loop.
 
-A Specialist is a (system_prompt + tools + output_schema) bundle. It's NOT
-a class hierarchy — it's a data class. Specialists are registered in a
-SpecialistRegistry and invoked by name from playbooks.
+A Specialist is a (system_prompt + tools + output_schema) bundle. The default
+`run()` implementation executes a ReAct-style tool-use loop:
 
-Design:
-- Each specialist has a single responsibility (SRP).
-- The system_prompt is the specialist's "personality" — versioned, diffable.
-- The tools list defines what the specialist CAN do (capability-based).
-- The output_schema (pydantic) defines what the specialist MUST return.
+1. Format input as user message.
+2. Call LLM with tools registered.
+3. If LLM returns tool_calls, execute each tool and append results.
+4. Repeat until LLM returns final response (no tool_calls) or max_iterations.
+5. Validate response against output_schema (pydantic).
+6. Return structured result.
 
 Specialists are stateless. State lives in the Thread, not in the specialist.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+import json
+from abc import ABC
 from typing import Any, ClassVar
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
 from arnes.middleware.cost_guard import BudgetExceeded, CostGuard
 from arnes.middleware.token_optimizer import TokenOptimizer
 from arnes.middleware.verification import VerificationConfig, VerificationLayer
-from arnes.tools.base import ToolContext, ToolRegistry
+from arnes.tools.base import Tool, ToolContext, ToolRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -41,9 +42,11 @@ class SpecialistConfig(BaseModel):
     system_prompt: str
     tools: list[str] = Field(default_factory=list)  # tool names
     output_schema: dict[str, Any] | None = None  # JSON schema for structured output
+    pydantic_model: type[BaseModel] | None = None  # Stronger than output_schema
     default_model: str | None = None  # If set, overrides the global default
     temperature: float = 0.0
     max_tokens: int | None = None
+    max_iterations: int = 5  # ReAct loop limit
 
 
 class Specialist(ABC):
@@ -58,10 +61,6 @@ class Specialist(ABC):
                 tools=["fs_read", "shell"],
                 output_schema={"type": "object", "required": ["result"]},
             )
-
-            async def run(self, input_data, ctx) -> dict:
-                # Custom logic (optional — default uses LLM completion)
-                return await super().run(input_data, ctx)
     """
 
     config: ClassVar[SpecialistConfig]
@@ -82,50 +81,254 @@ class Specialist(ABC):
         provider: LLMProvider,
         tool_registry: ToolRegistry | None = None,
     ) -> dict[str, Any]:
-        """Default specialist run: format input → LLM call → return structured output.
+        """Default specialist run: ReAct tool-use loop + schema validation.
 
-        Override this for custom logic (multi-step, tool use loops, etc.).
+        Override this for custom logic if needed, but most specialists should
+        use the default implementation.
         """
-        # Build messages
+        # Build initial messages
         user_content = self._format_input(input_data)
-        messages = [
+        messages: list[LLMMessage] = [
             LLMMessage(role="system", content=self.config.system_prompt),
             LLMMessage(role="user", content=user_content),
         ]
 
-        # Wrap provider with middleware (cost guard + verification + token optimizer)
-        # Order: cost_guard(verification(token_optimizer(provider)))
-        # Cost guard is outermost so it can abort before any work
-        optimized_provider: LLMProvider = TokenOptimizer(provider)
-        if self.config.output_schema:
-            optimized_provider = VerificationLayer(
-                optimized_provider,
-                VerificationConfig(structured_outputs=True, refusal_pattern=True),
-            )
-        guarded_provider = CostGuard(optimized_provider)
+        # Get available tools (intersect config.tools with registry)
+        available_tools: list[Tool] = []
+        tool_schemas: list[dict[str, Any]] = []
+        if tool_registry and self.config.tools:
+            for tool_name in self.config.tools:
+                tool = tool_registry.get(tool_name)
+                if tool:
+                    available_tools.append(tool)
+                    tool_schemas.append(self._tool_to_schema(tool))
 
-        # Make the call
+        # Build middleware-wrapped provider
+        # Order: cost_guard(verification(token_optimizer(provider)))
+        # The caller (Agent or PlaybookExecutor) may have already wrapped the
+        # provider. We detect this by checking if provider has _provider attr.
+        # If it's already wrapped, use as-is. Otherwise wrap fresh.
+        wrapped_provider = provider
+        if not hasattr(provider, "_provider"):
+            # Fresh wrapping
+            wrapped_provider = TokenOptimizer(provider, enable_cache=True)
+            if self.config.output_schema or self.config.pydantic_model:
+                wrapped_provider = VerificationLayer(
+                    wrapped_provider,
+                    VerificationConfig(structured_outputs=True, refusal_pattern=True),
+                )
+            # CostGuard wrapping is the caller's responsibility (PlaybookExecutor
+            # already wraps the provider in CostGuard before calling specialist.run)
+
+        # ReAct tool-use loop
+        total_usage = LLMUsage()
+        all_tool_results: list[dict[str, Any]] = []
         model = self.config.default_model or "ollama/llama3.2"
-        try:
-            response = await guarded_provider.complete(
-                messages,
-                model=model,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                response_format={"type": "json_object"} if self.config.output_schema else None,
+
+        for iteration in range(self.config.max_iterations):
+            try:
+                response = await wrapped_provider.complete(
+                    messages,
+                    model=model,
+                    tools=tool_schemas if tool_schemas else None,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                    response_format={"type": "json_object"}
+                    if (self.config.output_schema or self.config.pydantic_model)
+                    else None,
+                )
+            except BudgetExceeded as e:
+                logger.error("specialist_budget_exceeded", specialist=self.config.name, error=str(e))
+                return {
+                    "specialist": self.config.name,
+                    "success": False,
+                    "error": f"Budget exceeded: {e}",
+                    "budget_exceeded": True,
+                }
+
+            total_usage = total_usage + response.usage
+
+            # If no tool calls, we have the final response
+            if not response.tool_calls:
+                break
+
+            # Execute each tool call
+            messages.append(
+                LLMMessage(
+                    role="assistant",
+                    content=response.content,
+                    tool_calls=response.tool_calls,
+                )
             )
-        except BudgetExceeded as e:
-            logger.error("specialist_budget_exceeded", specialist=self.config.name, error=str(e))
+
+            for tc in response.tool_calls:
+                tool_result = await self._execute_tool_call(
+                    tc, available_tools, ctx
+                )
+                all_tool_results.append(tool_result)
+                messages.append(
+                    LLMMessage(
+                        role="tool",
+                        content=json.dumps(tool_result, default=str),
+                        tool_call_id=tc.get("id"),
+                        name=tc.get("function", {}).get("name"),
+                    )
+                )
+
+            # Continue loop for next iteration
+
+        # Validate output against schema
+        result = self._parse_and_validate_output(response, total_usage, all_tool_results)
+        return result
+
+    # ============================================================
+    # Tool execution
+    # ============================================================
+
+    async def _execute_tool_call(
+        self,
+        tool_call: dict[str, Any],
+        available_tools: list[Tool],
+        ctx: ToolContext,
+    ) -> dict[str, Any]:
+        """Execute a single tool call from the LLM."""
+        function = tool_call.get("function", {})
+        tool_name = function.get("name", "")
+        args_str = function.get("arguments", "{}")
+
+        try:
+            args = json.loads(args_str) if isinstance(args_str, str) else args_str
+        except json.JSONDecodeError:
+            return {
+                "tool": tool_name,
+                "success": False,
+                "error": f"Invalid JSON arguments: {args_str}",
+            }
+
+        # Find the tool
+        tool = next((t for t in available_tools if t.name == tool_name), None)
+        if not tool:
+            return {
+                "tool": tool_name,
+                "success": False,
+                "error": f"Tool '{tool_name}' not available",
+            }
+
+        # HITL check: if tool requires approval, fingerprint args
+        if tool.requires_approval:
+            fingerprint = Tool.fingerprint(args)
+            logger.info(
+                "tool_approval_check",
+                tool=tool_name,
+                fingerprint=fingerprint,
+                requires_approval=True,
+            )
+            # In MVP non-interactive mode, approval-required tools auto-reject
+            # unless ctx.metadata says interactive
+            if not ctx.metadata.get("interactive", False):
+                return {
+                    "tool": tool_name,
+                    "success": False,
+                    "error": f"Tool '{tool_name}' requires human approval. Set interactive=True.",
+                    "fingerprint": fingerprint,
+                }
+
+        try:
+            result = await tool.execute(args, ctx)
+            return {
+                "tool": tool_name,
+                "success": result.success,
+                "output": result.output,
+                "error": result.error,
+            }
+        except Exception as e:
+            logger.exception("tool_execution_failed", tool=tool_name, error=str(e))
+            return {
+                "tool": tool_name,
+                "success": False,
+                "error": str(e),
+            }
+
+    # ============================================================
+    # Schema validation
+    # ============================================================
+
+    def _parse_and_validate_output(
+        self,
+        response: LLMResponse,
+        total_usage: LLMUsage,
+        tool_results: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Parse LLM response and validate against pydantic_model or output_schema."""
+        if not response.content:
             return {
                 "specialist": self.config.name,
                 "success": False,
-                "error": f"Budget exceeded: {e}",
-                "budget_exceeded": True,
+                "error": "Empty response from LLM",
+                "raw": None,
+                "usage": total_usage.model_dump(),
+                "tool_results": tool_results,
             }
 
-        # Parse structured output
-        result = self._parse_output(response)
-        return result
+        # Try JSON parse
+        try:
+            parsed = json.loads(response.content)
+        except json.JSONDecodeError:
+            # If we expected JSON, this is a failure
+            if self.config.output_schema or self.config.pydantic_model:
+                return {
+                    "specialist": self.config.name,
+                    "success": False,
+                    "error": f"LLM did not return valid JSON. Got: {response.content[:200]}",
+                    "raw": response.content,
+                    "usage": total_usage.model_dump(),
+                    "tool_results": tool_results,
+                }
+            # If no schema expected, return raw content
+            parsed = {"raw": response.content}
+
+        # Strong validation with pydantic model if defined
+        if self.config.pydantic_model:
+            try:
+                validated = self.config.pydantic_model.model_validate(parsed)
+                return {
+                    "specialist": self.config.name,
+                    "success": True,
+                    "output": validated.model_dump(),
+                    "usage": total_usage.model_dump(),
+                    "tool_results": tool_results,
+                }
+            except ValidationError as e:
+                return {
+                    "specialist": self.config.name,
+                    "success": False,
+                    "error": f"Output schema validation failed: {e}",
+                    "raw": parsed,
+                    "usage": total_usage.model_dump(),
+                    "tool_results": tool_results,
+                }
+
+        # Weak validation with JSON schema (required fields only)
+        if self.config.output_schema:
+            required = self.config.output_schema.get("required", [])
+            missing = [f for f in required if f not in parsed]
+            if missing:
+                return {
+                    "specialist": self.config.name,
+                    "success": False,
+                    "error": f"Missing required fields: {missing}",
+                    "raw": parsed,
+                    "usage": total_usage.model_dump(),
+                    "tool_results": tool_results,
+                }
+
+        return {
+            "specialist": self.config.name,
+            "success": True,
+            "output": parsed,
+            "usage": total_usage.model_dump(),
+            "tool_results": tool_results,
+        }
 
     # ============================================================
     # Helpers
@@ -133,42 +336,21 @@ class Specialist(ABC):
 
     def _format_input(self, input_data: dict[str, Any]) -> str:
         """Format input dict as a user message."""
-        import json
-
         return (
             f"Input:\n```json\n{json.dumps(input_data, indent=2, default=str)}\n```\n\n"
-            f"Process this input according to your role. Return JSON matching the schema."
+            f"Process this input according to your role. "
+            f"Return JSON matching the schema. Use tools if needed."
         )
 
-    def _parse_output(self, response: LLMResponse) -> dict[str, Any]:
-        """Parse LLM response into structured dict."""
-        import json
-
-        if not response.content:
-            return {
-                "specialist": self.config.name,
-                "success": False,
-                "error": "Empty response from LLM",
-                "raw": None,
-            }
-
-        # Try JSON parse
-        try:
-            parsed = json.loads(response.content)
-        except json.JSONDecodeError:
-            # Fall back to raw content
-            parsed = {"raw": response.content}
-
+    def _tool_to_schema(self, tool: Tool) -> dict[str, Any]:
+        """Convert an ARNES Tool to OpenAI tool schema for LLM."""
+        args_schema = getattr(tool, "Args", None)
         return {
-            "specialist": self.config.name,
-            "success": True,
-            "output": parsed,
-            "usage": {
-                "tokens_in": response.usage.tokens_in,
-                "tokens_out": response.usage.tokens_out,
-                "cost_usd": response.usage.cost_usd,
-                "model": response.usage.model,
-                "cached": response.usage.cached,
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": args_schema.model_json_schema() if args_schema else {"type": "object", "properties": {}},
             },
         }
 
@@ -189,7 +371,6 @@ class SpecialistRegistry:
         self.register(instance)
 
     def get(self, name: str) -> Specialist | None:
-        # Normalize: ensure leading @
         if not name.startswith("@"):
             name = "@" + name
         return self._specialists.get(name)
@@ -207,7 +388,6 @@ class SpecialistRegistry:
 def get_default_specialist_registry() -> SpecialistRegistry:
     """Return a registry with all built-in specialists registered."""
     registry = SpecialistRegistry()
-    # Imports here to avoid circular dependencies at module load
     from arnes.specialists.coder import Coder
     from arnes.specialists.debugger import Debugger
     from arnes.specialists.planner import Planner

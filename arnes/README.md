@@ -115,17 +115,18 @@ enviado, cada respuesta recibida. Lo puedes diffear, versionar, compartir.
 | Categoría | Feature | Estado |
 |---|---|---|
 | **Agent loop** | Stateless reducer `(state, event) → state` | ✅ v0.1 |
-| | ReAct + Plan-and-Execute híbrido | ✅ v0.1 |
+| | ReAct tool-use loop en specialists | ✅ v0.1 |
 | | Streaming AG-UI compatible | 🚧 v0.2 |
 | **Specialists** | 5 pre-construidos (planner, coder, reviewer, tester, debugger) | ✅ v0.1 |
 | | 5 más (security, devops, researcher, writer, optimizer) | 🚧 v0.3 |
 | **Playbook DSL** | YAML declarativo compilado a DAG | ✅ v0.1 |
-| | Conditional edges (if/elif/else) | ✅ v0.1 |
-| | Parallel branches | ✅ v0.1 |
-| | Retry con backoff | ✅ v0.1 |
-| | HITL gates (pausar y pedir aprobación) | ✅ v0.1 |
+| | Conditional branches (`si_no_se_cumple`) | ✅ v0.1 |
+| | Parallel branches (sequential in MVP) | ⚠️ v0.1 (true parallelism en v0.2) |
+| | Retry con backoff | 🚧 v0.2 (schema definido, execution pendiente) |
+| | HITL gates (pausar y pedir aprobación) | ⚠️ v0.1 (auto-reject en non-interactive) |
 | **MCP** | ARNES como MCP server (Claude Desktop, Cursor, Cline, Zed) | ✅ v0.1 |
 | | ARNES como MCP cliente (consume MCP servers externos) | 🚧 v0.2 |
+| | HTTP/SSE transport | 🚧 v0.2 (stdio only en v0.1) |
 | **Token Optimization** | Model routing automático por complejidad | ✅ v0.1 |
 | | Semantic cache | ✅ v0.1 |
 | | Context compaction | 🚧 v0.2 |
@@ -138,8 +139,8 @@ enviado, cada respuesta recibida. Lo puedes diffear, versionar, compartir.
 | **Cost Guard** | Budget jerárquico (org → project → agent → task) | ✅ v0.1 |
 | | Circuit breaker temporal (max USD/min) | ✅ v0.1 |
 | | Model fallback automático | ✅ v0.1 |
-| | HITL de costo (pausar al exceder X%) | ✅ v0.1 |
-| **Sandbox** | Docker hardened (Tier 1 dev-local) | 🚧 v0.2 |
+| | HITL de costo (pausar al exceder X%) | ⚠️ v0.1 (log warning, auto-pause pendiente) |
+| **Sandbox** | Docker hardened (Tier 1 dev-local) | ⚠️ v0.1 (cableado pendiente, requiere ARNES_DEV_MODE=1) |
 | | gVisor (Tier 2 production) | 🚧 v0.4 |
 | **Multi-agent** | Single-agent default | ✅ v0.1 |
 | | Crew (secuencial/jerárquico) | 🚧 v0.4 |

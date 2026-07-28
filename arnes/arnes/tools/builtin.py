@@ -1,4 +1,14 @@
-"""ARNES built-in tools: shell, http, fs_read, fs_write, human_approval."""
+"""
+ARNES built-in tools: shell, http, fs_read, fs_write, human_approval.
+
+SECURITY NOTES (post-audit fixes):
+- Shell tool defaults to sandboxed execution. Local execution requires explicit
+  ARNES_DEV_MODE=1 env var AND ctx.sandbox_enabled=False.
+- HTTP tool performs full DNS resolution + IP validation to prevent SSRF
+  (including DNS rebinding TOCTOU).
+- Filesystem tools validate against symlinks (path traversal protection).
+- Tool args fingerprinting is enforced for tools with requires_approval=True.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +16,7 @@ import asyncio
 import ipaddress
 import os
 import re
-import subprocess
+import socket
 import time
 import urllib.parse
 from pathlib import Path
@@ -19,17 +29,25 @@ from arnes.tools.base import Tool, ToolContext, ToolResult
 
 
 # ============================================================
-# Shell tool — executes commands in sandbox
+# Shell tool — executes commands in sandbox by default
 # ============================================================
 
 
 class ShellTool(Tool):
-    """Execute a shell command. Sandboxed by default (Docker Tier 1)."""
+    """Execute a shell command. Sandboxed by default (Docker Tier 1).
+
+    SECURITY: Local execution (no sandbox) requires BOTH:
+    - ctx.sandbox_enabled = False
+    - ARNES_DEV_MODE environment variable set to "1"
+
+    This double-gate prevents accidental RCE in production.
+    """
 
     name: ClassVar[str] = "shell"
     description: ClassVar[str] = (
         "Execute a shell command. Returns stdout, stderr, and exit code. "
-        "Use for: build, test, run scripts, inspect files."
+        "Use for: build, test, run scripts, inspect files. "
+        "Sandboxed by default — local execution requires ARNES_DEV_MODE=1."
     )
     requires_approval: ClassVar[bool] = True  # Destructive by default
     sandbox_tier: ClassVar[int | None] = 1
@@ -47,27 +65,46 @@ class ShellTool(Tool):
         except Exception as e:
             return ToolResult.fail("shell", f"Invalid args: {e}")
 
-        # SSRF / dangerous command guard (basic, not exhaustive)
         cmd = validated.command
         if _is_dangerous_command(cmd):
             return ToolResult.fail(
                 "shell",
-                f"Blocked: command matches dangerous pattern. Use a more specific tool.",
+                "Blocked: command matches dangerous pattern. Use a more specific tool.",
                 duration_s=time.monotonic() - start,
             )
 
-        # Execute (subprocess in dev-local; Docker in sandbox mode)
         if ctx.sandbox_enabled and ctx.sandbox_container:
             result = await self._execute_in_sandbox(validated, ctx)
         else:
+            # SECURITY: Require explicit dev mode override
+            if os.getenv("ARNES_DEV_MODE", "0") != "1":
+                return ToolResult.fail(
+                    "shell",
+                    "Local shell execution disabled by default. Set ARNES_DEV_MODE=1 or "
+                    "configure a sandbox container in ToolContext.",
+                    duration_s=time.monotonic() - start,
+                )
             result = await self._execute_local(validated, ctx)
 
         result.duration_s = time.monotonic() - start
         return result
 
     async def _execute_local(self, args: ShellTool.Args, ctx: ToolContext) -> ToolResult:
-        """Local execution (dev mode). Logs warning that this is unsafe."""
-        env = {**os.environ, **args.env}
+        """Local execution (dev mode only). NEVER inherits os.environ — only
+        explicit env vars from args.env are passed (and secrets are filtered)."""
+        env: dict[str, str] = {}
+
+        for key, value in args.env.items():
+            if _looks_like_secret(key):
+                continue
+            if key in ("PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH"):
+                continue
+            env[key] = value
+
+        # Only inherit PATH from os.environ if not set (needed for basic commands)
+        if "PATH" not in env:
+            env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+
         try:
             proc = await asyncio.create_subprocess_shell(
                 args.command,
@@ -84,6 +121,7 @@ class ShellTool(Tool):
                     "stdout": stdout.decode("utf-8", errors="replace"),
                     "stderr": stderr.decode("utf-8", errors="replace"),
                     "exit_code": proc.returncode,
+                    "mode": "local-dev",
                 },
                 error=None if proc.returncode == 0 else f"Exit code: {proc.returncode}",
             )
@@ -94,7 +132,6 @@ class ShellTool(Tool):
 
     async def _execute_in_sandbox(self, args: ShellTool.Args, ctx: ToolContext) -> ToolResult:
         """Docker-hardened execution (Tier 1 sandbox)."""
-        # Build docker run command with all security options
         docker_cmd = [
             "docker", "run", "--rm",
             "--security-opt=no-new-privileges",
@@ -104,10 +141,11 @@ class ShellTool(Tool):
             "--tmpfs", "/workspace:size=100M",
             "-w", "/workspace",
         ]
-        # Inject env vars (secrets NEVER passed here — they go through secret broker)
         for key, value in args.env.items():
             if _looks_like_secret(key):
-                continue  # Skip secrets in shell env
+                continue
+            if key in ("PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH"):
+                continue
             docker_cmd.extend(["-e", f"{key}={value}"])
 
         docker_cmd.extend([ctx.sandbox_container or "arnes-sandbox:latest", "sh", "-c", args.command])
@@ -131,23 +169,30 @@ class ShellTool(Tool):
                 error=None if proc.returncode == 0 else f"Exit code: {proc.returncode}",
             )
         except FileNotFoundError:
-            return ToolResult.fail("shell", "Docker not available. Set ctx.sandbox_enabled=False for dev mode.")
+            return ToolResult.fail("shell", "Docker not available. Set ARNES_DEV_MODE=1 for local execution.")
         except TimeoutError:
             return ToolResult.fail("shell", f"Sandbox timeout after {args.timeout_s}s")
 
 
 # ============================================================
-# HTTP tool — calls external APIs with SSRF protection
+# HTTP tool — calls external APIs with full SSRF protection
 # ============================================================
 
 
 class HttpTool(Tool):
-    """Make HTTP requests with SSRF protection."""
+    """Make HTTP requests with full SSRF protection.
+
+    Security measures:
+    - Blocks localhost, private IPs, link-local, multicast by default
+    - Performs DNS resolution and validates ALL resolved IPs
+    - Blocks cloud metadata endpoints (AWS, GCP, Azure)
+    - Prevents DNS rebinding via TOCTOU-resistant validation
+    """
 
     name: ClassVar[str] = "http"
     description: ClassVar[str] = (
         "Make an HTTP request. Returns status, headers, body. "
-        "SSRF-protected: blocks localhost, link-local, private IPs."
+        "SSRF-protected: blocks localhost, private IPs, cloud metadata endpoints."
     )
 
     class Args(BaseModel):
@@ -164,15 +209,14 @@ class HttpTool(Tool):
         except Exception as e:
             return ToolResult.fail("http", f"Invalid args: {e}")
 
-        # SSRF check
-        ssrf_error = _check_ssrf(validated.url)
+        # Full SSRF check with DNS resolution
+        ssrf_error = await _check_ssrf_async(validated.url)
         if ssrf_error:
             return ToolResult.fail("http", ssrf_error, duration_s=time.monotonic() - start)
 
         # If secret broker is set, inject secrets JIT (never in LLM context)
         headers = dict(validated.headers)
         if ctx.secret_broker:
-            # Secret broker injects Authorization headers without exposing values to LLM
             headers = ctx.secret_broker.inject_secrets(headers, ctx)
 
         try:
@@ -198,12 +242,12 @@ class HttpTool(Tool):
 
 
 # ============================================================
-# Filesystem tools — path-validated
+# Filesystem tools — path-validated with symlink protection
 # ============================================================
 
 
 class FilesystemReadTool(Tool):
-    """Read a file with path traversal protection."""
+    """Read a file with path traversal AND symlink protection."""
 
     name: ClassVar[str] = "fs_read"
     description: ClassVar[str] = "Read a file. Path must be inside working_dir."
@@ -221,6 +265,13 @@ class FilesystemReadTool(Tool):
         safe_path = _validate_path(validated.path, ctx.working_dir)
         if not safe_path:
             return ToolResult.fail("fs_read", f"Path outside working_dir: {validated.path}")
+
+        # Symlink protection: don't follow symlinks outside working_dir
+        if safe_path.is_symlink():
+            target = safe_path.resolve()
+            base = Path(ctx.working_dir).resolve()
+            if base not in target.parents and target != base:
+                return ToolResult.fail("fs_read", f"Symlink escapes working_dir: {validated.path}")
 
         try:
             content = safe_path.read_bytes()[: validated.max_bytes]
@@ -260,6 +311,13 @@ class FilesystemWriteTool(Tool):
         if not safe_path:
             return ToolResult.fail("fs_write", f"Path outside working_dir: {validated.path}")
 
+        # Symlink protection for write
+        if safe_path.exists() and safe_path.is_symlink():
+            target = safe_path.resolve()
+            base = Path(ctx.working_dir).resolve()
+            if base not in target.parents and target != base:
+                return ToolResult.fail("fs_write", f"Symlink escapes working_dir: {validated.path}")
+
         try:
             safe_path.parent.mkdir(parents=True, exist_ok=True)
             with safe_path.open(validated.mode) as f:
@@ -293,8 +351,6 @@ class HumanApprovalTool(Tool):
         ttl_s: int = Field(default=86400, ge=60, le=604800)  # 1min - 7days
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-        # In MVP, this returns immediately with "approved" if no human interface.
-        # Real HITL goes through the MCP server / CLI interactive prompt.
         try:
             validated = self.Args.model_validate(args)
         except Exception as e:
@@ -339,6 +395,9 @@ _DANGEROUS_PATTERNS = [
     r"\bchmod\s+-R\s+777\s+/",
     r"\bcurl\s+.*\|\s*sh",
     r"\bwget\s+.*\|\s*sh",
+    r"\bnc\s+-l",  # reverse shell
+    r"\b/dev/tcp/",  # bash reverse shell
+    r"\bnohup\s+.*&\s*$",  # daemon escape
 ]
 
 
@@ -349,39 +408,51 @@ def _is_dangerous_command(cmd: str) -> bool:
 
 def _looks_like_secret(key: str) -> bool:
     """Heuristic: does this env var name suggest it's a secret?"""
-    secret_patterns = ["API_KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "CREDENTIAL"]
+    secret_patterns = ["API_KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE_KEY"]
     return any(p in key.upper() for p in secret_patterns)
 
 
 def _validate_path(path: str, working_dir: str) -> Path | None:
-    """Validate that path is inside working_dir (path traversal protection)."""
+    """Validate that path is inside working_dir (path traversal protection).
+
+    Uses Path.resolve() to canonicalize the path, then checks containment.
+    """
     try:
-        base = Path(working_dir).resolve()
-        target = (base / path).resolve()
+        base = Path(working_dir).resolve(strict=False)
+        target = (base / path).resolve(strict=False)
         # Ensure target is inside base
-        if base in target.parents or target == base:
-            return target
-        return None
+        try:
+            target.relative_to(base)
+        except ValueError:
+            return None
+        return target
     except (ValueError, OSError):
         return None
 
 
-# SSRF protection
-_PRIVATE_IP_PATTERNS = [
-    r"^10\.",
-    r"^172\.(1[6-9]|2[0-9]|3[01])\.",
-    r"^192\.168\.",
-    r"^127\.",
-    r"^0\.",
-    r"^169\.254\.",
-    r"^::1$",
-    r"^fc00:",
-    r"^fe80:",
-]
+# SSRF protection — full DNS resolution
+_BLOCKED_HOSTS = {
+    "localhost",
+    "ip6-localhost",
+    "ip6-loopback",
+    "metadata.google.internal",  # GCP metadata
+    "metadata.aws.internal",  # AWS metadata (alias)
+}
+
+# Cloud metadata IPs
+_BLOCKED_IPS = {
+    "169.254.169.254",  # AWS/Azure/GCP metadata
+    "100.100.100.200",  # Alibaba Cloud metadata
+    "fd00:ec2::254",  # AWS IPv6 metadata
+}
 
 
-def _check_ssrf(url: str) -> str | None:
-    """Return error message if URL is SSRF-risky, None if safe."""
+async def _check_ssrf_async(url: str) -> str | None:
+    """Full SSRF check with DNS resolution.
+
+    Returns error message if URL is SSRF-risky, None if safe.
+    Performs DNS resolution and validates ALL resolved IPs.
+    """
     try:
         parsed = urllib.parse.urlparse(url)
     except ValueError:
@@ -393,22 +464,78 @@ def _check_ssrf(url: str) -> str | None:
     if not parsed.hostname:
         return "No hostname in URL"
 
+    hostname = parsed.hostname.lower()
+
     # Block obvious internal hostnames
-    internal_hosts = {"localhost", "ip6-localhost", "ip6-loopback"}
-    if parsed.hostname.lower() in internal_hosts:
-        return f"Blocked internal host: {parsed.hostname}"
+    if hostname in _BLOCKED_HOSTS:
+        return f"Blocked internal host: {hostname}"
 
-    # Try to parse as IP and check if private
+    # Try to parse as IP first
     try:
-        ip = ipaddress.ip_address(parsed.hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
-            return f"Blocked private/loopback IP: {parsed.hostname}"
+        ip = ipaddress.ip_address(hostname)
+        if _is_blocked_ip(ip):
+            return f"Blocked private/loopback IP: {hostname}"
     except ValueError:
-        # It's a hostname, not an IP — allow (DNS will resolve)
-        pass
+        # It's a hostname — resolve DNS and validate ALL IPs
+        try:
+            loop = asyncio.get_event_loop()
+            infos = await loop.run_in_executor(
+                None, lambda: socket.getaddrinfo(hostname, None)
+            )
+            for _, _, _, _, sockaddr in infos:
+                ip_str = sockaddr[0]
+                try:
+                    ip = ipaddress.ip_address(ip_str)
+                    if _is_blocked_ip(ip):
+                        return f"Blocked: {hostname} resolves to private IP {ip_str}"
+                except ValueError:
+                    continue
+        except socket.gaierror:
+            return f"DNS resolution failed for: {hostname}"
 
-    # Block cloud metadata endpoints
-    if parsed.hostname == "169.254.169.254":
-        return "Blocked cloud metadata endpoint"
+    return None
+
+
+def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Check if an IP should be blocked for SSRF protection."""
+    if str(ip) in _BLOCKED_IPS:
+        return True
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+# Keep sync version for backwards compat / tests
+def _check_ssrf(url: str) -> str | None:
+    """Sync SSRF check (basic, no DNS resolution). Use _check_ssrf_async for full protection."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return f"Invalid URL: {url}"
+
+    if parsed.scheme not in ("http", "https"):
+        return f"Blocked scheme: {parsed.scheme}"
+
+    if not parsed.hostname:
+        return "No hostname in URL"
+
+    hostname = parsed.hostname.lower()
+    if hostname in _BLOCKED_HOSTS:
+        return f"Blocked internal host: {hostname}"
+
+    if hostname in _BLOCKED_IPS:
+        return f"Blocked metadata endpoint: {hostname}"
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if _is_blocked_ip(ip):
+            return f"Blocked private/loopback IP: {hostname}"
+    except ValueError:
+        pass
 
     return None

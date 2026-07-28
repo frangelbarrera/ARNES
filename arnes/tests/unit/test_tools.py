@@ -56,7 +56,9 @@ class TestToolResult:
 
 class TestShellTool:
     @pytest.fixture
-    def ctx(self):
+    def ctx(self, monkeypatch):
+        # SECURITY FIX: Shell tool now requires ARNES_DEV_MODE=1 for local exec
+        monkeypatch.setenv("ARNES_DEV_MODE", "1")
         return ToolContext(thread_id=uuid4(), step_id="test")
 
     @pytest.mark.asyncio
@@ -72,6 +74,29 @@ class TestShellTool:
         result = await tool.execute({"command": "rm -rf /"}, ctx)
         assert result.success is False
         assert "dangerous" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_local_exec_blocked_without_dev_mode(self, monkeypatch):
+        """SECURITY: Without ARNES_DEV_MODE=1, local shell execution must fail."""
+        monkeypatch.delenv("ARNES_DEV_MODE", raising=False)
+        ctx = ToolContext(thread_id=uuid4(), step_id="test", sandbox_enabled=False)
+        tool = ShellTool()
+        result = await tool.execute({"command": "echo hello"}, ctx)
+        assert result.success is False
+        assert "ARNES_DEV_MODE" in result.error
+
+    @pytest.mark.asyncio
+    async def test_secrets_filtered_from_env(self, ctx):
+        """SECURITY: API keys in args.env must be filtered out."""
+        tool = ShellTool()
+        result = await tool.execute(
+            {"command": "env", "env": {"API_KEY": "sk-secret", "FOO": "bar"}},
+            ctx,
+        )
+        assert result.success is True
+        # The secret must NOT appear in the subprocess env
+        assert "sk-secret" not in result.output["stdout"]
+        assert "bar" in result.output["stdout"]
 
     @pytest.mark.asyncio
     async def test_invalid_args(self, ctx):

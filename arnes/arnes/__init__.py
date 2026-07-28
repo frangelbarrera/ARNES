@@ -6,7 +6,7 @@ al pie de la letra.
 """
 
 from arnes.thread import Thread, Event
-from arnes.agent import Agent, AgentConfig
+from arnes.agent import Harness, HarnessConfig
 from arnes.tools import Tool, ToolResult, ToolRegistry
 from arnes.llm import LLMProvider, LLMMessage
 from arnes.specialists import (
@@ -22,6 +22,7 @@ from arnes.playbooks import Playbook, PlaybookCompiler
 from arnes.middleware import (
     TokenOptimizer,
     VerificationLayer,
+    VerificationConfig,
     CostGuard,
     CostBudget,
 )
@@ -30,8 +31,8 @@ __version__ = "0.1.0a1"
 __all__ = [
     "Thread",
     "Event",
-    "Agent",
-    "AgentConfig",
+    "Harness",
+    "HarnessConfig",
     "Tool",
     "ToolResult",
     "ToolRegistry",
@@ -48,6 +49,7 @@ __all__ = [
     "PlaybookCompiler",
     "TokenOptimizer",
     "VerificationLayer",
+    "VerificationConfig",
     "CostGuard",
     "CostBudget",
 ]

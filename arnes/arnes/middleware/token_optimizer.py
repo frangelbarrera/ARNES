@@ -79,6 +79,7 @@ class TokenOptimizer:
         *,
         model: str,
         tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Optimized completion. Routes to cheaper model when safe, checks cache first."""
@@ -110,6 +111,7 @@ class TokenOptimizer:
             messages,
             model=effective_model,
             tools=tools,
+            response_schema=response_schema,
             **kwargs,
         )
 

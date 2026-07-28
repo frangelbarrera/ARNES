@@ -100,6 +100,8 @@ class CostGuard:
         messages: list[LLMMessage],
         *,
         model: str,
+        tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Cost-guarded completion. May raise BudgetExceeded."""
@@ -116,8 +118,6 @@ class CostGuard:
         # Check if we're paused (waiting for HITL)
         if self._paused:
             logger.info("cost_guard_paused", spent=self.spent_usd, budget=self.budget.effective_budget())
-            # In MVP, we just block. Real HITL resumes via MCP server.
-            # For now, raise to let caller decide what to do.
             raise BudgetExceeded(
                 "Run paused at 95% budget — awaiting human approval",
                 spent=self.spent_usd,
@@ -151,9 +151,6 @@ class CostGuard:
                     budget=effective_budget,
                     pct=self.spent_usd / effective_budget,
                 )
-                # In MVP we don't auto-pause; we let the call go through but warn.
-                # Real implementation would emit HumanApprovalRequestedEvent.
-                # For now, log and continue.
                 self._paused = False
 
             elif self.spent_usd >= effective_budget * self.budget.warn_at_pct:
@@ -175,7 +172,13 @@ class CostGuard:
             )
 
         # Make the call
-        response = await self.provider.complete(messages, model=model, **kwargs)
+        response = await self.provider.complete(
+            messages,
+            model=model,
+            tools=tools,
+            response_schema=response_schema,
+            **kwargs,
+        )
 
         # Track spend
         cost = response.usage.cost_usd

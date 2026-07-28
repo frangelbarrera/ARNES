@@ -118,10 +118,20 @@ class PlaybookExecutor:
 
         try:
             for step in playbook.pasos:
-                # Check if step should be skipped due to prior conditional
-                if step.id in outputs.get("__skip_steps", set()):
-                    logger.info("step_skipped", step_id=step.id, reason="conditional")
-                    continue
+                # Check if step should be skipped due to prior saltar_a
+                skip_until = outputs.get("__skip_steps_until", {})
+                if skip_until:
+                    # If we've reached the target step, clear the skip marker
+                    if step.id in skip_until:
+                        del skip_until[step.id]
+                        if not skip_until:
+                            del outputs["__skip_steps_until"]
+                        logger.info("saltar_a_reached", step_id=step.id)
+                        # Don't skip this step — execute it
+                    else:
+                        # Skip this step
+                        logger.info("step_skipped", step_id=step.id, reason="saltar_a")
+                        continue
 
                 # Execute the step
                 step_result = await self._execute_step(
@@ -346,6 +356,15 @@ class PlaybookExecutor:
                 level="specialist",
             )
 
+        # Propagate error message for non-budget failures
+        if not success and result.get("error"):
+            return {
+                "success": False,
+                "error": result["error"],
+                "output": None,
+                "usage": result.get("usage", {}),
+            }
+
         return {
             "success": success,
             "output": result.get("output"),
@@ -453,9 +472,10 @@ class PlaybookExecutor:
             return {"terminar": branch.terminar}
 
         if branch.accion == "saltar" and branch.saltar_a:
-            # Mark target steps to be skipped until saltar_a
-            skip_set = outputs.setdefault("__skip_steps", set())
-            skip_set.add(branch.saltar_a)  # Will be cleared when we reach it
+            # CORRECT semantics: saltar_a means "jump TO this step"
+            # So we skip all steps between current and target
+            skip_set = outputs.setdefault("__skip_steps_until", {})
+            skip_set[branch.saltar_a] = True  # Will be cleared when we reach it
             return {"terminar": None}
 
         return {"terminar": None}
@@ -474,6 +494,7 @@ class PlaybookExecutor:
         """Resolve Jinja2-style template references in input.
 
         Example: "{{ pasos.leer_diff.salida }}" → outputs["leer_diff"]["output"]
+        Handles MULTIPLE templates in the same string.
         """
         if input_value is None:
             return {}
@@ -488,6 +509,13 @@ class PlaybookExecutor:
                     resolved[k] = self._resolve_template(v, outputs)
                 elif isinstance(v, dict):
                     resolved[k] = self._resolve_input(v, outputs)
+                elif isinstance(v, list):
+                    resolved[k] = [
+                        self._resolve_template(item, outputs) if isinstance(item, str)
+                        else self._resolve_input(item, outputs) if isinstance(item, dict)
+                        else item
+                        for item in v
+                    ]
                 else:
                     resolved[k] = v
             return resolved
@@ -495,12 +523,35 @@ class PlaybookExecutor:
         return {"__input__": input_value}
 
     def _resolve_template(self, template: str, outputs: dict[str, Any]) -> Any:
-        """Resolve a single template string."""
-        match = self._TEMPLATE_RE.search(template)
-        if not match:
+        """Resolve a template string, handling MULTIPLE {{ }} references.
+
+        Examples:
+            "{{ pasos.X.salida }}" → outputs["X"]["output"]
+            "Plan: {{ variables.nombre }} for PR {{ variables.pr_number }}" → "Plan: foo for PR 1234"
+            "Diff: {{ pasos.leer_diff.salida }}, Sec: {{ pasos.auditoria.salida }}" → "Diff: ..., Sec: ..."
+        """
+        # Find ALL template references
+        matches = list(self._TEMPLATE_RE.finditer(template))
+
+        if not matches:
             return template
 
-        expr = match.group(1).strip()
+        # If the entire string is ONE template, return the resolved value (preserve type)
+        if len(matches) == 1 and matches[0].group(0) == template:
+            return self._resolve_expr(matches[0].group(1).strip(), outputs)
+
+        # Otherwise, interpolate ALL matches into the string
+        result = template
+        # Process in reverse order to keep indexes valid
+        for match in reversed(matches):
+            expr = match.group(1).strip()
+            resolved = self._resolve_expr(expr, outputs)
+            result = result[:match.start()] + str(resolved) + result[match.end():]
+
+        return result
+
+    def _resolve_expr(self, expr: str, outputs: dict[str, Any]) -> Any:
+        """Resolve a single template expression like 'pasos.X.salida'."""
         # Support "pasos.X.salida" → outputs["X"]["output"]
         # Support "variables.X" → outputs["X"]
         parts = expr.replace("pasos.", "").replace("variables.", "").split(".")
@@ -513,13 +564,8 @@ class PlaybookExecutor:
                 if part in current:
                     current = current[part]
                 else:
-                    return template  # Leave template as-is if not found
+                    return f"{{{{ {expr} }}}}"  # Leave template as-is if not found
             else:
-                return template
+                return f"{{{{ {expr} }}}}"
 
-        # If the entire string was the template, return the resolved value
-        if match.group(0) == template:
-            return current
-
-        # Otherwise, interpolate as string
-        return template.replace(match.group(0), str(current))
+        return current
