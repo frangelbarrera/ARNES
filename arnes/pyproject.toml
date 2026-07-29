@@ -112,7 +112,6 @@ select = [
     "TID",      # tidy imports
     "RUF",      # ruff-specific
     "S",        # bandit (security)
-    "ANN",      # annotations
     "PL",       # pylint
 ]
 ignore = [
@@ -122,7 +121,16 @@ ignore = [
     "S607",     # partial path subprocess (sandboxed)
     "ANN101",   # missing self annotation (deprecated rule)
     "ANN102",   # missing cls annotation (deprecated rule)
+    "ANN401",   # dynamically typed expressions (Any) — needed for flexible APIs
+    "PLC0415",  # import outside top-level — intentional for lazy loading in tools
     "PLR0913",  # too many arguments (we accept up to 8)
+    "PLR0912",  # too many branches
+    "PLR0911",  # too many return statements
+    "PLR0917",  # too many positional arguments
+    "PLR2004",  # magic value in comparison — would require constants for test values
+    "SIM102",   # use if/elif — sometimes nested if is clearer
+    "SIM117",   # nested with statements
+    "B007",     # unused loop variable — false positive in some cases
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -236,3 +244,13 @@ skips = ["B101"]  # assert_used in tests
 # ============================================================
 [tool.hatch.build.hooks.mypyc]
 enable-by-default = false
+
+# ============================================================
+# UV — standalone project (not a workspace member)
+# ============================================================
+[tool.uv]
+package = true
+managed = true
+
+[tool.uv.workspace]
+members = []

@@ -14,12 +14,12 @@ If any check fails, raises PlaybookCompileError with a helpful message.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
 from pydantic import ValidationError
 
-from arnes.playbooks.schema import Playbook, PlaybookStep
+from arnes.playbooks.schema import Playbook
 
 
 class PlaybookCompileError(Exception):
@@ -75,7 +75,7 @@ class PlaybookCompiler:
                 path=path,
             )
 
-        # Step 2: Translate ES keys → schema keys (bilingual support)
+        # Step 2: Translate legacy ES keys → canonical EN keys (backwards compat)
         data = PlaybookCompiler._translate_keys(data)
 
         # Step 3: Pydantic validation
@@ -87,7 +87,7 @@ class PlaybookCompiler:
                 loc = ".".join(str(x) for x in err["loc"])
                 errors.append(f"  {loc}: {err['msg']}")
             raise PlaybookCompileError(
-                f"Schema validation failed:\n" + "\n".join(errors),
+                "Schema validation failed:\n" + "\n".join(errors),
                 path=path,
             ) from e
 
@@ -97,44 +97,40 @@ class PlaybookCompiler:
         return playbook
 
     # ============================================================
-    # Bilingual key translation (ES/EN)
+    # Bilingual key translation (ES → EN for backwards compat)
     # ============================================================
 
-    _KEY_MAP: dict[str, str] = {
-        "nombre": "nombre",  # kept in metadata
-        "objetivo": "objetivo",
-        "pasos": "pasos",
-        "modelo_default": "modelo_default",
+    _KEY_MAP: ClassVar[dict[str, str]] = {
+        # Top-level
+        "nombre": "name",
+        "objetivo": "objective",
+        "pasos": "steps",
+        "modelo_default": "default_model",
         "variables": "variables",
+        "idioma": "language",
         # Step-level
-        "especialista": "especialista",
-        "herramienta": "herramienta",
-        "entrada": "input",  # ES alias
-        "salida": "output",  # ES alias
-        "requiere": "requiere",
-        "si_no_se_cumple": "si_no_se_cumple",
-        "condicionales": "condicionales",
-        "paralelo": "paralelo",
+        "especialista": "specialist",
+        "herramienta": "tool",
+        "entrada": "input",
+        "salida": "output",
+        "requiere": "requires",
+        "si_no_se_cumple": "if_not_met",
+        "condicionales": "conditionals",
+        "paralelo": "parallel",
         "retry": "retry",
         "timeout_s": "timeout_s",
-        "aprobacion_humana": "aprobacion_humana",
-        # English equivalents (for bilingual support)
-        "name": "nombre",
-        "steps": "pasos",
-        "specialist": "especialista",
-        "tool": "herramienta",
-        "input": "input",
-        "output": "output",
-        "requires": "requiere",
-        "if_not_met": "si_no_se_cumple",
-        "conditionals": "condicionales",
-        "parallel": "paralelo",
-        "human_approval": "aprobacion_humana",
+        "aprobacion_humana": "human_approval",
+        # ConditionalBranch
+        "cuando": "when",
+        "accion": "action",
+        "llamar": "call",  # legacy — will be normalized to action
+        "terminar": "terminate",
+        "saltar_a": "skip_to",
     }
 
     @classmethod
     def _translate_keys(cls, data: dict[str, Any]) -> dict[str, Any]:
-        """Translate ES/EN keys to canonical schema keys."""
+        """Translate ES keys to canonical EN keys."""
         return cls._translate_recursive(data)
 
     @classmethod
@@ -158,33 +154,33 @@ class PlaybookCompiler:
         """Run semantic validation checks."""
         # Check 1: All specialist references exist (deferred to runtime — we only check syntax here)
         for step in _iter_steps(playbook):
-            if step.especialista and not step.especialista.startswith("@"):
+            if step.specialist and not step.specialist.startswith("@"):
                 raise PlaybookCompileError(
-                    f"Step '{step.id}': specialist '{step.especialista}' must start with '@'",
+                    f"Step '{step.id}': specialist '{step.specialist}' must start with '@'",
                     path=path,
                 )
 
         # Check 2: Conditional branch targets exist
         for step in _iter_steps(playbook):
-            if step.si_no_se_cumple:
-                if step.si_no_se_cumple.saltar_a:
-                    if not playbook.get_step(step.si_no_se_cumple.saltar_a):
+            if step.if_not_met:
+                if step.if_not_met.skip_to:
+                    if not playbook.get_step(step.if_not_met.skip_to):
                         raise PlaybookCompileError(
-                            f"Step '{step.id}': si_no_se_cumple.saltar_a target "
-                            f"'{step.si_no_se_cumple.saltar_a}' not found",
+                            f"Step '{step.id}': if_not_met.skip_to target "
+                            f"'{step.if_not_met.skip_to}' not found",
                             path=path,
                         )
-            for cond in step.condicionales:
-                if cond.saltar_a and not playbook.get_step(cond.saltar_a):
+            for cond in step.conditionals:
+                if cond.skip_to and not playbook.get_step(cond.skip_to):
                     raise PlaybookCompileError(
-                        f"Step '{step.id}': condicional.saltar_a target '{cond.saltar_a}' not found",
+                        f"Step '{step.id}': conditional.skip_to target '{cond.skip_to}' not found",
                         path=path,
                     )
 
         # Check 3: Parallel steps have unique IDs
         for step in _iter_steps(playbook):
-            if step.paralelo:
-                sub_ids = [s.id for s in step.paralelo]
+            if step.parallel:
+                sub_ids = [s.id for s in step.parallel]
                 dups = {x for x in sub_ids if sub_ids.count(x) > 1}
                 if dups:
                     raise PlaybookCompileError(
@@ -195,7 +191,7 @@ class PlaybookCompiler:
 
 def _iter_steps(playbook: Playbook):
     """Iterate all steps in a playbook, including parallel sub-steps."""
-    for step in playbook.pasos:
+    for step in playbook.steps:
         yield step
-        if step.paralelo:
-            yield from step.paralelo
+        if step.parallel:
+            yield from step.parallel

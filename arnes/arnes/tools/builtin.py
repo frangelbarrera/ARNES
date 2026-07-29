@@ -27,7 +27,6 @@ from pydantic import BaseModel, Field
 
 from arnes.tools.base import Tool, ToolContext, ToolResult
 
-
 # ============================================================
 # Shell tool — executes commands in sandbox by default
 # ============================================================
@@ -133,13 +132,17 @@ class ShellTool(Tool):
     async def _execute_in_sandbox(self, args: ShellTool.Args, ctx: ToolContext) -> ToolResult:
         """Docker-hardened execution (Tier 1 sandbox)."""
         docker_cmd = [
-            "docker", "run", "--rm",
+            "docker",
+            "run",
+            "--rm",
             "--security-opt=no-new-privileges",
             "--cap-drop=ALL",
             "--network=none",
             "--read-only",
-            "--tmpfs", "/workspace:size=100M",
-            "-w", "/workspace",
+            "--tmpfs",
+            "/workspace:size=100M",
+            "-w",
+            "/workspace",
         ]
         for key, value in args.env.items():
             if _looks_like_secret(key):
@@ -148,7 +151,9 @@ class ShellTool(Tool):
                 continue
             docker_cmd.extend(["-e", f"{key}={value}"])
 
-        docker_cmd.extend([ctx.sandbox_container or "arnes-sandbox:latest", "sh", "-c", args.command])
+        docker_cmd.extend(
+            [ctx.sandbox_container or "arnes-sandbox:latest", "sh", "-c", args.command]
+        )
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -169,7 +174,9 @@ class ShellTool(Tool):
                 error=None if proc.returncode == 0 else f"Exit code: {proc.returncode}",
             )
         except FileNotFoundError:
-            return ToolResult.fail("shell", "Docker not available. Set ARNES_DEV_MODE=1 for local execution.")
+            return ToolResult.fail(
+                "shell", "Docker not available. Set ARNES_DEV_MODE=1 for local execution."
+            )
         except TimeoutError:
             return ToolResult.fail("shell", f"Sandbox timeout after {args.timeout_s}s")
 
@@ -408,7 +415,15 @@ def _is_dangerous_command(cmd: str) -> bool:
 
 def _looks_like_secret(key: str) -> bool:
     """Heuristic: does this env var name suggest it's a secret?"""
-    secret_patterns = ["API_KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE_KEY"]
+    secret_patterns = [
+        "API_KEY",
+        "SECRET",
+        "TOKEN",
+        "PASSWORD",
+        "PASSWD",
+        "CREDENTIAL",
+        "PRIVATE_KEY",
+    ]
     return any(p in key.upper() for p in secret_patterns)
 
 
@@ -479,9 +494,7 @@ async def _check_ssrf_async(url: str) -> str | None:
         # It's a hostname — resolve DNS and validate ALL IPs
         try:
             loop = asyncio.get_event_loop()
-            infos = await loop.run_in_executor(
-                None, lambda: socket.getaddrinfo(hostname, None)
-            )
+            infos = await loop.run_in_executor(None, lambda: socket.getaddrinfo(hostname, None))
             for _, _, _, _, sockaddr in infos:
                 ip_str = sockaddr[0]
                 try:

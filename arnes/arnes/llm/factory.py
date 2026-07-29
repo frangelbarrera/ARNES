@@ -13,7 +13,6 @@ from typing import Any
 from arnes.llm.base import LLMProvider
 from arnes.llm.mock import MockLLMProvider
 
-
 # Default model if user doesn't specify (vendor-neutral, local-first)
 DEFAULT_MODEL = "ollama/llama3.2"
 
@@ -28,7 +27,7 @@ def get_provider(model: str = DEFAULT_MODEL, **kwargs: Any) -> LLMProvider:
         "openai/gpt-4o"         → OpenAIProvider
         "mock/anything"         → MockLLMProvider (for tests)
     """
-    vendor = model.split("/")[0].lower() if "/" in model else "ollama"
+    vendor = model.split("/", maxsplit=1)[0].lower() if "/" in model else "ollama"
 
     # Allow override via env for tests / dev
     if os.getenv("ARNES_MOCK_LLM", "").lower() in ("1", "true", "yes"):
@@ -48,4 +47,6 @@ def get_provider(model: str = DEFAULT_MODEL, **kwargs: Any) -> LLMProvider:
 
         return LiteLLMProvider(**kwargs)
 
-    raise ValueError(f"Unknown LLM vendor: {vendor}. Use 'ollama/...', 'anthropic/...', 'openai/...', 'mock/...'")
+    raise ValueError(
+        f"Unknown LLM vendor: {vendor}. Use 'ollama/...', 'anthropic/...', 'openai/...', 'mock/...'"
+    )

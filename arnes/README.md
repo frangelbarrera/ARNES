@@ -4,7 +4,7 @@
 
 ### The Open Agent Harness
 
-**Escribe el manual. ARNES lo compila en un equipo de especialistas que lo sigue al pie de la letra.**
+**Write the manual. ARNES compiles it into a team of specialists that follows it to the letter.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -20,248 +20,256 @@
 
 ---
 
-> **Si tu framework necesita un debugger para tu debugger, es el framework equivocado.**
+> **If your framework needs a debugger for your debugger, it is the wrong framework.**
 
-ARNES no es un framework. Es un **arnés**: la capa de control que te deja orquestar
-agentes de IA sin ceder el control de tus prompts, tu contexto, tu modelo, tu dinero.
+ARNES is not a framework. It is a **harness**: the control layer that lets you
+orchestrate AI agents without surrendering your prompts, your context, your
+model, or your money.
 
-No te pedimos que aprendas clases mágicas. Te pedimos que escribas un manual en
-YAML. Nosotros lo compilamos a un DAG de especialistas, lo ejecutamos con
-guardrails de costo y anti-alucinación, y te devolvemos una bitácora auditable.
+We do not ask you to learn magic classes. We ask you to write a manual in
+YAML. We compile it into a DAG of specialists, run it with cost guardrails
+and anti-hallucination middleware, and return an auditable bitácora.
 
 ```bash
 pip install arnes
-arnes ejecutar manuales/debug-python-issue.md
+arnes run manuals/debug-python-issue.yaml
 ```
 
 ---
 
-## Por qué ARNES existe
+## Why ARNES exists
 
-Los frameworks de agentes de 2024-2026 comparten tres defectos:
+Agent frameworks in 2024–2026 share three defects:
 
-1. **Son cajas negras.** No puedes leer el prompt que se envió al LLM. No puedes
-   ver qué decisión tomó el router de modelos. No puedes diffear tu agent stack.
-2. **Tienen vendor lock-in.** Si solo existe en OpenAI o solo en Anthropic,
-   lo exponen como API de primera clase. Tu código queda amarrado.
-3. **No respetan tu dinero.** Sin budget enforcement real, un agente puede
-   quemar $50 en 90 segundos sin que tú lo sepas hasta que llega la factura.
+1. **They are black boxes.** You cannot read the prompt sent to the LLM. You
+   cannot see what decision the model router made. You cannot diff your agent
+   stack.
+2. **They have vendor lock-in.** If a feature only exists in OpenAI or only
+   in Anthropic, they expose it as a first-class API. Your code gets tied
+   to that vendor.
+3. **They do not respect your money.** Without real budget enforcement, an
+   agent can burn $50 in 90 seconds without you knowing until the bill
+   arrives.
 
-ARNES ataca los tres. Y agrega algo que nadie hace: **el manual es el código**.
+ARNES attacks all three. And it adds something nobody else does: **the
+manual is the code.**
 
 ---
 
-## Cómo se ve
+## What it looks like
 
-Un manual en YAML:
+A manual in YAML:
 
 ```yaml
-# manuales/auditar-pr.md.yaml
-nombre: auditar-pr
-objetivo: Auditar un Pull Request de forma estructurada
+# manuals/audit-pr.yaml
+name: audit-pr
+objective: Audit a Pull Request in a structured way
 budget_usd: 0.50
 
-pasos:
-  - id: leer_diff
-    especialista: @lector-de-diff
-    input: { pr_number: 1234, repo: "mi-org/mi-repo" }
-
-  - id: auditoria_seguridad
-    especialista: @auditor-de-seguridad
-    input: "{{ pasos.leer_diff.salida }}"
-    requiere:
-      - commit_firmado
-      - sin_secrets_en_diff
-    si_no_se_cumple:
-      llamar: @comentarista-de-fallback
-      terminar: rechazado
-
-  - id: redactar_comentario
-    especialista: @redactor-de-comentario
+steps:
+  - id: read_diff
+    specialist: "@reviewer"
     input:
-      diff: "{{ pasos.leer_diff.salida }}"
-      auditoria: "{{ pasos.auditoria_seguridad.salida }}"
+      pr_number: 1234
+      repo: "my-org/my-repo"
+      focus: "Read the diff and structure it for analysis"
 
-  - id: postear
-    herramienta: github.crear_comentario_review
-    input: "{{ pasos.redactar_comentario.salida }}"
+  - id: security_audit
+    specialist: "@reviewer"
+    input: "{{ steps.read_diff.output }}"
+    focus: "Security review: auth flows, SQL injection, XSS, path traversal"
+    if_not_met:
+      action: call
+      specialist: "@reviewer"
+      input:
+        focus: "Comment that the PR is blocked by security review"
+
+  - id: parallel
+    parallel:
+      - id: lint
+        specialist: "@reviewer"
+        input:
+          code: "{{ steps.read_diff.output }}"
+          focus: "Code quality: idioms, naming, complexity"
+      - id: tests
+        specialist: "@tester"
+        input:
+          code: "{{ steps.read_diff.output }}"
+          focus: "Verify tests cover the PR changes"
+
+  - id: synthesis
+    specialist: "@reviewer"
+    input:
+      diff: "{{ steps.read_diff.output }}"
+      security: "{{ steps.security_audit.output }}"
+      lint: "{{ steps.parallel.lint.output }}"
+      tests: "{{ steps.parallel.tests.output }}"
+      focus: "Synthesize into a final verdict: approve / request_changes / reject"
 ```
 
-Lo ejecutas:
+You run it:
 
 ```bash
-arnes ejecutar manuales/auditar-pr.md.yaml
+arnes run manuals/audit-pr.yaml
 ```
 
-ARNES compila el manual a un DAG, despierta a los especialistas en secuencia,
-aplica token optimization y verification layer en cada llamada, y te devuelve:
+ARNES compiles the manual into a DAG, wakes the specialists in sequence,
+applies token optimization and verification layer on every LLM call, and
+returns:
 
 ```
-✅ Manual ejecutado en 23.4s
-   3 especialistas activados
-   4 pasos ejecutados (1 condicional activado)
-   Tokens: 1,247 (ahorro 47% vs baseline)
-   Costo: $0.0042 USD
-   Bitácora: ./bitacora-auditar-pr-20260728-164523.md
+✅ Manual executed in 23.4s
+   3 specialists activated
+   4 steps executed (1 conditional triggered)
+   Tokens: 1,247 (47% savings vs baseline)
+   Cost: $0.0042 USD
+   Bitácora: ./bitacora-audit-pr-20260728-164523.md
 ```
 
-La bitácora es un archivo markdown con cada paso, cada decisión, cada prompt
-enviado, cada respuesta recibida. Lo puedes diffear, versionar, compartir.
+The bitácora is a markdown file with every step, every decision, every prompt
+sent, every response received. You can diff it, version it, share it.
 
 ---
 
-## Características
+## Features
 
-| Categoría | Feature | Estado |
+| Category | Feature | Status |
 |---|---|---|
 | **Agent loop** | Stateless reducer `(state, event) → state` | ✅ v0.1 |
-| | ReAct tool-use loop en specialists | ✅ v0.1 |
-| | Streaming AG-UI compatible | 🚧 v0.2 |
-| **Specialists** | 5 pre-construidos (planner, coder, reviewer, tester, debugger) | ✅ v0.1 |
-| | 5 más (security, devops, researcher, writer, optimizer) | 🚧 v0.3 |
-| **Playbook DSL** | YAML declarativo compilado a DAG | ✅ v0.1 |
-| | Conditional branches (`si_no_se_cumple`) | ✅ v0.1 |
-| | Parallel branches (sequential in MVP) | ⚠️ v0.1 (true parallelism en v0.2) |
-| | Retry con backoff | 🚧 v0.2 (schema definido, execution pendiente) |
-| | HITL gates (pausar y pedir aprobación) | ⚠️ v0.1 (auto-reject en non-interactive) |
-| **MCP** | ARNES como MCP server (Claude Desktop, Cursor, Cline, Zed) | ✅ v0.1 |
-| | ARNES como MCP cliente (consume MCP servers externos) | 🚧 v0.2 |
-| | HTTP/SSE transport | 🚧 v0.2 (stdio only en v0.1) |
-| **Token Optimization** | Model routing automático por complejidad | ✅ v0.1 |
+| | ReAct tool-use loop in specialists | ✅ v0.1 |
+| | AG-UI streaming compatible | 🚧 v0.2 |
+| **Specialists** | 5 pre-built (planner, coder, reviewer, tester, debugger) | ✅ v0.1 |
+| | 5 more (security, devops, researcher, writer, optimizer) | 🚧 v0.3 |
+| **Playbook DSL** | Declarative YAML compiled to DAG | ✅ v0.1 |
+| | Conditional branches (`if_not_met`) | ✅ v0.1 |
+| | Parallel branches (sequential in MVP) | ⚠️ v0.1 (true parallelism in v0.2) |
+| | Retry with backoff | 🚧 v0.2 (schema defined, execution pending) |
+| | HITL gates (pause and request approval) | ⚠️ v0.1 (auto-reject in non-interactive) |
+| **MCP** | ARNES as MCP server (Claude Desktop, Cursor, Cline, Zed) | ✅ v0.1 |
+| | ARNES as MCP client (consume external MCP servers) | 🚧 v0.2 |
+| | HTTP/SSE transport | 🚧 v0.2 (stdio only in v0.1) |
+| **Token Optimization** | Automatic model routing by complexity | ✅ v0.1 |
 | | Semantic cache | ✅ v0.1 |
 | | Context compaction | 🚧 v0.2 |
 | | Few-shot pruning | 🚧 v0.3 |
-| **Verification Layer** | Structured outputs con pydantic | ✅ v0.1 |
-| | Refusal pattern (no alucina, dice "no sé") | ✅ v0.1 |
+| **Verification Layer** | Structured outputs with pydantic | ✅ v0.1 |
+| | Refusal pattern (no hallucination, says "I don't know") | ✅ v0.1 |
 | | Confidence gate | 🚧 v0.2 |
-| | Critic loop (segunda opinión) | 🚧 v0.3 |
-| | Grounding RAG opcional | 🚧 v0.4 |
-| **Cost Guard** | Budget jerárquico (org → project → agent → task) | ✅ v0.1 |
-| | Circuit breaker temporal (max USD/min) | ✅ v0.1 |
-| | Model fallback automático | ✅ v0.1 |
-| | HITL de costo (pausar al exceder X%) | ⚠️ v0.1 (log warning, auto-pause pendiente) |
-| **Sandbox** | Docker hardened (Tier 1 dev-local) | ⚠️ v0.1 (cableado pendiente, requiere ARNES_DEV_MODE=1) |
+| | Critic loop (second opinion) | 🚧 v0.3 |
+| | Grounding RAG optional | 🚧 v0.4 |
+| **Cost Guard** | Hierarchical budget (org → project → agent → task) | ✅ v0.1 |
+| | Temporal circuit breaker (max USD/min) | ✅ v0.1 |
+| | Automatic model fallback | ✅ v0.1 |
+| | Cost HITL (pause at X% exceeded) | ⚠️ v0.1 (log warning, auto-pause pending) |
+| **Sandbox** | Docker hardened (Tier 1 dev-local) | ⚠️ v0.1 (wiring pending, requires ARNES_DEV_MODE=1) |
 | | gVisor (Tier 2 production) | 🚧 v0.4 |
 | **Multi-agent** | Single-agent default | ✅ v0.1 |
-| | Crew (secuencial/jerárquico) | 🚧 v0.4 |
-| | A2A con trust | 🚧 v0.5 |
-| **Observability** | Event log estructurado | ✅ v0.1 |
-| | Bitácora markdown auditable | ✅ v0.1 |
+| | Crew (sequential/hierarchical) | 🚧 v0.4 |
+| | A2A with trust | 🚧 v0.5 |
+| **Observability** | Structured event log | ✅ v0.1 |
+| | Auditable markdown bitácora | ✅ v0.1 |
 | | OpenTelemetry exporter | 🚧 v0.3 |
 
 ---
 
-## ARNES vs el resto
+## ARNES vs the rest
 
-| Dimensión | LangChain | CrewAI | OpenAI Agents SDK | **ARNES** |
+| Dimension | LangChain | CrewAI | OpenAI Agents SDK | **ARNES** |
 |---|---|---|---|---|
-| Forma de definir agentes | Python procedural | Clases `Agent/Crew/Task` | `@agent` decorator | **YAML declarativo** |
-| Distribución | Librería pip | Librería pip | Librería pip (OpenAI-only) | **MCP server + librería** |
-| Specialists pre-construidos | ❌ | ❌ | ❌ | **✅ 5-12 listos** |
-| Playbooks curados | ❌ | ❌ | ❌ | **✅ 30-50 manuales** |
-| Token optimization | Manual | ❌ | ❌ | **✅ Middleware automático** |
-| Anti-hallucination | DIY | ❌ | ❌ | **✅ 5 capas opt-in** |
-| Budget enforcement | `max_tokens` básico | `max_tokens` básico | ❌ | **✅ Jerárquico + circuit breaker** |
-| Vendor-neutral | Parcial | ✅ | ❌ | **✅ 100% (default Ollama local)** |
-| Prompts visibles | ❌ | ❌ | ❌ | **✅ Archivos en disco** |
-| Identidad Latam | ❌ | ❌ | ❌ | **✅ README bilingüe EN/ES** |
+| How you define agents | Python procedural | `Agent/Crew/Task` classes | `@agent` decorator | **Declarative YAML** |
+| Distribution | pip library | pip library | pip library (OpenAI-only) | **MCP server + library** |
+| Pre-built specialists | ❌ | ❌ | ❌ | **✅ 5–12 ready** |
+| Curated playbooks | ❌ | ❌ | ❌ | **✅ 30–50 manuals** |
+| Token optimization | Manual | ❌ | ❌ | **✅ Automatic middleware** |
+| Anti-hallucination | DIY | ❌ | ❌ | **✅ 5 opt-in layers** |
+| Budget enforcement | `max_tokens` basic | `max_tokens` basic | ❌ | **✅ Hierarchical + circuit breaker** |
+| Vendor-neutral | Partial | ✅ | ❌ | **✅ 100% (default Ollama local)** |
+| Prompts visible | ❌ | ❌ | ❌ | **✅ Files on disk** |
+| Latam identity | ❌ | ❌ | ❌ | **✅ Born in Latam, built for the world** |
 
 ---
 
-## Alineación con el manifiesto 12-factor-agents
+## Alignment with the 12-factor-agents manifesto
 
-ARNES se alinea explícitamente con los [12 factores](https://github.com/humanlayer/12-factor-agents):
+ARNES aligns explicitly with the [12 factors](https://github.com/humanlayer/12-factor-agents):
 
-| Factor | Descripción | ARNES |
+| Factor | Description | ARNES |
 |---|---|---|
-| 1 | Natural language > structured language | ✅ YAML declarativo |
+| 1 | Natural language > structured language | ✅ Declarative YAML |
 | 2 | Tools are structured outputs | ✅ Pydantic schemas |
 | 3 | Give agents composable, discrete tools | ✅ Specialist registry |
 | 4 | Agents are switching loops, not while loops | ✅ Event-driven reducer |
-| 5 | Simple but powerful primitives | ✅ Thread + Agent + Tool |
+| 5 | Simple but powerful primitives | ✅ Thread + Specialist + Tool |
 | 6 | Use the right tool for the job | ✅ Model routing |
-| 7 | Humans are tools, not gates | ✅ HITL como tool tipada |
-| 8 | Make agents easy to debug | ✅ Bitácora markdown |
+| 7 | Humans are tools, not gates | ✅ HITL as a typed tool call |
+| 8 | Make agents easy to debug | ✅ Markdown bitácora |
 | 9 | Make agents observable | ✅ Event log + OTel (v0.3) |
 | 10 | Replayable from any point | ✅ Stateless reducer + checkpoint |
-| 11 | Be a state machine, not a DAG | ⚠️ Por diseño somos DAG (declarativo) |
-| 12 | Deploy as a server, not a library | ✅ MCP server nativo |
+| 11 | Be a state machine, not a DAG | ⚠️ We are a DAG by design (declarative) |
+| 12 | Deploy as a server, not a library | ✅ Native MCP server |
 
 ---
 
-## Instalación
+## Installation
 
 ```bash
-# Con pip
+# With pip
 pip install arnes
 
-# Con uv (recomendado)
+# With uv (recommended)
 uv add arnes
 
-# Con extras para vendors específicos
+# With extras for specific vendors
 pip install "arnes[ollama,anthropic,openai]"
 ```
 
-## Quickstart (60 segundos)
+## Quickstart (60 seconds)
 
 ```bash
-# 1. Instala
+# 1. Install
 pip install arnes
 
-# 2. Crea tu primer manual
+# 2. Create your first manual
 arnes init --manual debug-python-issue
 
-# 3. Ejecútalo (usa Ollama local por defecto, costo $0)
-arnes ejecutar manuales/debug-python-issue.md.yaml
+# 3. Run it (uses Ollama local by default, $0 cost)
+arnes run manuals/debug-python-issue.yaml
 ```
 
-Si no tienes Ollama instalado, ARNES lo detecta y te guía. Para usar
-Anthropic/OpenAI, setea la env var y ARNES hace el resto:
+If you do not have Ollama installed, ARNES detects it and guides you. To use
+Anthropic/OpenAI, set the env var and ARNES does the rest:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-arnes ejecutar manuales/auditar-pr.md.yaml --model anthropic/claude-sonnet-4-20250514
-```
-
-## Quickstart en español
-
-```bash
-# 1. Instala
-pip install arnes
-
-# 2. Crea tu primer manual en español
-arnes init --manual auditar-pr --idioma es
-
-# 3. Ejecútalo
-arnes ejecutar manuales/auditar-pr.md.yaml
+arnes run manuals/audit-pr.yaml --model anthropic/claude-sonnet-4-20250514
 ```
 
 ---
 
-## Arquitectura
+## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│   TÚ (Claude Desktop / Cursor / CLI / Cline / Zed)            │
+│   YOU (Claude Desktop / Cursor / CLI / Cline / Zed)            │
 └────────────────────────┬─────────────────────────────────────┘
                          ▼
 ┌──────────────────────────────────────────────────────────────┐
-│   ARNES MCP SERVER (1 instalación, 4 tools)                   │
+│   ARNES MCP SERVER (1 install, 4 tools)                       │
 │   run · list · events · resume                                │
 └────────────────────────┬─────────────────────────────────────┘
                          ▼
 ┌──────────────────────────────────────────────────────────────┐
 │   PLAYBOOK RUNTIME                                            │
-│   YAML → Pydantic → DAG → Executor (condicional/parallel/HITL)│
+│   YAML → Pydantic → DAG → Executor (conditional/parallel/HITL)│
 └────────────────────────┬─────────────────────────────────────┘
                          ▼
 ┌──────────────────────────────────────────────────────────────┐
-│   SPECIALIST REGISTRY (5-12 agentes pre-construidos)          │
+│   SPECIALIST REGISTRY (5–12 pre-built agents)                 │
 │   planner · coder · reviewer · tester · debugger · ...        │
 └────────────────────────┬─────────────────────────────────────┘
                          ▼
 ┌──────────────────────────────────────────────────────────────┐
-│   CROSS-CUTTING MIDDLEWARE (todos los LLM calls lo cruzan)    │
+│   CROSS-CUTTING MIDDLEWARE (all LLM calls pass through it)    │
 │   🧠 Token Optimizer  🛡️ Verification  💰 Cost Guard          │
 └────────────────────────┬─────────────────────────────────────┘
                          ▼
@@ -275,49 +283,49 @@ arnes ejecutar manuales/auditar-pr.md.yaml
 
 ## Roadmap
 
-- **v0.1.0 (Q1 2026)** — MVP: 5 specialists, 10 playbooks, DSL básico, MCP server, Token Optimizer v0, Verification v0, Cost Guard.
-- **v0.2.0** — MCP cliente bidireccional, HITL como tool, Streaming AG-UI, Docker sandbox.
-- **v0.3.0** — Episodic memory, context compaction, critic loop, 5 specialists más.
+- **v0.1.0 (Q1 2026)** — MVP: 5 specialists, 10 playbooks, basic DSL, MCP server, Token Optimizer v0, Verification v0, Cost Guard.
+- **v0.2.0** — Bidirectional MCP client, HITL as tool, AG-UI streaming, Docker sandbox.
+- **v0.3.0** — Episodic memory, context compaction, critic loop, 5 more specialists.
 - **v0.4.0** — Multi-agent Crew, PolicyEngine, gVisor sandbox.
-- **v0.5.0** — ARNES como MCP server exponiendo playbooks a Cursor/Claude Desktop.
-- **v1.0.0** — A2A con trust, skills auto-aprendizaje, marketplace de playbooks.
+- **v0.5.0** — ARNES as MCP server exposing playbooks to Cursor/Claude Desktop.
+- **v1.0.0** — A2A with trust, auto-learning skills, playbook marketplace.
 
 ---
 
-## Comunidad
+## Community
 
-- **Discord:** [discord.gg/ARNES](https://discord.gg/ARNES) — canales `#general`, `#español`, `#help`, `#showcase`
+- **Discord:** [discord.gg/ARNES](https://discord.gg/ARNES) — channels `#general`, `#español`, `#help`, `#showcase`
 - **Discussions:** [GitHub Discussions](https://github.com/frangelbarrera/ARNES/discussions)
-- **Issues:** [Bug reports y feature requests](https://github.com/frangelbarrera/ARNES/issues)
-- **Contributing:** lee [CONTRIBUTING.md](CONTRIBUTING.md) — aceptamos PRs desde D-day.
+- **Issues:** [Bug reports and feature requests](https://github.com/frangelbarrera/ARNES/issues)
+- **Contributing:** read [CONTRIBUTING.md](CONTRIBUTING.md) — we accept PRs from day one.
 
-### Wedge hispanohablante
+### Latam wedge
 
-500M hispanohablantes tech subatendidos por la oferta actual. ARNES nace bilingüe:
-README, docs, quickstart y Discord en EN y ES. Si quieres contribuir traducciones,
-abre un issue con label `i18n`.
+500M Spanish-speaking developers underserved by the current offering. ARNES
+is born bilingual: README, docs, quickstart, and Discord in EN and ES. If
+you want to contribute translations, open an issue with the `i18n` label.
 
 ---
 
-## Contribuir
+## Contributing
 
-Lee [CONTRIBUTING.md](CONTRIBUTING.md). TL;DR:
+Read [CONTRIBUTING.md](CONTRIBUTING.md). TL;DR:
 
 1. Fork + clone
-2. `uv sync --all-extras` para setup dev
+2. `uv sync --all-extras` for dev setup
 3. `pre-commit install`
-4. Crea tu rama: `feat/mi-feature`
+4. Create your branch: `feat/my-feature`
 5. Conventional commits: `feat: ...`, `fix: ...`, `docs: ...`
-6. `pytest` debe pasar con >80% coverage
-7. Abre PR — revisión en <48h
+6. `pytest` must pass with >65% coverage
+7. Open PR — review within 48h
 
-**Good first issues:** busca issues con label `good-first-issue`.
+**Good first issues:** look for issues labeled `good-first-issue`.
 
 ---
 
 ## Sponsors
 
-ARNES es 100% open-source bajo Apache 2.0. Si te ahorra dinero o tiempo:
+ARNES is 100% open-source under Apache 2.0. If it saves you money or time:
 
 - [GitHub Sponsors](https://github.com/sponsors/frangelbarrera)
 - [Open Collective](https://opencollective.com/arnes)
@@ -325,31 +333,66 @@ ARNES es 100% open-source bajo Apache 2.0. Si te ahorra dinero o tiempo:
 
 <div align="center">
 
-*Sponsors aquí*
+*Sponsors here*
 
 </div>
 
 ---
 
-## Licencia
+## License
 
-Apache License 2.0. Ver [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
 
-## Agradecimientos
+## Acknowledgments
 
-ARNES existe sobre los hombros de:
-- [LangGraph](https://github.com/langchain-ai/langgraph) — inspiración del DAG engine
+ARNES stands on the shoulders of:
+- [LangGraph](https://github.com/langchain-ai/langgraph) — DAG engine inspiration
 - [LiteLLM](https://github.com/BerriAI/litellm) — provider abstraction
 - [MCP SDK](https://github.com/modelcontextprotocol/python-sdk) — protocol
-- [12-factor-agents](https://github.com/humanlayer/12-factor-agents) — manifiesto
+- [12-factor-agents](https://github.com/humanlayer/12-factor-agents) — manifesto
 - [Pydantic](https://github.com/pydantic/pydantic) — structured data
 
 ---
 
 <div align="center">
 
-**[⭐ Star el repo](https://github.com/frangelbarrera/ARNES)** si esto te resuena.
+**[⭐ Star the repo](https://github.com/frangelbarrera/ARNES)** if this resonates.
 
 *From Latam to the world. 🌎*
 
 </div>
+
+---
+
+## Known Limitations in v0.1 (Alpha)
+
+This is an **alpha release**. The following features are documented but have
+known issues that will be fixed in v0.2:
+
+- **Parallel branches** execute sequentially in v0.1 (true `asyncio.gather`
+  comes in v0.2).
+- **HITL gates** auto-reject in non-interactive mode. Real interactive HITL
+  via MCP comes in v0.2.
+- **Docker sandbox** is not wired up by default. Local shell execution
+  requires `ARNES_DEV_MODE=1`. Full sandbox integration lands in v0.2.
+- **MCP HTTP transport** is a minimal implementation (no auth, no rate
+  limiting). Use stdio transport for production. Full HTTP/SSE in v0.2.
+- **Retry policy** schema is defined but execution is not yet implemented.
+- **Context compaction** and **few-shot pruning** are not yet implemented.
+- **Confidence gate** and **critic loop** are not yet implemented.
+- **Coverage** is at 66% (target: 80% by v0.2).
+- **mypy --strict** is not yet enforced in CI (46 errors to fix).
+
+**What does work in v0.1:**
+- ✅ Thread + stateless reducer pattern
+- ✅ 5 specialists with ReAct tool-use loop
+- ✅ Playbook DSL with conditionals and template resolution
+- ✅ CostGuard with budget enforcement and circuit breaker
+- ✅ VerificationLayer with structured outputs and refusal pattern
+- ✅ TokenOptimizer with model routing and semantic cache
+- ✅ MCP server (stdio transport)
+- ✅ CLI (init, run, lint, eval, list, mcp serve)
+- ✅ SSRF protection with DNS resolution
+- ✅ Path traversal + symlink escape detection
+- ✅ Secret filtering from subprocess env
+- ✅ argsFingerprint for HITL rug-pull detection

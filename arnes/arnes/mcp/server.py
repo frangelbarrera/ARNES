@@ -23,16 +23,15 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import structlog
 
 from arnes.llm.factory import get_provider
 from arnes.middleware.cost_guard import CostBudget
-from arnes.playbooks.compiler import PlaybookCompiler, PlaybookCompileError
+from arnes.playbooks.compiler import PlaybookCompileError, PlaybookCompiler
 from arnes.playbooks.executor import PlaybookExecutor
 from arnes.specialists.base import get_default_specialist_registry
-from arnes.thread import Thread
 
 logger = structlog.get_logger(__name__)
 
@@ -44,13 +43,13 @@ class ArnesMCPServer:
     compliance, use the official `mcp` Python SDK and wrap this class.
     """
 
-    PROTOCOL_VERSION = "2024-11-05"
-    SERVER_INFO = {
+    PROTOCOL_VERSION: ClassVar[str] = "2024-11-05"
+    SERVER_INFO: ClassVar[dict[str, str]] = {
         "name": "arnes",
         "version": "0.1.0a1",
     }
 
-    TOOLS = [
+    TOOLS: ClassVar[list[dict[str, Any]]] = [
         {
             "name": "arnes_run_playbook",
             "description": "Execute an ARNES playbook (YAML manual). Returns the run result.",
@@ -59,7 +58,10 @@ class ArnesMCPServer:
                 "properties": {
                     "path": {"type": "string", "description": "Path to the playbook YAML file"},
                     "input": {"type": "object", "description": "Initial input variables"},
-                    "model": {"type": "string", "description": "LLM model (default: ollama/llama3.2)"},
+                    "model": {
+                        "type": "string",
+                        "description": "LLM model (default: ollama/llama3.2)",
+                    },
                     "budget_usd": {"type": "number", "description": "Max budget in USD"},
                 },
                 "required": ["path"],
@@ -76,7 +78,10 @@ class ArnesMCPServer:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "dir": {"type": "string", "description": "Directory to scan (default: manuales/)"},
+                    "dir": {
+                        "type": "string",
+                        "description": "Directory to scan (default: manuales/)",
+                    },
                 },
             },
         },
@@ -132,7 +137,9 @@ class ArnesMCPServer:
                         "content": [
                             {
                                 "type": "text",
-                                "text": json.dumps(result, indent=2, default=str, ensure_ascii=False),
+                                "text": json.dumps(
+                                    result, indent=2, default=str, ensure_ascii=False
+                                ),
                             }
                         ]
                     },
@@ -165,8 +172,26 @@ class ArnesMCPServer:
         raise ValueError(f"Unknown tool: {name}")
 
     async def _run_playbook(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Execute a playbook."""
+        """Execute a playbook. Path is validated to prevent traversal."""
         path = args["path"]
+
+        # Path traversal protection: resolve and validate
+        from pathlib import Path
+
+        try:
+            resolved = Path(path).resolve(strict=False)
+        except (ValueError, OSError) as e:
+            return {"success": False, "error": f"Invalid path: {e}"}
+
+        # Block access to sensitive system paths
+        blocked_prefixes = ["/etc", "/root", "/var", "/proc", "/sys", "/dev"]
+        path_str = str(resolved)
+        if any(path_str.startswith(prefix) for prefix in blocked_prefixes):
+            return {
+                "success": False,
+                "error": f"Access denied: path '{path_str}' is in a blocked system directory.",
+            }
+
         model = args.get("model", "ollama/llama3.2")
         budget = args.get("budget_usd", 0.50)
         initial_input = args.get("input")
@@ -194,7 +219,9 @@ class ArnesMCPServer:
             "total_cost_usd": result.total_cost_usd,
             "outputs": {k: v for k, v in result.outputs.items() if not k.startswith("__")},
             "error": result.error,
-            "bitacora_preview": result.to_markdown()[:500] + "..." if len(result.to_markdown()) > 500 else result.to_markdown(),
+            "bitacora_preview": result.to_markdown()[:500] + "..."
+            if len(result.to_markdown()) > 500
+            else result.to_markdown(),
         }
 
     def _list_specialists(self) -> dict[str, Any]:
@@ -223,9 +250,9 @@ class ArnesMCPServer:
                 playbooks.append(
                     {
                         "file": str(yaml_file),
-                        "name": pb.metadata.nombre,
-                        "objective": pb.metadata.objetivo,
-                        "steps_count": len(pb.pasos),
+                        "name": pb.metadata.name,
+                        "objective": pb.metadata.objective,
+                        "steps_count": len(pb.steps),
                         "budget_usd": pb.metadata.budget_usd,
                     }
                 )
@@ -239,10 +266,10 @@ class ArnesMCPServer:
             playbook = PlaybookCompiler.from_file(path)
             return {
                 "valid": True,
-                "name": playbook.metadata.nombre,
-                "objective": playbook.metadata.objetivo,
-                "steps": len(playbook.pasos),
-                "step_ids": [s.id for s in playbook.pasos],
+                "name": playbook.metadata.name,
+                "objective": playbook.metadata.objective,
+                "steps": len(playbook.steps),
+                "step_ids": [s.id for s in playbook.steps],
             }
         except PlaybookCompileError as e:
             return {"valid": False, "error": str(e)}
@@ -283,9 +310,7 @@ async def serve_http(server: ArnesMCPServer, host: str = "127.0.0.1", port: int 
             response = await server.handle_request(request_data)
             return web.json_response(response)
         except Exception as e:
-            return web.json_response(
-                {"error": str(e)}, status=500
-            )
+            return web.json_response({"error": str(e)}, status=500)
 
     app = web.Application()
     app.router.add_post("/", handle)

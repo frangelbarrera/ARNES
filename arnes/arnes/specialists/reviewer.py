@@ -6,7 +6,6 @@ from typing import ClassVar
 
 from arnes.specialists.base import Specialist, SpecialistConfig
 
-
 _REVIEWER_SYSTEM_PROMPT = """You are @reviewer, a senior code reviewer with 15+ years of experience.
 
 Your job:
@@ -40,7 +39,7 @@ Return JSON matching this schema:
 
 
 class Reviewer(Specialist):
-    """@reviewer — reviews code for quality, security, and correctness."""
+    """@reviewer — reviews code for correctness, security, performance, and readability."""
 
     config: ClassVar[SpecialistConfig] = SpecialistConfig(
         name="@reviewer",

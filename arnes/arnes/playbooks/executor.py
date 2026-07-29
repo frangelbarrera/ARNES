@@ -17,7 +17,6 @@ The executor is async and supports both fire-and-forget and streaming modes.
 
 from __future__ import annotations
 
-import asyncio
 import re
 import time
 from typing import Any
@@ -28,7 +27,7 @@ from pydantic import BaseModel, Field
 from arnes.llm.base import LLMProvider
 from arnes.llm.factory import get_provider
 from arnes.middleware.cost_guard import BudgetExceeded, CostBudget, CostGuard
-from arnes.playbooks.schema import Playbook, PlaybookStep
+from arnes.playbooks.schema import ConditionalBranch, Playbook, PlaybookStep
 from arnes.specialists.base import SpecialistRegistry, get_default_specialist_registry
 from arnes.thread import Thread
 from arnes.thread.events import (
@@ -117,7 +116,7 @@ class PlaybookExecutor:
         abort_error: str | None = None
 
         try:
-            for step in playbook.pasos:
+            for step in playbook.steps:
                 # Check if step should be skipped due to prior saltar_a
                 skip_until = outputs.get("__skip_steps_until", {})
                 if skip_until:
@@ -153,20 +152,20 @@ class PlaybookExecutor:
                 else:
                     steps_failed += 1
                     # Check if step has si_no_se_cumple fallback
-                    if step.si_no_se_cumple:
+                    if step.if_not_met:
                         branch_result = await self._handle_conditional_branch(
                             step,
-                            step.si_no_se_cumple,
+                            step.if_not_met,
                             thread_holder,
                             outputs,
                             cost_guard,
                             playbook,
                         )
-                        if branch_result.get("terminar"):
+                        if branch_result.get("terminate"):
                             logger.info(
                                 "run_terminated_by_conditional",
                                 step_id=step.id,
-                                termination=branch_result["terminar"],
+                                termination=branch_result["terminate"],
                             )
                             break
                     else:
@@ -255,8 +254,8 @@ class PlaybookExecutor:
             StepStartedEvent(
                 thread_id=thread_holder[0].id,
                 step_id=step.id,
-                specialist=step.especialista or step.herramienta,
-                data={"step_id": step.id, "specialist": step.especialista or step.herramienta},
+                specialist=step.specialist or step.tool,
+                data={"step_id": step.id, "specialist": step.specialist or step.tool},
             )
         )
 
@@ -264,17 +263,17 @@ class PlaybookExecutor:
 
         try:
             # Parallel branch
-            if step.paralelo:
+            if step.parallel:
                 result = await self._execute_parallel(
                     step, thread_holder, outputs, cost_guard, playbook
                 )
             # Specialist invocation
-            elif step.especialista:
+            elif step.specialist:
                 result = await self._execute_specialist(
                     step, thread_holder, outputs, cost_guard, playbook
                 )
             # Tool invocation
-            elif step.herramienta:
+            elif step.tool:
                 result = await self._execute_tool(step, thread_holder, outputs, playbook)
             else:
                 raise ValueError(f"Step '{step.id}' has no action defined")
@@ -284,7 +283,7 @@ class PlaybookExecutor:
                 StepCompletedEvent(
                     thread_id=thread_holder[0].id,
                     step_id=step.id,
-                    specialist=step.especialista or step.herramienta,
+                    specialist=step.specialist or step.tool,
                     data={
                         "step_id": step.id,
                         "output": result.get("output"),
@@ -301,7 +300,7 @@ class PlaybookExecutor:
                 StepFailedEvent(
                     thread_id=thread_holder[0].id,
                     step_id=step.id,
-                    specialist=step.especialista or step.herramienta,
+                    specialist=step.specialist or step.tool,
                     data={"step_id": step.id, "error": str(e), "retry": False},
                 )
             )
@@ -316,11 +315,11 @@ class PlaybookExecutor:
         playbook: Playbook,
     ) -> dict[str, Any]:
         """Invoke a specialist."""
-        specialist = self.specialist_registry.get(step.especialista or "")
+        specialist = self.specialist_registry.get(step.specialist or "")
         if not specialist:
             return {
                 "success": False,
-                "error": f"Specialist '{step.especialista}' not registered. Available: {self.specialist_registry.list()}",
+                "error": f"Specialist '{step.specialist}' not registered. Available: {self.specialist_registry.list()}",
             }
 
         # Resolve input (may contain Jinja2-style template refs)
@@ -330,7 +329,7 @@ class PlaybookExecutor:
         ctx = ToolContext(
             thread_id=thread_holder[0].id,
             step_id=step.id,
-            specialist=step.especialista,
+            specialist=step.specialist,
             working_dir=".",
             sandbox_enabled=False,  # Disabled for MVP; enable in v0.2
             budget_remaining_usd=(
@@ -350,7 +349,7 @@ class PlaybookExecutor:
         success = result.get("success", False)
         if not success and result.get("budget_exceeded"):
             raise BudgetExceeded(
-                f"Budget exceeded during specialist '{step.especialista}' invocation",
+                f"Budget exceeded during specialist '{step.specialist}' invocation",
                 spent=cost_guard.spent_usd,
                 budget=cost_guard.budget.effective_budget() or 0.0,
                 level="specialist",
@@ -379,11 +378,11 @@ class PlaybookExecutor:
         playbook: Playbook,
     ) -> dict[str, Any]:
         """Invoke a tool."""
-        tool = self.tool_registry.get(step.herramienta or "")
+        tool = self.tool_registry.get(step.tool or "")
         if not tool:
             return {
                 "success": False,
-                "error": f"Tool '{step.herramienta}' not registered. Available: {self.tool_registry.list()}",
+                "error": f"Tool '{step.tool}' not registered. Available: {self.tool_registry.list()}",
             }
 
         input_data = self._resolve_input(step.input, outputs)
@@ -416,7 +415,7 @@ class PlaybookExecutor:
         For MVP, parallel steps are executed sequentially (true parallelism
         requires a different state model — coming in v0.2).
         """
-        if not step.paralelo:
+        if not step.parallel:
             return {"success": False, "error": "No parallel steps defined"}
 
         outputs_map = {}
@@ -424,11 +423,16 @@ class PlaybookExecutor:
 
         # For MVP: sequential execution of "parallel" steps (correctness > parallelism)
         # In v0.2 we'll use asyncio.gather with proper thread merging
-        for sub_step in step.paralelo:
+        for sub_step in step.parallel:
             result = await self._execute_step(
                 sub_step, thread_holder, outputs, cost_guard, playbook
             )
-            outputs_map[sub_step.id] = result.get("output")
+            # Wrap output in {"output": ...} structure so templates like
+            # {{ steps.parallel.sub_step_id.output }} resolve correctly
+            outputs_map[sub_step.id] = {
+                "output": result.get("output"),
+                "success": result.get("success", False),
+            }
             if not result.get("success", False):
                 all_success = False
 
@@ -440,45 +444,48 @@ class PlaybookExecutor:
     async def _handle_conditional_branch(
         self,
         step: PlaybookStep,
-        branch,
+        branch: ConditionalBranch,
         thread_holder: list[Thread],
         outputs: dict[str, Any],
         cost_guard: CostGuard,
         playbook: Playbook,
     ) -> dict[str, Any]:
-        """Handle a si_no_se_cumple or conditional branch."""
+        """Handle an if_not_met or conditional branch."""
         thread_holder[0] = thread_holder[0].append(
             ConditionalBranchEvent(
                 thread_id=thread_holder[0].id,
                 step_id=step.id,
-                data={"condition": branch.cuando if hasattr(branch, "cuando") else "si_no_se_cumple", "branch": branch.accion},
+                data={
+                    "condition": branch.when or "if_not_met",
+                    "action": branch.action,
+                },
             )
         )
 
-        if branch.accion == "llamar" and branch.especialista:
+        if branch.action == "call" and branch.specialist:
             # Invoke the fallback specialist
             fallback_step = PlaybookStep(
                 id=f"{step.id}__fallback",
-                especialista=branch.especialista,
+                specialist=branch.specialist,
                 input=branch.input or {},
             )
             result = await self._execute_specialist(
                 fallback_step, thread_holder, outputs, cost_guard, playbook
             )
             outputs[fallback_step.id] = result.get("output")
-            return {"terminar": None, "result": result}
+            return {"terminate": None, "result": result}
 
-        if branch.accion == "terminar":
-            return {"terminar": branch.terminar}
+        if branch.action == "terminate":
+            return {"terminate": branch.terminate}
 
-        if branch.accion == "saltar" and branch.saltar_a:
-            # CORRECT semantics: saltar_a means "jump TO this step"
-            # So we skip all steps between current and target
+        if branch.action == "skip" and branch.skip_to:
+            # skip_to means "jump TO this step" — skip all steps between
+            # current and target
             skip_set = outputs.setdefault("__skip_steps_until", {})
-            skip_set[branch.saltar_a] = True  # Will be cleared when we reach it
-            return {"terminar": None}
+            skip_set[branch.skip_to] = True  # Will be cleared when we reach it
+            return {"terminate": None}
 
-        return {"terminar": None}
+        return {"terminate": None}
 
     # ============================================================
     # Template resolution
@@ -511,8 +518,10 @@ class PlaybookExecutor:
                     resolved[k] = self._resolve_input(v, outputs)
                 elif isinstance(v, list):
                     resolved[k] = [
-                        self._resolve_template(item, outputs) if isinstance(item, str)
-                        else self._resolve_input(item, outputs) if isinstance(item, dict)
+                        self._resolve_template(item, outputs)
+                        if isinstance(item, str)
+                        else self._resolve_input(item, outputs)
+                        if isinstance(item, dict)
                         else item
                         for item in v
                     ]
@@ -546,21 +555,27 @@ class PlaybookExecutor:
         for match in reversed(matches):
             expr = match.group(1).strip()
             resolved = self._resolve_expr(expr, outputs)
-            result = result[:match.start()] + str(resolved) + result[match.end():]
+            result = result[: match.start()] + str(resolved) + result[match.end() :]
 
         return result
 
     def _resolve_expr(self, expr: str, outputs: dict[str, Any]) -> Any:
-        """Resolve a single template expression like 'pasos.X.salida'."""
-        # Support "pasos.X.salida" → outputs["X"]["output"]
+        """Resolve a single template expression like 'steps.X.output'."""
+        # Support "steps.X.output" → outputs["X"]["output"]
         # Support "variables.X" → outputs["X"]
-        parts = expr.replace("pasos.", "").replace("variables.", "").split(".")
+        # Backwards compat: "pasos.X.salida" → outputs["X"]["output"]
+        parts = (
+            expr.replace("steps.", "")
+            .replace("variables.", "")
+            .replace("pasos.", "")  # legacy ES
+            .replace("salida", "output")  # legacy ES
+            .split(".")
+        )
 
         current: Any = outputs
-        for part in parts:
+        for raw_part in parts:
             if isinstance(current, dict):
-                # Map "salida" → "output" (ES/EN bilingual)
-                part = "output" if part == "salida" else part
+                part = raw_part
                 if part in current:
                     current = current[part]
                 else:

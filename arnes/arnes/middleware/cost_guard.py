@@ -26,7 +26,7 @@ from collections import deque
 from typing import Any
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse
 
@@ -68,7 +68,12 @@ class CostBudget(BaseModel):
 
     # Effective budget = most specific non-None value
     def effective_budget(self) -> float | None:
-        for v in [self.task_budget_usd, self.agent_budget_usd, self.project_budget_usd, self.org_budget_usd]:
+        for v in [
+            self.task_budget_usd,
+            self.agent_budget_usd,
+            self.project_budget_usd,
+            self.org_budget_usd,
+        ]:
             if v is not None:
                 return v
         return None
@@ -94,6 +99,9 @@ class CostGuard:
         self._spend_history: deque[tuple[float, float]] = deque(maxlen=1000)  # (timestamp, cost)
         self._paused = False
         self._aborted = False
+        # Marker so specialists can detect already-wrapped providers
+        # and avoid double-wrapping the middleware stack.
+        self._arnes_wrapped = True
 
     async def complete(
         self,
@@ -102,6 +110,7 @@ class CostGuard:
         model: str,
         tools: list[dict[str, Any]] | None = None,
         response_schema: dict[str, Any] | None = None,
+        interactive: bool = False,
         **kwargs: Any,
     ) -> LLMResponse:
         """Cost-guarded completion. May raise BudgetExceeded."""
@@ -117,7 +126,9 @@ class CostGuard:
 
         # Check if we're paused (waiting for HITL)
         if self._paused:
-            logger.info("cost_guard_paused", spent=self.spent_usd, budget=self.budget.effective_budget())
+            logger.info(
+                "cost_guard_paused", spent=self.spent_usd, budget=self.budget.effective_budget()
+            )
             raise BudgetExceeded(
                 "Run paused at 95% budget — awaiting human approval",
                 spent=self.spent_usd,
@@ -144,14 +155,17 @@ class CostGuard:
                 )
 
             if self.spent_usd >= effective_budget * self.budget.pause_at_pct:
-                self._paused = True
+                # Emit a pause event — in interactive mode, this would block
+                # and wait for human approval. In non-interactive mode, we log
+                # a warning and continue (the next call will hard-stop at 100%).
                 logger.warning(
-                    "cost_guard_pause",
+                    "cost_guard_pause_threshold_reached",
                     spent=self.spent_usd,
                     budget=effective_budget,
                     pct=self.spent_usd / effective_budget,
+                    interactive=interactive,
                 )
-                self._paused = False
+                # TODO v0.2: emit HumanApprovalRequestedEvent and block
 
             elif self.spent_usd >= effective_budget * self.budget.warn_at_pct:
                 logger.warning(

@@ -1,54 +1,51 @@
 # Code of Conduct
 
-## Nuestro compromiso
+## Our Commitment
 
-En el interés de fomentar un ambiente abierto y acogedor, nosotros como
-contribuyentes y maintainers nos comprometemos a hacer de la participación en
-ARNES y nuestra comunidad una experiencia libre de acoso para todos,
-independientemente de edad, tamaño corporal, discapacidad, etnia, identidad
-y expresión de género, nivel de experiencia, educación, estatus
-socioeconómico, nacionalidad, apariencia personal, raza, religión o
-identidad sexual y orientación.
+In the interest of fostering an open and welcoming environment, we as
+contributors and maintainers pledge to make participation in ARNES and our
+community a harassment-free experience for everyone, regardless of age, body
+size, disability, ethnicity, gender identity and expression, level of
+experience, education, socio-economic status, nationality, personal
+appearance, race, religion, or sexual identity and orientation.
 
-## Nuestros estándares
+## Our Standards
 
-Ejemplos de comportamiento que contribuyen a crear un ambiente positivo:
+Examples of behavior that contributes to a positive environment:
 
-* Usar lenguaje acogedor e inclusivo
-* Respetar diferentes puntos de vista y experiencias
-* Aceptar gracefully la crítica constructiva
-* Enfocarse en lo que es mejor para la comunidad
-* Mostrar empatía hacia otros miembros de la comunidad
+* Using welcoming and inclusive language
+* Being respectful of differing viewpoints and experiences
+* Gracefully accepting constructive criticism
+* Focusing on what is best for the community
+* Showing empathy towards other community members
 
-Ejemplos de comportamiento inaceptable:
+Examples of unacceptable behavior:
 
-* Uso de lenguaje o imágenes sexualizadas
-* Trolling, comentarios insultantes/despectivos, y ataques personales o políticos
-* Acoso público o privado
-* Publicar información privada de otros sin consentimiento explícito
-* Otra conducta que pueda razonablemente considerarse inapropiada en un
-  entorno profesional
+* The use of sexualized language or imagery
+* Trolling, insulting/deprecating comments, and personal or political attacks
+* Public or private harassment
+* Publishing others' private information without explicit permission
+* Other conduct which could reasonably be considered inappropriate in a
+  professional setting
 
-## Aplicación
+## Enforcement
 
-Las violaciones del Code of Conduct pueden ser reportadas a
-`coc@arnes.dev`. Todas las quejas serán revisadas e investigadas y
-resultarán en una respuesta que se considere necesaria y apropiada a las
-circunstancias. El equipo de maintainers está obligado a mantener
-confidencialidad sobre el reportante de un incidente.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be
+reported to `coc@arnes.dev`. All complaints will be reviewed and investigated
+and will result in a response that is deemed necessary and appropriate to the
+circumstances. The maintainers are obligated to maintain confidentiality with
+regard to the reporter of an incident.
 
-## Alcance
+## Scope
 
-Este Code of Conduct aplica en todos los espacios de la comunidad de ARNES,
-incluyendo GitHub, Discord, redes sociales cuando se hable de ARNES, y
-cualquier evento oficial.
+This Code of Conduct applies in all ARNES community spaces, including GitHub,
+Discord, social media when discussing ARNES, and any official events.
 
-## Atribución
+## Attribution
 
-Adaptado del [Contributor Covenant](https://www.contributor-covenant.org/)
-versión 2.1, disponible en
+Adapted from the [Contributor Covenant](https://www.contributor-covenant.org/)
+version 2.1, available at
 https://www.contributor-covenant.org/version/2/1/code_of_conduct.html.
 
-ARNES nació en Latam. Damos especial bienvenida a contribuyentes
-hispanohablantes y a cualquiera que haya sentido que el OSS mainstream no
-le habla en su idioma.
+ARNES was born in Latam. We especially welcome Spanish-speaking contributors
+and anyone who has felt that mainstream OSS does not speak their language.

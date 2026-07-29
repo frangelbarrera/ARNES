@@ -13,6 +13,12 @@ from arnes.tools.builtin import (
 def get_default_registry() -> ToolRegistry:
     """Return a fresh ToolRegistry with all built-in tools registered."""
     registry = ToolRegistry()
-    for tool_class in [ShellTool, HttpTool, FilesystemReadTool, FilesystemWriteTool, HumanApprovalTool]:
+    for tool_class in [
+        ShellTool,
+        HttpTool,
+        FilesystemReadTool,
+        FilesystemWriteTool,
+        HumanApprovalTool,
+    ]:
         registry.register_class(tool_class)
     return registry

@@ -1,9 +1,10 @@
 """Tests for arnes.middleware."""
+
 from __future__ import annotations
 
 import pytest
 
-from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
+from arnes.llm.base import LLMMessage
 from arnes.llm.mock import MockLLMProvider
 from arnes.middleware.cost_guard import BudgetExceeded, CostBudget, CostGuard
 from arnes.middleware.token_optimizer import TokenOptimizer
@@ -68,7 +69,10 @@ class TestVerificationLayer:
         response = await verification.complete(messages, model="mock/test")
 
         # Should detect hedging and replace with refusal
-        assert response.content == "I don't have enough confidence to answer this. Please verify manually."
+        assert (
+            response.content
+            == "I don't have enough confidence to answer this. Please verify manually."
+        )
 
     @pytest.mark.asyncio
     async def test_structured_output_validation(self):

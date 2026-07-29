@@ -1,0 +1,18 @@
+# hola-mundo.yaml — Simplest example manual
+# Documentation: https://arnes.dev/playbook-dsl
+
+name: hello-world
+objective: Demonstrate the basic ARNES flow with a simple manual
+budget_usd: 0.10
+
+steps:
+  - id: plan
+    specialist: "@planner"
+    input:
+      task: "Plan a 3-step process for writing a blog post about ARNES"
+
+  - id: write_outline
+    specialist: "@coder"
+    input:
+      spec: "Write a markdown outline based on the plan"
+      context: "{{ steps.plan.output }}"

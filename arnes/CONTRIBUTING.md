@@ -1,118 +1,118 @@
 # Contributing to ARNES
 
-¡Gracias por considerar contribuir a ARNES! Este documento te guía a través del proceso.
+Thank you for considering contributing to ARNES! This document guides you through the process.
 
-## Código de Conducta
+## Code of Conduct
 
-Al participar, aceptas cumplir nuestro [Code of Conduct](CODE_OF_CONDUCT.md). TL;DR: sé respetuoso, inclusivo y profesional. ARNES nació en Latam y damos especial bienvenida a contribuyentes hispanohablantes.
+By participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md). TL;DR: be respectful, inclusive, and professional. ARNES was born in Latam and we especially welcome Spanish-speaking contributors.
 
-## Setup de desarrollo
+## Development Setup
 
 ```bash
 # 1. Fork + clone
-git clone https://github.com/TU-USUARIO/ARNES.git
+git clone https://github.com/YOUR-USERNAME/ARNES.git
 cd ARNES
 
-# 2. Instala uv (gestor de paquetes)
+# 2. Install uv (package manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 3. Instala dependencias
-uv sync --all-extras
+# 3. Install dependencies
+uv sync --all-extras --dev
 
-# 4. Instala pre-commit hooks
+# 4. Install pre-commit hooks
 uv run pre-commit install
 
-# 5. Verifica que todo funciona
+# 5. Verify everything works
 uv run pytest
 ```
 
-## Estructura del proyecto
+## Project Structure
 
 ```
 arnes/
 ├── arnes/
-│   ├── agent/           # Agent class + stateless reducer
-│   ├── thread/          # Thread + Event[] stateless
-│   ├── tools/           # Tool registry + BaseTool
+│   ├── agent/           # Harness class (high-level wrapper)
+│   ├── thread/          # Thread + Event[] stateless reducer
+│   ├── tools/           # Tool registry + BaseTool + 5 built-in tools
 │   ├── events/          # Event types (Pydantic)
-│   ├── llm/             # LLM provider abstraction
+│   ├── llm/             # LLM provider abstraction (Ollama, LiteLLM, Mock)
 │   ├── middleware/      # Token Optimizer, Verification, Cost Guard
-│   ├── mcp/             # MCP server
+│   ├── mcp/             # MCP server (stdio + HTTP)
 │   ├── specialists/     # 5+ pre-built specialists
-│   ├── playbooks/       # Playbook DSL + 10 curated manuals
+│   ├── playbooks/       # Playbook DSL + compiler + executor
 │   └── cli/             # arnes CLI
 ├── tests/
-├── examples/
+├── manuals/             # Example playbooks
 ├── docs/
 └── pyproject.toml
 ```
 
 ## Conventional Commits
 
-Usamos [Conventional Commits](https://www.conventionalcommits.org/):
+We use [Conventional Commits](https://www.conventionalcommits.org/):
 
-- `feat: ...` — nueva feature
+- `feat: ...` — new feature
 - `fix: ...` — bug fix
-- `docs: ...` — solo documentación
-- `style: ...` — formato, no afecta código
-- `refactor: ...` — refactor sin cambios de comportamiento
-- `perf: ...` — mejora de performance
-- `test: ...` — añade tests
-- `chore: ...` — tareas de build, deps, etc.
+- `docs: ...` — documentation only
+- `style: ...` — formatting, no code changes
+- `refactor: ...` — refactor without behavior changes
+- `perf: ...` — performance improvement
+- `test: ...` — adds tests
+- `chore: ...` — build, deps, etc.
 
-Ejemplo: `feat(specialists): add @security-auditor with SAST integration`
+Example: `feat(specialists): add @security-auditor with SAST integration`
 
-## Tipos de contribuciones bienvenidas
+## Types of Contributions Welcome
 
-### 🥇 Alta prioridad
-- **Nuevos specialists** — abre issue primero para discutir el rol
-- **Nuevos playbooks** — curados, no triviales
-- **Bug fixes** con test que lo reproduzca
-- **Mejoras de performance** con benchmark antes/después
+### 🥇 High Priority
+- **New specialists** — open an issue first to discuss the role
+- **New playbooks** — curated, non-trivial
+- **Bug fixes** with test that reproduces it
+- **Performance improvements** with before/after benchmark
 
-### 🥈 Media prioridad
-- **Traducciones** — README, docs, quickstart a otros idiomas
-- **Mejoras de DX** — mejor error messages, better CLI UX
-- **Más tests** — busca `# pragma: no cover` y cubre esos caminos
+### 🥈 Medium Priority
+- **Translations** — README, docs, quickstart to other languages
+- **DX improvements** — better error messages, better CLI UX
+- **More tests** — look for `# pragma: no cover` and cover those paths
 
-### 🥉 Baja prioridad (pero bienvenidas)
+### 🥉 Low Priority (but welcome)
 - **Typo fixes**
-- **Mejoras de docs**
-- **Refactors cosméticos**
+- **Doc improvements**
+- **Cosmetic refactors**
 
-## Proceso de PR
+## Pull Request Process
 
-1. **Abre issue primero** para features grandes (>"good first issue" scope)
-2. **Fork + branch**: `feat/mi-feature` o `fix/issue-123`
-3. **Tests**: todos los PRs deben mantener >80% coverage
-4. **Docs**: actualiza README/docs si tu feature lo requiere
-5. **Changelog**: añade entrada en `CHANGELOG.md` bajo `[Unreleased]`
-6. **CLA**: al primer PR, firma el CLA (automático vía cla-assistant)
+1. **Open an issue first** for large features (beyond "good first issue" scope)
+2. **Fork + branch**: `feat/my-feature` or `fix/issue-123`
+3. **Tests**: all PRs must maintain >65% coverage
+4. **Docs**: update README/docs if your feature requires it
+5. **Changelog**: add entry in `CHANGELOG.md` under `[Unreleased]`
+6. **CLA**: on first PR, sign the CLA (automatic via cla-assistant)
 
 ## Testing
 
 ```bash
-# Todos los tests
+# All tests
 uv run pytest
 
-# Solo unit tests
+# Unit tests only
 uv run pytest tests/unit
 
-# Con coverage report
+# With coverage report
 uv run pytest --cov=arnes --cov-report=html
 open htmlcov/index.html
 
-# Tests específicos
+# Specific tests
 uv run pytest tests/unit/test_thread.py -v
 
-# Tests lentos (que llaman a LLM real)
+# Slow tests (that call real LLMs)
 uv run pytest -m slow
 ```
 
-### Snapshot tests con VCRpy
+### Snapshot Tests with VCRpy
 
-ARNES usa [vcrpy](https://github.com/kevin1024/vcrpy) para grabar respuestas de
-LLM y replayearlas en tests. Esto permite tests reproducibles sin gastar tokens.
+ARNES uses [vcrpy](https://github.com/kevin1024/vcrpy) to record LLM responses
+and replay them in tests. This enables reproducible tests without spending tokens.
 
 ```python
 @pytest.mark.snapshot
@@ -122,10 +122,10 @@ def test_specialist_responds(vcr):
         assert result.confidence > 0.7
 ```
 
-Para regenerar cassettes (cuando cambias un prompt), borra el archivo y re-corre
-el test con `--record-mode=new`.
+To regenerate cassettes (when you change a prompt), delete the file and re-run
+the test with `--record-mode=new`.
 
-## Linting y type checking
+## Linting and Type Checking
 
 ```bash
 # Ruff (lint + format)
@@ -142,63 +142,63 @@ uv run bandit -r arnes/
 uv run pip-audit
 ```
 
-Pre-commit ejecuta todo esto automáticamente.
+Pre-commit runs all of these automatically.
 
-## Añadir un nuevo specialist
+## Adding a New Specialist
 
-1. Crea `arnes/specialists/mi_specialist.py`:
+1. Create `arnes/specialists/my_specialist.py`:
 
 ```python
 from arnes.specialists.base import Specialist, SpecialistConfig
 
-class MiSpecialist(Specialist):
-    """Descripción de qué hace este especialista."""
-    
+class MySpecialist(Specialist):
+    """Description of what this specialist does."""
+
     config = SpecialistConfig(
-        name="@mi-specialist",
-        description="Hace X cosa",
-        system_prompt="Eres un experto en X...",
+        name="@my-specialist",
+        description="Does X",
+        system_prompt="You are an expert in X...",
         tools=["shell", "fs_read"],
-        output_schema=MiOutput,  # pydantic
+        output_schema=MyOutput,  # pydantic
     )
 ```
 
-2. Regístralo en `arnes/specialists/__init__.py`
-3. Añade test en `tests/unit/test_mi_specialist.py`
-4. Añade ejemplo en `examples/usar_mi_specialist.py`
-5. Documenta en `docs/specialists.md`
+2. Register it in `arnes/specialists/__init__.py`
+3. Add test in `tests/unit/test_my_specialist.py`
+4. Add example in `examples/use_my_specialist.py`
+5. Document in `docs/specialists.md`
 
-## Añadir un nuevo playbook
+## Adding a New Playbook
 
-1. Crea `manuales/mi-playbook.md.yaml` (sigue la spec en `docs/playbook-dsl.md`)
-2. Añade test en `tests/integration/test_mi_playbook.py`
-3. Valida con `arnes lint manuales/mi-playbook.md.yaml`
+1. Create `manuals/my-playbook.yaml` (follow the spec in `docs/playbook-dsl.md`)
+2. Add test in `tests/integration/test_my_playbook.py`
+3. Validate with `arnes lint manuals/my-playbook.yaml`
 
-## Reportar bugs
+## Reporting Bugs
 
-Abre un [issue](https://github.com/frangelbarrera/ARNES/issues/new?template=bug_report.md) con:
+Open an [issue](https://github.com/frangelbarrera/ARNES/issues/new?template=bug_report.md) with:
 
-1. **Versión de ARNES**: `arnes --version`
-2. **Versión de Python**: `python --version`
-3. **OS**: Linux/macOS/Windows + versión
-4. **Reproducción mínima**: código mínimo que reproduzca el bug
-5. **Output esperado vs actual**
-6. **Logs**: pega el contenido de la bitácora si aplica
+1. **ARNES version**: `arnes --version`
+2. **Python version**: `python --version`
+3. **OS**: Linux/macOS/Windows + version
+4. **Minimal reproduction**: minimal code that reproduces the bug
+5. **Expected vs actual output**
+6. **Logs**: paste the bitácora content if applicable
 
-## Reportar vulnerabilidades de seguridad
+## Reporting Security Vulnerabilities
 
-**NO abras un issue público para vulnerabilidades de seguridad.**
+**DO NOT open a public issue for security vulnerabilities.**
 
-Envía un email a `security@arnes.dev` con:
-- Descripción del problema
-- Pasos para reproducir
-- Impacto estimado
-- PoC si tienes
+Send an email to `security@arnes.dev` with:
+- Description of the problem
+- Steps to reproduce
+- Estimated impact
+- PoC if you have one
 
-Respondemos en <72h. Si la vulnerabilidad es válida, publicamos advisory en
+We respond within 72h. If the vulnerability is valid, we publish an advisory on
 [GitHub Security Advisories](https://github.com/frangelbarrera/ARNES/security/advisories)
-y te damos crédito (a menos que prefieras permanecer anónimo).
+and give you credit (unless you prefer to remain anonymous).
 
-## Licencia
+## License
 
-Al contribuir, aceptas que tus contribuciones se licencien bajo Apache 2.0.
+By contributing, you agree that your contributions are licensed under Apache 2.0.

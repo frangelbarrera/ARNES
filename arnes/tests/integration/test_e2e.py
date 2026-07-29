@@ -1,4 +1,5 @@
 """Integration tests for the full ARNES stack."""
+
 from __future__ import annotations
 
 import pytest
@@ -72,49 +73,45 @@ class TestEndToEnd:
         )
 
         yaml_str = """
-nombre: e2e_test
-objetivo: End-to-end test
+name: e2e_test
+objective: End-to-end test
 budget_usd: 0.50
-pasos:
+steps:
   - id: plan
-    especialista: "@planner"
+    specialist: "@planner"
     input:
       task: "Plan a feature"
   - id: code
-    especialista: "@coder"
+    specialist: "@coder"
     input:
       spec: "Implement the feature"
-      context: "{{ pasos.plan.salida }}"
+      context: "{{ steps.plan.output }}"
   - id: review
-    especialista: "@reviewer"
+    specialist: "@reviewer"
     input:
-      codigo: "{{ pasos.code.salida }}"
-      enfoque: "Review for correctness"
+      code: "{{ steps.code.output }}"
+      focus: "Review for correctness"
   - id: test
-    especialista: "@tester"
+    specialist: "@tester"
     input:
-      codigo: "{{ pasos.code.salida }}"
-      enfoque: "Write tests"
+      code: "{{ steps.code.output }}"
+      focus: "Write tests"
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
         result = await executor.run(playbook)
 
-        # Verify success
         assert result.success is True, f"Failed: {result.error}"
         assert result.steps_executed == 4
         assert result.steps_failed == 0
 
-        # Verify outputs were tracked
         assert "plan" in result.outputs
         assert "code" in result.outputs
         assert "review" in result.outputs
         assert "test" in result.outputs
 
-        # Verify thread has all events
         # 4 step_started + 4 step_completed + 1 run_completed = 9
         assert len(result.thread) == 9
 
-        # Verify bitácora is generated
         bitacora = result.to_markdown()
         assert "plan" in bitacora
         assert "code" in bitacora
@@ -143,12 +140,12 @@ pasos:
 
     @pytest.mark.asyncio
     async def test_real_playbook_files_compile_and_run(self):
-        """Test that the example playbooks in manuales/ compile and run."""
+        """Test that the example playbooks in manuals/ compile and run."""
         from pathlib import Path
 
-        manuales_dir = Path(__file__).parent.parent.parent / "manuales"
-        if not manuales_dir.exists():
-            pytest.skip(f"manuales/ dir not found at {manuales_dir}")
+        manuals_dir = Path(__file__).parent.parent.parent / "manuals"
+        if not manuals_dir.exists():
+            pytest.skip(f"manuals/ dir not found at {manuals_dir}")
 
         provider = SchemaValidMockProvider()
         executor = PlaybookExecutor(
@@ -156,13 +153,12 @@ pasos:
             cost_budget=CostBudget(task_budget_usd=1.0),
         )
 
-        yaml_files = list(manuales_dir.glob("*.yaml"))
+        yaml_files = list(manuals_dir.glob("*.yaml"))
         assert len(yaml_files) >= 3, "Expected at least 3 example playbooks"
 
         for yaml_file in yaml_files:
             playbook = PlaybookCompiler.from_file(yaml_file)
             result = await executor.run(playbook)
-            # All playbooks should complete successfully with mock LLM
             assert result.success is True, f"Playbook {yaml_file.name} failed: {result.error}"
 
     @pytest.mark.asyncio
@@ -176,9 +172,7 @@ pasos:
 
         msg = [LLMMessage(role="user", content="test")]
 
-        # First call: miss
         await optimizer.complete(msg, model="mock")
-        # Second call: hit
         await optimizer.complete(msg, model="mock")
 
         stats = optimizer.stats()
@@ -199,13 +193,13 @@ pasos:
 
         stats = guard.stats()
         assert stats["calls_made"] == 1
-        assert stats["spent_usd"] == 0.0  # Mock is free
+        assert stats["spent_usd"] == 0.0
         assert stats["paused"] is False
         assert stats["aborted"] is False
 
     @pytest.mark.asyncio
     async def test_harness_high_level_api(self):
-        """FIX-9: Harness class (renamed from Agent) works."""
+        """Harness class (renamed from Agent) works."""
         from arnes import Harness, HarnessConfig
 
         harness = Harness(
@@ -219,55 +213,56 @@ pasos:
 
     @pytest.mark.asyncio
     async def test_cli_init_creates_valid_playbook(self, tmp_path, monkeypatch):
-        """FIX-1: arnes init template must produce valid YAML."""
+        """arnes init template must produce valid YAML."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("ARNES_DEV_MODE", "1")
 
         from click.testing import CliRunner
+
         from arnes.cli.main import cli
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "--manual", "test_playbook"])
+        result = runner.invoke(cli, ["init", "--manual", "test_playbook", "--lang", "en"])
 
         assert result.exit_code == 0, f"CLI failed: {result.output}"
-        yaml_file = tmp_path / "manuales" / "test_playbook.md.yaml"
+        yaml_file = tmp_path / "manuals" / "test_playbook.yaml"
         assert yaml_file.exists()
 
-        # The generated YAML must compile
         playbook = PlaybookCompiler.from_file(yaml_file)
-        assert playbook.metadata.nombre == "test_playbook"
+        assert playbook.metadata.name == "test_playbook"
 
     @pytest.mark.asyncio
     async def test_tool_use_loop_in_specialist(self):
-        """FIX-3: Specialist.run() supports tool-use loop (ReAct)."""
+        """Specialist.run() supports tool-use loop (ReAct)."""
         from arnes.specialists.base import get_default_specialist_registry
-        from arnes.tools.registry import get_default_registry
-        from arnes.tools.base import ToolContext
         from arnes.thread import Thread
+        from arnes.tools.base import ToolContext
+        from arnes.tools.registry import get_default_registry
 
-        # Mock provider that returns a tool call on first iteration,
-        # then a final response on second
         class ToolUseMockProvider(LLMProvider):
             def __init__(self):
                 self.call_count = 0
 
-            async def complete(self, messages, *, model="mock", tools=None, response_schema=None, **kwargs):
+            async def complete(
+                self, messages, *, model="mock", tools=None, response_schema=None, **kwargs
+            ):
                 self.call_count += 1
                 if self.call_count == 1 and tools:
                     return LLMResponse(
                         content="",
-                        tool_calls=[{
-                            "id": "call_1",
-                            "type": "function",
-                            "function": {
-                                "name": "fs_read",
-                                "arguments": '{"path": "test.txt"}',
-                            },
-                        }],
+                        tool_calls=[
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "fs_read",
+                                    "arguments": '{"path": "test.txt"}',
+                                },
+                            }
+                        ],
                         usage=LLMUsage(tokens_in=10, tokens_out=5, cost_usd=0.0, model=model),
                         model=model,
                     )
-                # Final response — must be valid for @coder schema
                 return LLMResponse(
                     content='{"files": [{"path": "out.py", "language": "python", "content": "pass"}], "summary": "ok", "assumptions": [], "warnings": []}',
                     tool_calls=[],
@@ -278,15 +273,15 @@ pasos:
             def list_models(self):
                 return ["mock"]
 
-        # Setup: create a test file
-        import tempfile, os
+        import os
+        import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             test_file = os.path.join(tmpdir, "test.txt")
             with open(test_file, "w") as f:
                 f.write("hello world")
 
             registry = get_default_specialist_registry()
-            # @coder declares tools=["fs_read", "fs_write", "shell"]
             specialist = registry.get("@coder")
             tool_registry = get_default_registry()
 
@@ -306,7 +301,7 @@ pasos:
             )
 
             assert result["success"] is True, f"Failed: {result.get('error')}"
-            assert provider.call_count == 2  # First (tool call) + second (final)
+            assert provider.call_count == 2
             assert len(result.get("tool_results", [])) == 1
             assert result["tool_results"][0]["tool"] == "fs_read"
             assert result["tool_results"][0]["success"] is True

@@ -3,35 +3,31 @@ ARNES CLI — command-line interface.
 
 Commands:
     arnes init --manual <name>       Scaffold a new playbook
-    arnes ejecutar <playbook.yaml>   Execute a playbook
-    arnes run <playbook.yaml>        Alias for ejecutar (EN)
+    arnes run <playbook.yaml>        Execute a playbook
     arnes list specialists           List available specialists
     arnes list playbooks             List curated playbooks
     arnes lint <playbook.yaml>       Validate a playbook without executing
     arnes eval <playbook.yaml>       Run playbook with mock LLM for testing
-    arnes version                    Print version
+    arnes mcp serve                  Start MCP server (stdio or http)
+    arnes --version                  Print version
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from pathlib import Path
-from typing import Any
 
 import click
 import structlog
 from rich.console import Console
 from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.table import Table
 
 from arnes import __version__
 from arnes.llm.factory import get_provider
-from arnes.llm.mock import MockLLMProvider
 from arnes.middleware.cost_guard import CostBudget
-from arnes.playbooks.compiler import PlaybookCompiler, PlaybookCompileError
+from arnes.playbooks.compiler import PlaybookCompileError, PlaybookCompiler
 from arnes.playbooks.executor import PlaybookExecutor
 from arnes.specialists.base import get_default_specialist_registry
 
@@ -42,22 +38,22 @@ logger = structlog.get_logger(__name__)
 @click.group()
 @click.version_option(__version__, prog_name="arnes")
 def cli() -> None:
-    """ARNES — The Open Agent Harness. Escribe el manual, ARNES lo ejecuta."""
+    """ARNES — The Open Agent Harness. Write the manual, ARNES runs it."""
     pass
 
 
 @cli.command()
 @click.option("--manual", help="Name of the playbook to scaffold")
 @click.option(
-    "--idioma",
-    type=click.Choice(["es", "en"]),
-    default="es",
+    "--lang",
+    type=click.Choice(["en", "es"]),
+    default="en",
     help="Language for the scaffolded playbook",
 )
-def init(manual: str | None, idioma: str) -> None:
+def init(manual: str | None, lang: str) -> None:
     """Scaffold a new playbook or initialize an ARNES project."""
     if manual:
-        _scaffold_manual(manual, idioma)
+        _scaffold_manual(manual, lang)
     else:
         _init_project()
 
@@ -69,7 +65,7 @@ def init(manual: str | None, idioma: str) -> None:
 @click.option("--mock", is_flag=True, help="Use mock LLM (no network, $0 cost)")
 @click.option("--interactive", is_flag=True, help="Enable interactive HITL prompts")
 @click.option("--output", "-o", type=click.Path(), help="Save bitácora to file")
-def ejecutar(
+def run(
     playbook_path: str,
     model: str,
     budget: float,
@@ -77,12 +73,12 @@ def ejecutar(
     interactive: bool,
     output: str | None,
 ) -> None:
-    """Ejecutar un playbook YAML."""
+    """Execute a playbook YAML."""
     asyncio.run(_run_playbook(playbook_path, model, budget, mock, interactive, output))
 
 
-# English alias
-cli.commands["run"] = cli.commands["ejecutar"]
+# Spanish alias for backwards compat (will be deprecated in v0.2)
+cli.add_command(run, name="ejecutar")
 
 
 @cli.group()
@@ -115,7 +111,7 @@ def list_specialists() -> None:
     "--dir",
     "playbooks_dir",
     type=click.Path(),
-    default="manuales",
+    default="manuals",
     help="Directory to scan for playbooks",
 )
 def list_playbooks(playbooks_dir: str) -> None:
@@ -131,13 +127,14 @@ def list_playbooks(playbooks_dir: str) -> None:
     table.add_column("Objective")
     table.add_column("Budget", justify="right")
 
-    for yaml_file in sorted(path.glob("*.yaml")) + sorted(path.glob("*.yml")):
+    for yaml_file in sorted(list(path.glob("*.yaml")) + list(path.glob("*.yml"))):
         try:
             playbook = PlaybookCompiler.from_file(yaml_file)
+            obj = playbook.metadata.objective
             table.add_row(
                 yaml_file.name,
-                playbook.metadata.nombre,
-                playbook.metadata.objetivo[:60] + "..." if len(playbook.metadata.objetivo) > 60 else playbook.metadata.objetivo,
+                playbook.metadata.name,
+                obj[:60] + "..." if len(obj) > 60 else obj,
                 f"${playbook.metadata.budget_usd:.2f}",
             )
         except PlaybookCompileError as e:
@@ -152,14 +149,14 @@ def lint(playbook_path: str) -> None:
     """Validate a playbook without executing it."""
     try:
         playbook = PlaybookCompiler.from_file(playbook_path)
-        console.print(f"[green]✓[/green] Playbook valid: [cyan]{playbook.metadata.nombre}[/cyan]")
-        console.print(f"  Objective: {playbook.metadata.objetivo}")
-        console.print(f"  Steps: {len(playbook.pasos)}")
+        console.print(f"[green]✓[/green] Playbook valid: [cyan]{playbook.metadata.name}[/cyan]")
+        console.print(f"  Objective: {playbook.metadata.objective}")
+        console.print(f"  Steps: {len(playbook.steps)}")
         console.print(f"  Budget: ${playbook.metadata.budget_usd:.2f}")
 
-        for i, step in enumerate(playbook.pasos, 1):
-            specialist = step.especialista or step.herramienta or "parallel"
-            console.print(f"  {i}. [cyan]{step.id}[/cyan] → {specialist}")
+        for i, step in enumerate(playbook.steps, 1):
+            action = step.specialist or step.tool or "parallel"
+            console.print(f"  {i}. [cyan]{step.id}[/cyan] → {action}")
     except PlaybookCompileError as e:
         console.print(f"[red]✗[/red] Playbook invalid:\n{e}")
         sys.exit(1)
@@ -169,7 +166,9 @@ def lint(playbook_path: str) -> None:
 @click.argument("playbook_path", type=click.Path(exists=True))
 def eval(playbook_path: str) -> None:
     """Run playbook with mock LLM for testing (no network, $0 cost)."""
-    asyncio.run(_run_playbook(playbook_path, "mock/test", 0.0, mock=True, interactive=False, output=None))
+    asyncio.run(
+        _run_playbook(playbook_path, "mock/test", 0.0, mock=True, interactive=False, output=None)
+    )
 
 
 @cli.group()
@@ -218,9 +217,8 @@ async def _serve_mcp(transport: str, host: str, port: int) -> None:
     server = ArnesMCPServer()
 
     if transport == "stdio":
-        import sys as _sys
-        _sys.stderr.write("ARNES MCP server running on stdio\n")
-        _sys.stderr.flush()
+        sys.stderr.write("ARNES MCP server running on stdio\n")
+        sys.stderr.flush()
         await server.serve_stdio()
     else:
         console.print(f"[cyan]ARNES MCP server[/cyan] running on http://{host}:{port}")
@@ -248,14 +246,16 @@ async def _run_playbook(
         console.print(f"[red]✗ Compile error:[/red]\n{e}")
         sys.exit(1)
 
-    console.print(Panel.fit(
-        f"[bold cyan]ARNES[/bold cyan] — Ejecutando playbook\n"
-        f"  [dim]Nombre:[/dim] {playbook.metadata.nombre}\n"
-        f"  [dim]Objetivo:[/dim] {playbook.metadata.objetivo}\n"
-        f"  [dim]Modelo:[/dim] {model}\n"
-        f"  [dim]Budget:[/dim] ${budget:.2f}",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold cyan]ARNES[/bold cyan] — Executing playbook\n"
+            f"  [dim]Name:[/dim] {playbook.metadata.name}\n"
+            f"  [dim]Objective:[/dim] {playbook.metadata.objective}\n"
+            f"  [dim]Model:[/dim] {model}\n"
+            f"  [dim]Budget:[/dim] ${budget:.2f}",
+            border_style="cyan",
+        )
+    )
 
     # Setup provider
     if mock or model.startswith("mock/"):
@@ -270,41 +270,41 @@ async def _run_playbook(
         interactive=interactive,
     )
 
-    with console.status("[cyan]Ejecutando...[/cyan]"):
+    with console.status("[cyan]Executing...[/cyan]"):
         result = await executor.run(playbook)
 
     # Print results
     if result.success:
-        console.print("\n[green]✅ Manual ejecutado[/green]")
+        console.print("\n[green]✅ Manual executed[/green]")
     else:
-        console.print("\n[red]❌ Ejecución fallida[/red]")
+        console.print("\n[red]❌ Execution failed[/red]")
         if result.error:
             console.print(f"  [red]Error:[/red] {result.error}")
 
     # Stats
-    console.print(f"\n[dim]Steps ejecutados:[/dim] {result.steps_executed}")
-    console.print(f"[dim]Steps fallidos:[/dim] {result.steps_failed}")
-    console.print(f"[dim]Duración:[/dim] {result.duration_s:.2f}s")
+    console.print(f"\n[dim]Steps executed:[/dim] {result.steps_executed}")
+    console.print(f"[dim]Steps failed:[/dim] {result.steps_failed}")
+    console.print(f"[dim]Duration:[/dim] {result.duration_s:.2f}s")
     console.print(f"[dim]Tokens in/out:[/dim] {result.total_tokens_in}/{result.total_tokens_out}")
-    console.print(f"[dim]Costo total:[/dim] ${result.total_cost_usd:.4f}")
+    console.print(f"[dim]Total cost:[/dim] ${result.total_cost_usd:.4f}")
 
     # Save bitácora
     if output:
         Path(output).write_text(result.to_markdown(), encoding="utf-8")
-        console.print(f"\n[cyan]Bitácora guardada en:[/cyan] {output}")
+        console.print(f"\n[cyan]Bitácora saved to:[/cyan] {output}")
     else:
         from datetime import datetime
 
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        default_path = f"bitacora-{playbook.metadata.nombre}-{ts}.md"
+        default_path = f"bitacora-{playbook.metadata.name}-{ts}.md"
         Path(default_path).write_text(result.to_markdown(), encoding="utf-8")
-        console.print(f"\n[cyan]Bitácora guardada en:[/cyan] {default_path}")
+        console.print(f"\n[cyan]Bitácora saved to:[/cyan] {default_path}")
 
 
 class _SchemaValidMockLLMProvider:
     """Mock LLM provider that returns schema-valid JSON for each specialist.
 
-    Used by `arnes ejecutar --mock` for testing without network calls.
+    Used by `arnes run --mock` for testing without network calls.
     Detects which specialist is being invoked based on system prompt content.
     """
 
@@ -323,7 +323,7 @@ class _SchemaValidMockLLMProvider:
         response_schema=None,
         **kwargs,
     ):
-        from arnes.llm.base import LLMMessage, LLMResponse, LLMUsage
+        from arnes.llm.base import LLMResponse, LLMUsage
 
         self.call_count += 1
 
@@ -364,87 +364,92 @@ class _SchemaValidMockLLMProvider:
         return ["mock"]
 
 
-def _scaffold_manual(name: str, idioma: str) -> None:
+def _scaffold_manual(name: str, lang: str) -> None:
     """Create a new playbook file from template."""
-    path = Path("manuales") / f"{name}.md.yaml"
+    path = Path("manuals") / f"{name}.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if path.exists():
         console.print(f"[yellow]File already exists: {path}[/yellow]")
         sys.exit(1)
 
-    template = _MANUAL_TEMPLATE_ES if idioma == "es" else _MANUAL_TEMPLATE_EN
+    template = _MANUAL_TEMPLATE_EN if lang == "en" else _MANUAL_TEMPLATE_ES
     path.write_text(template.format(name=name), encoding="utf-8")
     console.print(f"[green]✓[/green] Created: [cyan]{path}[/cyan]")
     console.print("\nEdit it and run with:")
-    console.print(f"  [dim]arnes ejecutar {path}[/dim]")
+    console.print(f"  [dim]arnes run {path}[/dim]")
 
 
 def _init_project() -> None:
     """Initialize a new ARNES project structure."""
     console.print("[bold cyan]ARNES — Initializing project[/bold cyan]\n")
 
-    dirs = ["manuales", "bitacoras"]
+    dirs = ["manuals", "bitacoras"]
     for d in dirs:
         Path(d).mkdir(exist_ok=True)
         console.print(f"  [green]✓[/green] Created: {d}/")
 
     # Create example playbook
-    example = Path("manuales") / "hola-mundo.md.yaml"
+    example = Path("manuals") / "hello-world.yaml"
     if not example.exists():
-        example.write_text(_MANUAL_TEMPLATE_ES.format(name="hola-mundo"), encoding="utf-8")
+        example.write_text(_MANUAL_TEMPLATE_EN.format(name="hello-world"), encoding="utf-8")
         console.print(f"  [green]✓[/green] Created: {example}")
 
     console.print("\n[bold]Next steps:[/bold]")
-    console.print("  1. Edit manuales/hola-mundo.md.yaml")
-    console.print("  2. Run: [cyan]arnes ejecutar manuales/hola-mundo.md.yaml[/cyan]")
+    console.print("  1. Edit manuals/hello-world.yaml")
+    console.print("  2. Run: [cyan]arnes run manuals/hello-world.yaml[/cyan]")
     console.print("  3. List specialists: [cyan]arnes list specialists[/cyan]")
-
-
-_MANUAL_TEMPLATE_ES = """\
-# {name}.md.yaml — Manual de ARNES
-# Documentación: https://arnes.dev/playbook-dsl
-
-nombre: {name}
-objetivo: Describe qué hace este manual
-budget_usd: 0.50
-
-pasos:
-  - id: paso_1
-    especialista: "@planner"
-    input:
-      task: "Describe la tarea a planificar"
-
-  - id: paso_2
-    especialista: "@coder"
-    input: "{{{{ pasos.paso_1.salida }}}}"
-    requiere: [paso_1]
-
-  - id: paso_3
-    especialista: "@reviewer"
-    input:
-      codigo: "{{{{ pasos.paso_2.salida }}}}"
-"""
 
 
 _MANUAL_TEMPLATE_EN = """\
 # {name}.yaml — ARNES playbook
-# Docs: https://arnes.dev/playbook-dsl
+# Documentation: https://arnes.dev/playbook-dsl
 
-nombre: {name}
-objetivo: Describe what this playbook does
+name: {name}
+objective: Describe what this playbook does
 budget_usd: 0.50
 
-pasos:
+steps:
   - id: step_1
-    especialista: "@planner"
+    specialist: "@planner"
     input:
       task: "Describe the task to plan"
 
   - id: step_2
-    especialista: "@coder"
-    input: "{{{{ pasos.step_1.salida }}}}"
-    requiere: [step_1]
+    specialist: "@coder"
+    input: "{{{{ steps.step_1.output }}}}"
+    requires: [step_1]
+
+  - id: step_3
+    specialist: "@reviewer"
+    input:
+      code: "{{{{ steps.step_2.output }}}}"
+"""
+
+
+_MANUAL_TEMPLATE_ES = """\
+# {name}.yaml — Manual de ARNES
+# Documentación: https://arnes.dev/playbook-dsl
+
+name: {name}
+objective: Describe qué hace este manual
+budget_usd: 0.50
+
+steps:
+  - id: paso_1
+    specialist: "@planner"
+    input:
+      task: "Describe la tarea a planificar"
+
+  - id: paso_2
+    specialist: "@coder"
+    input: "{{{{ steps.paso_1.output }}}}"
+    requires: [paso_1]
+
+  - id: paso_3
+    specialist: "@reviewer"
+    input:
+      code: "{{{{ steps.paso_2.output }}}}"
 """
 
 

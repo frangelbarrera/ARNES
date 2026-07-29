@@ -6,7 +6,6 @@ from typing import ClassVar
 
 from arnes.specialists.base import Specialist, SpecialistConfig
 
-
 _PLANNER_SYSTEM_PROMPT = """You are @planner, a specialist at decomposing complex tasks into atomic, executable steps.
 
 Your job:

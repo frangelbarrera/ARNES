@@ -9,8 +9,8 @@ This is the core of the stateless reducer pattern: (state, event) → state.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -19,10 +19,10 @@ from pydantic import BaseModel, Field
 
 def _utc_now() -> datetime:
     """UTC timestamp, naive (avoids pydantic tz pitfalls)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """All event types ARNES knows about. Extensible via SpecialistRegistry."""
 
     # Conversation
@@ -190,7 +190,9 @@ class CostThresholdEvent(Event):
 
 class RunCompletedEvent(Event):
     type: Literal[EventType.RUN_COMPLETED] = EventType.RUN_COMPLETED
-    data: dict[str, Any]  # {"steps_executed": int, "duration_s": float, "total_tokens": int, "total_cost_usd": float}
+    data: dict[
+        str, Any
+    ]  # {"steps_executed": int, "duration_s": float, "total_tokens": int, "total_cost_usd": float}
 
 
 class RunFailedEvent(Event):

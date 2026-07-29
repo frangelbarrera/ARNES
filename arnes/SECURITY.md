@@ -1,56 +1,55 @@
 # Security Policy
 
-## Versiones soportadas
+## Supported Versions
 
-ARNES sigue versionado semántico. Solo la última versión minor recibe
-actualizaciones de seguridad.
+ARNES follows semantic versioning. Only the latest minor version receives
+security updates.
 
-| Versión | Soporte de seguridad |
-|---------|---------------------|
-| 0.1.x   | ✅ Activo            |
-| < 0.1   | ❌ No soportado      |
+| Version | Security Support |
+|---------|-----------------|
+| 0.1.x   | ✅ Active         |
+| < 0.1   | ❌ Not supported  |
 
-## Reportar una vulnerabilidad
+## Reporting a Vulnerability
 
-**NO abras un issue público de GitHub para reportar vulnerabilidades de
-seguridad.**
+**DO NOT open a public GitHub issue to report security vulnerabilities.**
 
-ARNES utiliza la funcionalidad de
+ARNES uses
 [GitHub Security Advisories](https://github.com/frangelbarrera/ARNES/security/advisories/new)
-para recibir reportes privados de vulnerabilidades.
+to receive private vulnerability reports.
 
-### Proceso
+### Process
 
-1. **Reporta** vía [GitHub Security Advisory privado](https://github.com/frangelbarrera/ARNES/security/advisories/new)
-   o email a `security@arnes.dev`.
-2. **Acknowledge**: respondemos en <72 horas confirmando recepción.
-3. **Investigación**: te mantendremos informado del progreso cada 7 días.
-4. **Fix**: si la vulnerabilidad es válida, publicamos un patch en <30 días
-   (o un workaround inmediato si el fix es complejo).
-5. **Divulgación**: publicamos advisory público en GitHub + CVE si aplica.
-6. **Crédito**: te damos crédito en el advisory (a menos que prefieras
-   permanecer anónimo).
+1. **Report** via [private GitHub Security Advisory](https://github.com/frangelbarrera/ARNES/security/advisories/new)
+   or email to `security@arnes.dev`.
+2. **Acknowledge**: we respond within 72 hours confirming receipt.
+3. **Investigation**: we will keep you informed of progress every 7 days.
+4. **Fix**: if the vulnerability is valid, we publish a patch within 30 days
+   (or an immediate workaround if the fix is complex).
+5. **Disclosure**: we publish a public advisory on GitHub + CVE if applicable.
+6. **Credit**: we give you credit in the advisory (unless you prefer to
+   remain anonymous).
 
-## Scope de seguridad
+## Security Scope
 
-ARNES ejecuta código (vía tools `shell`, `fs_write`) y llama APIs externas.
-Cualquier issue que permita:
+ARNES executes code (via `shell`, `fs_write` tools) and calls external APIs.
+Any issue that allows:
 
-- Ejecución de código arbitrario fuera del sandbox
-- Filtración de API keys, tokens o secrets
-- Bypass de CostGuard (denial-of-wallet)
-- Bypass de verification layer (alucinaciones forzadas)
-- Path traversal en tool `fs_*`
-- SSRF en tool `http`
-- Prompt injection persistente que sobreviva entre sesiones
+- Arbitrary code execution outside the sandbox
+- Leakage of API keys, tokens, or secrets
+- Bypass of CostGuard (denial-of-wallet)
+- Bypass of verification layer (forced hallucinations)
+- Path traversal in `fs_*` tools
+- SSRF in `http` tool
+- Persistent prompt injection that survives between sessions
 
-es una vulnerabilidad de seguridad y debe ser reportada privadamente.
+is a security vulnerability and must be reported privately.
 
-## Medidas de seguridad implementadas
+## Implemented Security Measures
 
-### Sandbox de ejecución (Tier 1 dev-local default)
+### Execution Sandbox (Tier 1 dev-local default)
 
-ARNES ejecuta tools de código en contenedores Docker hardened:
+ARNES executes code tools in hardened Docker containers:
 
 ```bash
 docker run --rm \
@@ -62,30 +61,35 @@ docker run --rm \
   arnes-sandbox:latest
 ```
 
-### Secret broker
+**Note**: In v0.1 alpha, the sandbox is not yet wired up by default. Local
+shell execution requires the `ARNES_DEV_MODE=1` environment variable as a
+double-gate safety measure. Full Docker sandbox integration lands in v0.2.
 
-Las API keys **nunca** entran en el context window del LLM. ARNES las lee
-del entorno y las inyecta just-in-time en las llamadas HTTP. El agente solo
-ve `<api_key_set: true>`.
+### Secret Broker
 
-### Input validation
+API keys **never** enter the LLM context window. ARNES reads them from the
+environment and injects them just-in-time into HTTP calls. The agent only
+sees `<api_key_set: true>`.
 
-Todas las tools aceptan inputs validados por pydantic schemas. Las tools
-`fs_read`/`fs_write` validan paths contra allowlist. Las tools `http`
-validan URLs contra SSRF blacklist (localhost, 169.254.169.254, etc.).
+### Input Validation
+
+All tools accept inputs validated by pydantic schemas. The `fs_read`/`fs_write`
+tools validate paths against the working directory allowlist. The `http` tool
+validates URLs against an SSRF blacklist (localhost, private IPs, cloud metadata
+endpoints) with full DNS resolution.
 
 ### Cost Guard
 
-Cada run tiene un budget USD declarado. Al exceder 95%, ARNES pausa y pide
-aprobación humana. Al exceder 100%, ARNES aborta. Circuit breaker temporal:
-si el gasto excede $X/minuto, aborta inmediatamente.
+Each run has a declared USD budget. At 95%, ARNES pauses and requests human
+approval. At 100%, ARNES aborts. Temporal circuit breaker: if spend exceeds
+$X/minute, immediate abort.
 
-### Audit log
+### Audit Log
 
-Cada llamada al LLM, cada tool execution, cada decisión de CostGuard se
-loguea en la bitácora markdown. La bitácora es auditable y re-ejecutable.
+Every LLM call, every tool execution, every CostGuard decision is logged to
+the markdown bitácora. The bitácora is auditable and re-executable.
 
-## Agradecimientos
+## Acknowledgments
 
-Agradecemos a quienes reportan vulnerabilidades responsablemente. Lista de
-reportes en [SECURITY_CREDITS.md](SECURITY_CREDITS.md).
+We thank those who report vulnerabilities responsibly. List of reports in
+[SECURITY_CREDITS.md](SECURITY_CREDITS.md).

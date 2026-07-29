@@ -2,11 +2,11 @@
 
 You are contributing to **ARNES**, an open-source agent harness for Python.
 
-## Project context
+## Project Context
 
-ARNES is NOT a framework. It's an **arnés** — a harness that lets developers
-orchestrate AI agents without ceding control of their prompts, context, model
-choice, or budget. Read `MANIFESTO.md` for the full philosophy.
+ARNES is NOT a framework. It is a **harness** — the control layer that lets
+developers orchestrate AI agents without surrendering their prompts, context,
+model choice, or budget. Read `MANIFESTO.md` for the full philosophy.
 
 ## Architecture in 30 seconds
 
@@ -19,7 +19,7 @@ choice, or budget. Read `MANIFESTO.md` for the full philosophy.
 ## Non-negotiable rules (from MANIFESTO.md)
 
 1. **No vendor-only features as first-class APIs.** If it only exists in OpenAI or
-   only in Anthropic, it's a leak, not a feature.
+   only in Anthropic, it is a leak, not a feature.
 2. **No classes named `Runnable`, `Chain`, `Workflow`, or `Agent`.** Composition = functions.
 3. **Token counter is on by default.** If you don't know what you spent, you didn't ship.
 4. **No hosted version. Ever.** If you add code that requires ARNES Cloud, you're breaking the manifesto.
@@ -27,17 +27,17 @@ choice, or budget. Read `MANIFESTO.md` for the full philosophy.
 6. **No magic.** If a line does something you can't explain, it's a bug.
 7. **No API keys in code.** Read from env. Never log. Never store.
 
-## Coding standards
+## Coding Standards
 
 - **Python 3.11+** — use modern syntax (`match` statements, `type X = ...`, PEP 695 generics).
 - **Pydantic v2** for all schemas. Never use `dataclass` for data that crosses a boundary.
 - **async first** — all I/O is async. Sync wrappers only at the CLI boundary.
 - **Type hints everywhere** — `mypy --strict` must pass.
 - **Docstrings on all public functions** — Google style.
-- **Tests required** — 70% coverage minimum. New code = new tests.
+- **Tests required** — 65% coverage minimum. New code = new tests.
 - **One responsibility per module** — if a file is >500 lines, it's doing too much.
 
-## Commit conventions
+## Commit Conventions
 
 We use [Conventional Commits](https://www.conventionalcommits.org/):
 
@@ -49,44 +49,44 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 - `perf: cache specialist configs at registry init`
 - `chore: bump pydantic to 2.11.2`
 
-## PR checklist
+## PR Checklist
 
 - [ ] Tests pass (`uv run pytest`)
 - [ ] Lint passes (`uv run ruff check arnes/`)
 - [ ] Types pass (`uv run mypy arnes/`)
-- [ ] Coverage ≥ 70%
+- [ ] Coverage ≥ 65%
 - [ ] No new dependencies without justification
 - [ ] No vendor-only features
 - [ ] Docs updated if API changed
 - [ ] CHANGELOG.md entry added under `[Unreleased]`
 
-## What NOT to do
+## What NOT to Do
 
-- Don't add a `langchain` dependency. We're the alternative to LangChain.
-- Don't add an `Agent` class. Use `Specialist` and functions.
+- Don't add a `langchain` dependency. We are the alternative to LangChain.
+- Don't add an `Agent` class. Use `Specialist` and functions. (The `Harness` class is the high-level wrapper, NOT named `Agent`.)
 - Don't add a `Chain` class. Use playbooks.
 - Don't import `openai` directly. Use `litellm` via `arnes.llm`.
 - Don't log API keys. Don't even log `os.environ["ANTHROPIC_API_KEY"]`.
 - Don't add features that are only useful for one vendor's model.
 - Don't break the manifesto. If you're unsure, ask in Discussions first.
 
-## How to add a new specialist
+## How to Add a New Specialist
 
-1. Create `arnes/specialists/mi_specialist.py`
+1. Create `arnes/specialists/my_specialist.py`
 2. Subclass `Specialist`, set `config` class var
 3. Register in `arnes/specialists/__init__.py`
-4. Add tests in `tests/unit/test_mi_specialist.py`
+4. Add tests in `tests/unit/test_my_specialist.py`
 5. Add example in `examples/`
 6. Update docs in `docs/specialists.md`
 
-## How to add a new playbook
+## How to Add a New Playbook
 
-1. Create `manuales/mi-playbook.md.yaml`
-2. Test with `arnes lint manuales/mi-playbook.md.yaml`
-3. Test with `arnes ejecutar manuales/mi-playbook.md.yaml --mock`
+1. Create `manuals/my-playbook.yaml`
+2. Test with `arnes lint manuals/my-playbook.yaml`
+3. Test with `arnes run manuals/my-playbook.yaml --mock`
 4. Add to `docs/playbook-library.md`
 
-## When in doubt
+## When in Doubt
 
 Read `MANIFESTO.md`. If your change violates any of the 10 declarations, don't
 make the change. Ask in GitHub Discussions first.

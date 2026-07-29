@@ -1,67 +1,65 @@
-# Manifiesto ARNES
+# ARNES Manifesto
 
-> *El arnés, no el caballo.*
 > *The harness, not the horse.*
 
-Los marcos de agentes de hoy te piden tres cosas: que abstraigas tu lógica detrás
-de clases opacas, que dependas de un proveedor de LLM, y que traces con funciones
-mágicas que no puedes debuggear. A cambio te ofrecen "productividad". Lo que
-entregan es deuda.
+Today's agent frameworks ask three things of you: abstract your logic behind
+opaque classes, depend on a single LLM vendor, and trace through magic
+functions you can't debug. In return they offer "productivity." What they
+deliver is debt.
 
-Un agente no debería ser una caja negra. Tus prompts, tu contexto, tu decisión de
-modelo, tu dinero — todo eso debería ser visible, sustituible y tuyo.
+An agent should not be a black box. Your prompts, your context, your choice
+of model, your money — all of it should be visible, substitutable, and yours.
 
-ARNES no es un framework. Es un **arnés**: el equipo que te conecta a un motor
-potente sin soltar las riendas. Diseñado para que puedas leer cada llamada,
-cambiar de proveedor en una línea, y razonar sobre tu sistema como lo haces con
-cualquier código procedural.
+ARNES is not a framework. It is a **harness**: the control layer that lets
+you orchestrate AI agents without surrendering the reins. Designed so you can
+read every call, switch providers in one line, and reason about your system
+the way you reason about any procedural code.
 
-Creemos que la era de los agentes será escrita por desarrolladores que se rehúsan
-a ceder control. Que eligen verbos sobre magia. Que prefieren 50 líneas que
-entienden sobre 5 líneas que no.
+We believe the agent era will be written by developers who refuse to cede
+control. Who choose verbs over magic. Who prefer 50 lines they understand
+over 5 lines they don't.
 
-ARNES nació al sur del Ecuador, donde hacer más con menos no es estética: es
-supervivencia.
+ARNES was born south of the equator, where doing more with less is not
+aesthetic — it is survival.
 
 ---
 
 **Control the agent. Don't worship it.**
-**Controla el agente. No lo adores.**
 
 ---
 
-## Diez declaraciones que no vamos a romper
+## Ten declarations we will not break
 
-1. **ARNES no expone como APIs de primera clase features que solo existen en un vendor.**
-   Si solo existe en OpenAI o solo en Anthropic, es un leak, no una feature.
+1. **ARNES does not expose vendor-only features as first-class APIs.**
+   If it only exists in OpenAI or only in Anthropic, it is a leak, not a feature.
 
-2. **ARNES nunca va a tener una clase llamada `Runnable`, `Chain`, `Workflow` o `Agent`.**
-   Composición = funciones. La herencia es deuda.
+2. **ARNES will never have a class named `Runnable`, `Chain`, `Workflow`, or `Agent`.**
+   Composition = functions. Inheritance is debt.
 
-3. **ARNES trae un contador de tokens por defecto.**
-   Si no sabés qué gastaste, no shippeaste.
+3. **ARNES ships with a token counter by default.**
+   If you don't know what you spent, you didn't ship.
 
-4. **ARNES nunca va a tener una versión hosted.**
-   El día que hosteemos, perdemos el derecho moral de argumentar contra el lock-in.
+4. **ARNES will never have a hosted version.**
+   The day we host, we lose the moral right to argue against lock-in.
 
-5. **ARNES no optimiza para "time to hello world".**
-   Optimiza para "time to I understand this codebase".
+5. **ARNES does not optimize for "time to hello world."**
+   It optimizes for "time to I understand this codebase."
 
-6. **ARNES no esconde el prompt del LLM.**
-   Cada prompt que se envía es un archivo en disco que puedes abrir, diffear y versionar.
+6. **ARNES does not hide the LLM prompt.**
+   Every prompt sent is a file on disk you can open, diff, and version.
 
-7. **ARNES no tiene magia.**
-   Si una línea hace algo que no entiendes, es un bug. Repórtalo.
+7. **ARNES has no magic.**
+   If a line does something you can't explain, it is a bug. Report it.
 
-8. **ARNES no va a soportar vendors que no permitan structured outputs.**
-   Si tu modelo no puede devolver JSON válido, no es un modelo para producción.
+8. **ARNES will not support vendors that cannot do structured outputs.**
+   If your model cannot return valid JSON, it is not a model for production.
 
-9. **ARNES no te va a pedir nunca tu API key.**
-   Las API keys viven en tu entorno. ARNES las lee, no las almacena.
+9. **ARNES will never ask for your API key.**
+   API keys live in your environment. ARNES reads them, it does not store them.
 
-10. **ARNES va a morir antes que cambiar el manifesto.**
-    Si algún día rompemos una de estas líneas, es porque ARNES dejó de ser ARNES.
+10. **ARNES will die before it changes the manifesto.**
+    If we ever break one of these lines, it is because ARNES stopped being ARNES.
 
 ---
 
-*Manifiesto v1.0 — Fijado el primer commit. Inmutable.*
+*Manifesto v1.0 — Fixed on the first commit. Immutable.*

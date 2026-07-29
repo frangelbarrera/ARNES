@@ -1,11 +1,12 @@
 """Tests for arnes.tools."""
+
 from __future__ import annotations
 
 from uuid import uuid4
 
 import pytest
 
-from arnes.tools.base import Tool, ToolContext, ToolRegistry, ToolResult
+from arnes.tools.base import Tool, ToolContext, ToolResult
 from arnes.tools.builtin import (
     FilesystemReadTool,
     FilesystemWriteTool,

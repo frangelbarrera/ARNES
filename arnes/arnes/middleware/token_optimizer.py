@@ -19,9 +19,9 @@ import json
 from typing import Any
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
+from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -72,6 +72,8 @@ class TokenOptimizer:
         self._cache_misses = 0
         self._routing_decisions = 0
         self._tokens_saved = 0
+        # Marker so specialists can detect already-wrapped providers
+        self._arnes_wrapped = True
 
     async def complete(
         self,
@@ -97,7 +99,9 @@ class TokenOptimizer:
                 cached.hit_count += 1
                 # Mark as cached in usage
                 cached.response.usage.cached = True
-                self._tokens_saved += cached.response.usage.tokens_in + cached.response.usage.tokens_out
+                self._tokens_saved += (
+                    cached.response.usage.tokens_in + cached.response.usage.tokens_out
+                )
                 logger.info(
                     "cache_hit",
                     cache_key=cache_key[:8],

@@ -1,4 +1,5 @@
 """Tests for arnes.thread."""
+
 from __future__ import annotations
 
 from uuid import uuid4
@@ -112,7 +113,12 @@ class TestThread:
             ),
             RunCompletedEvent(
                 thread_id=tid,
-                data={"steps_executed": 1, "duration_s": 1.0, "total_tokens": 15, "total_cost_usd": 0.001},
+                data={
+                    "steps_executed": 1,
+                    "duration_s": 1.0,
+                    "total_tokens": 15,
+                    "total_cost_usd": 0.001,
+                },
             ),
         ]
         thread = thread.extend(events)

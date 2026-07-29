@@ -8,31 +8,33 @@ Each playbook has:
 - Each step has: id, specialist OR tool, input, conditionals, retry, HITL gate
 
 Example:
-    nombre: auditar-pr
-    objetivo: Auditar un Pull Request
+    name: audit-pr
+    objective: Audit a Pull Request
     budget_usd: 0.50
 
-    pasos:
-      - id: leer_diff
-        especialista: @lector-de-diff
+    steps:
+      - id: read_diff
+        specialist: "@reviewer"
         input:
           pr: 1234
-          repo: mi-org/mi-repo
+          repo: my-org/my-repo
 
-      - id: auditoria_seguridad
-        especialista: @auditor-de-seg
-        input: "{{ pasos.leer_diff.salida }}"
-        requiere: [commit_firmado]
-        si_no_se_cumple:
-          llamar: @comentarista-de-fallback
-          terminar: rechazado
+      - id: security_audit
+        specialist: "@reviewer"
+        input: "{{ steps.read_diff.output }}"
+        requires: [commit_signed]
+        if_not_met:
+          action: call
+          specialist: "@reviewer"
+          input:
+            focus: "Comment that the PR is blocked by security review"
 
-      - id: paralelo
-        paralelo:
+      - id: parallel
+        parallel:
           - id: lint
-            especialista: @reviewer
+            specialist: "@reviewer"
           - id: tests
-            especialista: @tester
+            specialist: "@tester"
 
 This file defines the pydantic schemas that the YAML is parsed into.
 """
@@ -63,119 +65,117 @@ class HITLGate(BaseModel):
 
 
 class ConditionalBranch(BaseModel):
-    """Conditional branch — executed if `cuando` evaluates truthy.
+    """Conditional branch — executed if `when` evaluates truthy.
 
-    For `si_no_se_cumple` (the implicit "else" of a step), `cuando` is optional
-    because the branch fires when the step's `requiere` conditions fail.
+    For `if_not_met` (the implicit "else" of a step), `when` is optional
+    because the branch fires when the step's `requires` conditions fail.
     """
 
-    cuando: str | None = None  # None = implicit (si_no_se_cumple case)
-    accion: Literal["llamar", "terminar", "saltar"]
-    # If accion == "llamar":
-    especialista: str | None = None
+    when: str | None = None  # None = implicit (if_not_met case)
+    action: Literal["call", "terminate", "skip"]
+    # If action == "call":
+    specialist: str | None = None
     input: dict[str, Any] | None = None
-    # If accion == "terminar":
-    terminar: Literal["aprobado", "rechazado", "abortado"] | None = None
-    # If accion == "saltar":
-    saltar_a: str | None = None  # step id to jump to
+    # If action == "terminate":
+    terminate: Literal["approved", "rejected", "aborted"] | None = None
+    # If action == "skip":
+    skip_to: str | None = None  # step id to jump to
 
 
 class PlaybookStep(BaseModel):
     """A single step in a playbook.
 
     A step is either:
-    - A specialist invocation (especialista: @planner)
-    - A tool invocation (herramienta: github.crear_comentario)
-    - A parallel branch (paralelo: [...])
-    - A conditional branch (condicionales: [...])
+    - A specialist invocation (specialist: "@planner")
+    - A tool invocation (tool: github.create_comment)
+    - A parallel branch (parallel: [...])
+    - A conditional branch (conditionals: [...])
     """
 
     id: str
-    especialista: str | None = None
-    herramienta: str | None = None
-    input: dict[str, Any] | str | None = None  # str = Jinja2 template referencing prior steps
+    specialist: str | None = None
+    tool: str | None = None
+    input: dict[str, Any] | str | None = None  # str = Jinja2-style template referencing prior steps
     output: str | None = None  # variable name to assign output to
 
     # Control flow
-    requiere: list[str] = Field(default_factory=list)  # preconditions (must all be true)
-    si_no_se_cumple: ConditionalBranch | None = None
-    condicionales: list[ConditionalBranch] = Field(default_factory=list)  # if/elif chain
-    paralelo: list[PlaybookStep] | None = None  # parallel sub-steps
+    requires: list[str] = Field(default_factory=list)  # preconditions (must all be true)
+    if_not_met: ConditionalBranch | None = None
+    conditionals: list[ConditionalBranch] = Field(default_factory=list)  # if/elif chain
+    parallel: list[PlaybookStep] | None = None  # parallel sub-steps
 
     # Resilience
     retry: RetryPolicy | None = None
     timeout_s: float | None = None
 
     # HITL
-    aprobacion_humana: HITLGate | None = None
+    human_approval: HITLGate | None = None
 
     @model_validator(mode="after")
     def validate_step_type(self) -> PlaybookStep:
-        """Exactly one of: especialista, herramienta, paralelo must be set."""
-        types_set = sum(
-            1 for x in [self.especialista, self.herramienta, self.paralelo] if x is not None
-        )
+        """Exactly one of: specialist, tool, parallel must be set."""
+        types_set = sum(1 for x in [self.specialist, self.tool, self.parallel] if x is not None)
         if types_set == 0:
-            raise ValueError(f"Step '{self.id}' must have one of: especialista, herramienta, paralelo")
+            raise ValueError(f"Step '{self.id}' must have one of: specialist, tool, parallel")
         if types_set > 1:
-            raise ValueError(f"Step '{self.id}' can only have one of: especialista, herramienta, paralelo")
+            raise ValueError(f"Step '{self.id}' can only have one of: specialist, tool, parallel")
         return self
 
 
 class PlaybookMetadata(BaseModel):
     """Metadata about a playbook."""
 
-    nombre: str
-    objetivo: str
+    name: str
+    objective: str
     version: str = "1.0.0"
-    autor: str | None = None
+    author: str | None = None
     tags: list[str] = Field(default_factory=list)
     budget_usd: float = 0.50
-    idioma: Literal["es", "en", "bilingual"] = "es"
+    language: Literal["en", "es", "bilingual"] = "en"
 
 
 class Playbook(BaseModel):
     """A complete playbook — the manual ARNES executes."""
 
-    # Top-level metadata fields (bilingual: ES keys promoted to PlaybookMetadata)
-    nombre: str | None = None
-    objetivo: str | None = None
+    # Top-level metadata fields (canonical English keys)
+    name: str | None = None
+    objective: str | None = None
     version: str = "1.0.0"
-    autor: str | None = None
+    author: str | None = None
     tags: list[str] = Field(default_factory=list)
     budget_usd: float = 0.50
-    idioma: Literal["es", "en", "bilingual"] = "es"
+    language: Literal["en", "es", "bilingual"] = "en"
 
     # Allow either top-level metadata fields OR a nested metadata object
     metadata: PlaybookMetadata | None = None
 
-    pasos: list[PlaybookStep]
+    steps: list[PlaybookStep]
 
     # Globals
-    modelo_default: str | None = None
+    default_model: str | None = None
     variables: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _build_metadata(self) -> Playbook:
         """If metadata is None, build it from top-level fields."""
         if self.metadata is None:
-            if not self.nombre:
-                raise ValueError("Playbook requires 'nombre' (or nested 'metadata.nombre')")
+            if not self.name:
+                raise ValueError("Playbook requires 'name' (or nested 'metadata.name')")
             self.metadata = PlaybookMetadata(
-                nombre=self.nombre,
-                objetivo=self.objetivo or "Sin objetivo",
+                name=self.name,
+                objective=self.objective or "No objective",
                 version=self.version,
-                autor=self.autor,
+                author=self.author,
                 tags=self.tags,
                 budget_usd=self.budget_usd,
-                idioma=self.idioma,
+                language=self.language,
             )
         return self
 
     @model_validator(mode="after")
     def validate_step_ids(self) -> Playbook:
         """Step IDs must be unique."""
-        ids = [p.id for p in self.pasos]
+        ids = [p.id for p in self.steps]
         duplicates = {x for x in ids if ids.count(x) > 1}
         if duplicates:
             raise ValueError(f"Duplicate step IDs: {duplicates}")
@@ -183,11 +183,11 @@ class Playbook(BaseModel):
 
     def get_step(self, step_id: str) -> PlaybookStep | None:
         """Find a step by ID (searches recursively into parallel branches)."""
-        for step in self.pasos:
+        for step in self.steps:
             if step.id == step_id:
                 return step
-            if step.paralelo:
-                for sub in step.paralelo:
+            if step.parallel:
+                for sub in step.parallel:
                     if sub.id == step_id:
                         return sub
         return None

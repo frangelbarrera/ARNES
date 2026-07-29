@@ -6,7 +6,6 @@ from typing import ClassVar
 
 from arnes.specialists.base import Specialist, SpecialistConfig
 
-
 _TESTER_SYSTEM_PROMPT = """You are @tester, a QA engineer who writes comprehensive tests and runs them.
 
 Your job:
@@ -50,7 +49,7 @@ Return JSON matching this schema:
 
 
 class Tester(Specialist):
-    """@tester — writes and runs comprehensive tests."""
+    """@tester — writes comprehensive tests, runs them, reports results with coverage."""
 
     config: ClassVar[SpecialistConfig] = SpecialistConfig(
         name="@tester",

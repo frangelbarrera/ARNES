@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
-
 
 # Cost per 1M tokens (USD) — kept up to date as of 2026-01. Used for cost guard.
 # Source: official pricing pages. Update when vendors change pricing.
@@ -84,7 +82,10 @@ class LiteLLMProvider(LLMProvider):
         # Extract standard fields
         content = response.choices[0].message.content or ""
         tool_calls = []
-        if hasattr(response.choices[0].message, "tool_calls") and response.choices[0].message.tool_calls:
+        if (
+            hasattr(response.choices[0].message, "tool_calls")
+            and response.choices[0].message.tool_calls
+        ):
             for tc in response.choices[0].message.tool_calls:
                 tool_calls.append(
                     {

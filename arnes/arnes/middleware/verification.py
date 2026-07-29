@@ -75,6 +75,8 @@ class VerificationLayer:
         self._refusals_triggered = 0
         self._hedging_detected = 0
         self._validation_failures = 0
+        # Marker so specialists can detect already-wrapped providers
+        self._arnes_wrapped = True
 
     async def complete(
         self,
@@ -112,7 +114,9 @@ class VerificationLayer:
             self._refusals_triggered += 1
             logger.warning(
                 "verification_failed",
-                reason="refusal_triggered" if verification.refusal_triggered else "validation_failed",
+                reason="refusal_triggered"
+                if verification.refusal_triggered
+                else "validation_failed",
                 errors=verification.validation_errors,
             )
             # Replace response with refusal
@@ -163,10 +167,7 @@ class VerificationLayer:
 
     def _detect_hedging(self, content: str) -> bool:
         """Detect if the response is hedging / refusing."""
-        for pattern in _HEDGING_PATTERNS:
-            if re.search(pattern, content, re.IGNORECASE):
-                return True
-        return False
+        return any(re.search(pattern, content, re.IGNORECASE) for pattern in _HEDGING_PATTERNS)
 
     def _validate_structured(
         self,
@@ -206,7 +207,9 @@ class VerificationLayer:
         return [
             LLMMessage(
                 role="system",
-                content=m.content + "\n\n" + refusal_prompt.content if m.role == "system" else m.content,
+                content=m.content + "\n\n" + refusal_prompt.content
+                if m.role == "system"
+                else m.content,
             )
             if m.role == "system"
             else m

@@ -1,0 +1,442 @@
+# AI Patterns Audit v2 — ARNES v0.1.0a1
+
+**Auditor:** Senior AI Engineer (sub-agent)
+**Task ID:** AUDIT-AI
+**Date:** 2026-01
+**Scope:** `arnes/specialists/`, `arnes/middleware/`, `arnes/playbooks/`, `arnes/llm/`, `manuals/`, `arnes/agent/`, `arnes/cli/`, `tests/`
+**Compared against:** `AI_AUDIT.md` (v1)
+**Verdict:** **NO-GO for public alpha** (see §6)
+
+---
+
+## 1. Executive summary
+
+ARNES v0.1.0a1 fixes 4 of the 8 CRITICAL issues raised in v1 (tool-use loop scaffolded, `saltar_a` semantics corrected, multi-template resolution works, refusal→parse→`success=False` chain closed). The architecture remains clean and the bilingual keymap / stateless-reducer design is solid.
+
+However, the v1 fixes are **incomplete** and have introduced **two new structural defects** that v1 did not flag:
+
+1. **The ReAct loop is implemented but inert under the default model.** `OllamaProvider.complete()` hardcodes `tool_calls=[]` (ollama.py:66) with a comment "Ollama tool use is evolving — fall back to text parsing" but no parser is provided. So when a user runs the quickstart (`arnes run manuals/audit-pr.yaml`) with the default `ollama/llama3.2`, `@coder`, `@tester`, and `@debugger` receive their tool schemas, return no tool calls, and run as stateless prompt templates. The flagship feature added in response to v1 C2 is effectively dead on the default path.
+
+2. **The "already wrapped?" guard in `Specialist.run()` is dead code.** `base.py:112` checks `if not hasattr(provider, "_provider")`, but every middleware class assigns `self.provider` (not `self._provider`) — verified by grep across `middleware/{verification,token_optimizer,cost_guard}.py`. So the guard is always True, and the specialist **always** re-wraps the provider it receives. Combined with `Harness.run()` (agent.py:97-107), which also wraps, the production stack becomes `VerificationLayer → TokenOptimizer → CostGuard → VerificationLayer → TokenOptimizer → LLMProvider` — two caches, two verification layers (the refusal prompt is injected twice), and a shadowed inner CostGuard that can never observe the inner cache hits.
+
+On top of these two, **3 v1 CRITICALs remain unfixed**: `output_schema` is still never passed to `VerificationLayer` (so schema validation is dead in production), parallel-step outputs still cannot be referenced via `{{ steps.parallel.X.output }}` (the `audit-pr.yaml` synthesis step receives literal template strings), and specialist prompts still don't enforce JSON-only output (Llama 3.2 will wrap responses in ```` ```json ```` fences, the specialist now correctly returns `success=False`, but the user gets an opaque parse error with no recovery).
+
+Additionally, **15 v1 HIGHs are still open** (CostGuard no-op on $0 models, `pause_at_pct` set/unset in the same branch, hedging false positives on JSON values, `RetryPolicy` / `timeout_s` / `HITLGate` defined in schema but never enforced, playbook `budget_usd` field ignored by executor, etc.), and the example playbooks still have the same role mismatches v1 flagged (`@coder` for a markdown outline, `@reviewer` for diff reading / security audit / lint / synthesis, debugger JSON passed as `code` to `@reviewer` and `@tester`).
+
+The unit and integration tests pass because the `SchemaValidMockProvider` (test_executor.py:13-64, test_e2e.py:15-57, cli/main.py:304-364) returns schema-conforming JSON per specialist. This is an improvement over v1 (the mock is now fixture-aware in three places), but it means the test suite **cannot detect** the schema-validation gap, the parallel-output template bug, or the ollama tool-use regression — because the mock never exercises those paths.
+
+**Bottom line:** the codebase is ~60% of the way to alpha. The remaining gaps are concentrated, well-understood, and fixable in roughly 5-7 engineer-days. Shipping as-is would produce a public alpha that silently degrades premium models, can't use tools on its default model, and ships example playbooks that pass tests but produce garbage on real LLMs.
+
+---
+
+## 2. Answers to the 10 audit questions
+
+### 2.1 Are the specialist system prompts good?
+
+**Verdict: Acceptable but uneven. Same anti-patterns as v1, plus one new gap.**
+
+**Good:**
+- Structure is consistent (job → rules → JSON schema).
+- Anti-vagueness rules are specific ("`'Review the code'` is bad, `Review PR #123 for security vulnerabilities, focusing on auth flows` is good").
+- Temperatures are well-calibrated (0.0 for code/review/debug, 0.1 for planner).
+- `@debugger` and `@reviewer` have explicit methodology sections.
+
+**Anti-patterns (v1, still present):**
+
+- **No "Return ONLY valid JSON" instruction.** None of the 5 prompts (planner.py:9-40, coder.py:9-39, reviewer.py:9-38, tester.py:9-48, debugger.py:9-45) tell the LLM to emit JSON without prose or ```` ```json ```` fences. With Llama 3.2 this fails ~30-40% of the time. v1 closed the silent-acceptance bug (the specialist now returns `success=False` on JSON parse failure, base.py:276-286), but the user experience is still "opaque parse error, no retry, no guidance."
+- **Embedded prompt schema ≠ declared `output_schema`.** Coder's prompt (coder.py:25-38) promises `{"files": [...], "summary", "assumptions", "warnings"}` but the declared schema (coder.py:50-57) only requires `["files", "summary"]`. The LLM produces the rich shape; the validator only checks the minimum. Inconsistency that confuses both LLM and downstream consumers.
+- **`@reviewer` is overloaded.** Used in `audit-pr.yaml` for diff reading, security audit, lint, and synthesis (lines 13, 20, 28, 33, 40). The prompt (reviewer.py:9-22) is written for one job (code review) but is being asked to do four.
+- **`@coder` for markdown.** `hello-world.yaml:14-18` invokes `@coder` to "Write a markdown outline." Coder's prompt demands "type hints, docstrings, and inline comments" — applying that to markdown is incoherent.
+
+**New gap (not in v1):**
+
+- **Specialists that declare tools don't tell the LLM how/when to use them.** `@coder` declares `tools=["fs_read", "fs_write", "shell"]` (coder.py:49) but the prompt (coder.py:9-23) never mentions reading existing code before writing new code, never mentions running tests after writing, never mentions when to prefer `fs_read` over `shell`. Same for `@tester` (tester.py:58) and `@debugger` (debugger.py:55). Now that the ReAct loop exists (base.py:128-178), the LLM **could** call tools — but it won't, because the prompt gives it no reason to. This is the missing half of the v1 C2 fix.
+
+### 2.2 Does the Verification Layer actually prevent hallucinations?
+
+**Verdict: No. Same three bugs as v1, all confirmed still present.**
+
+**Bug A (CRITICAL, unchanged from v1 C1): `output_schema` never reaches the VerificationLayer.**
+
+`specialists/base.py:130-139` calls `wrapped_provider.complete(...)` with `response_format={"type": "json_object"}` but **never** passes `response_schema=self.config.output_schema`. Verified by grep: `response_schema` does not appear anywhere in `specialists/base.py`. As a result, in `verification.py:149`, the condition `if self.config.structured_outputs and response_schema:` is always False because `response_schema is None`. The `_validate_structured` method (verification.py:170-187) is dead code in production. The unit test `test_structured_output_validation` (test_middleware.py:78-94) passes only because it calls `VerificationLayer.complete(..., response_schema={...})` directly, bypassing the specialist.
+
+**Bug B (HIGH, unchanged from v1 H3): Hedging detection produces false positives on JSON values.**
+
+`_HEDGING_PATTERNS` (verification.py:32-39) is applied to the full response content via `_detect_hedging` (verification.py:166-168). If `@reviewer` honestly returns `{"summary": "I'm not sure about the auth flow"}`, the pattern `r"\bI'?m\s+not\s+sure\b"` matches, `verification.passed = False`, and the response content is replaced with `refusal_message` (verification.py:121) — a plain string. The specialist then tries `json.loads(refusal_message)` (base.py:275), fails, and returns `success=False` (base.py:276-286). So honest hedging inside a JSON value now produces a confusing "LLM did not return valid JSON" error instead of a useful response. v1's C7 fix turned Bug B from "silent success with garbage" into "loud failure with confusing message" — better, but still wrong.
+
+**Bug C (MEDIUM, unchanged from v1 H4): `confidence` is hardcoded.**
+
+`verification.py:136` constructs `VerificationResult(passed=True, confidence=0.8)`. There is no mechanism to extract a real confidence score from the LLM output. The `confidence_gate` field (verification.py:47) is a v0.2 placeholder and is functionally useless because the only values `confidence` ever takes are 0.8 (default), 0.4 (hedging), and 0.0 (validation failure). The `@debugger` prompt asks the LLM to return `confidence: 0.0-1.0` (debugger.py:34) but the VerificationLayer never reads it.
+
+**What happens if the LLM returns valid JSON but factually wrong?**
+
+Nothing. The VerificationLayer validates form (JSON parseable, required fields present) but not content. A `@debugger` response of `{"root_cause": "wrong guess", "confidence": 0.9, "fix": {...}}` passes every check the layer performs. The critic loop (v0.3) and grounding RAG (v0.4) are documented in the module docstring (verification.py:1-15) but not implemented. The "anti-hallucination" claim in the README is, for v0.1, marketing.
+
+### 2.3 Does the Token Optimizer do routing correctly?
+
+**Verdict: No. Heuristic is unchanged from v1 and still defective.**
+
+`_ROUTING_RULES` (token_optimizer.py:30-35):
+```python
+_ROUTING_RULES = [
+    (500, False, "ollama/llama3.2"),
+    (2000, False, "anthropic/claude-3-5-haiku-20241022"),
+]
+```
+
+**Cases it breaks:**
+
+1. **Premium-model downgrade is silent.** A user who configures `Harness(model="anthropic/claude-sonnet-4-20250514")` and runs `@planner` with `{"task": "Plan JWT auth"}` (~10 tokens) gets silently routed to `ollama/llama3.2`. No event, no warning beyond a `logger.info` (token_optimizer.py:142-148). The user pays for Sonnet 4 and gets Llama 3.2 3B output.
+2. **Token estimate is `len(content) // 4`** (token_optimizer.py:137). For dense JSON this underestimates by ~25-40%. A 400-token JSON payload may be measured as 300 tokens and routed to ollama when it should not be.
+3. **The `has_tools=False` condition is now meaningful** (v1 C2 fixed, so the specialist does pass `tools` to the provider when configured). However, all 5 specialists have `default_model="ollama/llama3.2"` hardcoded (planner.py:64, coder.py:58, reviewer.py:58, tester.py:63, debugger.py:60). When the specialist's `default_model` is already `ollama/llama3.2`, `_is_more_expensive("ollama/llama3.2", "ollama/llama3.2")` returns False, so routing never triggers. Routing only fires when the caller (Harness or PlaybookExecutor) passes a different `model=` — and even then, `base.py:126` uses `self.config.default_model or "ollama/llama3.2"`, so the specialist's `default_model` wins over the caller's `model`. **The caller's model choice is effectively ignored.**
+4. **`_is_more_expensive` is brittle.** Substring matching (token_optimizer.py:153-170): `"gpt-4o-mini"` contains `"gpt-4o"` → both end up in tier 2 by `max()`. Works by accident.
+5. **Routing decision is not emitted as a `MODEL_ROUTED` event** (events.py:58 defines the type, but no middleware has access to the Thread to emit it). Inobservability.
+
+### 2.4 Is the TokenOptimizer cache semantically correct?
+
+**Verdict: Correct for idempotent inputs, dangerous for everything else. Same issues as v1.**
+
+The cache key (token_optimizer.py:176-195) is `sha256(messages + model + tools + kwargs)`. It is deterministic and includes everything in the request except `temperature` (deliberately excluded). TTL is 1 hour (token_optimizer.py:62).
+
+**Where it breaks:**
+
+1. **Time-sensitive queries.** "What's the latest PR in this repo?" cached for 1 hour returns stale data.
+2. **User-state-dependent queries.** If `user_id` is in the messages but the user's state changes between calls, the cache returns the old answer.
+3. **Cross-step context.** The cache key includes the full `messages` list, so if the system prompt changes the cache misses (correct). But if two steps send **literally identical** messages in different playbook contexts (e.g., the same `@reviewer` invocation with the same `code` but the playbook has diverged in other steps), the cache returns the first step's answer. This is rare but real.
+4. **`temperature=0.1` planner outputs are cached.** The planner runs with `temperature=0.1` (planner.py:65) — non-deterministic by design. The cache excludes `temperature` from the key (token_optimizer.py:189), so two identical planner invocations with `temperature=0.1` will return the first run's output on the second. Inconsistent.
+5. **In-place mutation of cached responses.** `token_optimizer.py:99` sets `cached.response.usage.cached = True` directly on the cached `LLMResponse` object. This violates the immutability assumption of `LLMResponse` and can cause subtle bugs if the same cached response is returned to two concurrent callers — both will see `cached=True`, but the second caller's stats will be wrong if the first mutated other fields.
+6. **No invalidation on prompt or schema change.** If you edit `planner.py` to tweak the system prompt, the cache still returns responses generated under the old prompt until the 1-hour TTL expires.
+7. **No request deduplication.** Two concurrent identical requests both miss the cache and both call the LLM.
+
+**Recommendation:** Disable cache by default for `@planner` and `@debugger`. Enable only for `@coder`/`@tester` when `temperature=0.0` and input is byte-identical. Make `enable_cache` per-specialist (currently hardcoded `True` in base.py:114).
+
+### 2.5 Does the CostGuard handle edge cases?
+
+**Verdict: Happy path only. Same 4 edge-case failures as v1, plus a new one.**
+
+1. **LLM doesn't report usage.** `cost_guard.py:191` does `cost = response.usage.cost_usd` without a None check. If a custom provider returns `LLMResponse(usage=None)` (not the current providers, but plausible), this raises `AttributeError`. The LiteLLM provider handles `usage is None` (litellm_provider.py:101-103) but the CostGuard doesn't.
+2. **Cost is 0 (Ollama/Mock).** With ollama, `cost_usd=0.0` always (ollama.py:71). `spent_usd` never increments. `spent_usd >= effective_budget * abort_at_pct` (cost_guard.py:138) is `0 >= 0.50` → always False. **The CostGuard never aborts on the default model.** The circuit breaker (cost_guard.py:208-216) also never trips because `recent_spend` is always 0. Combined with no `max_iterations` cap on the playbook executor and no `timeout_s` enforcement, an infinite loop in a playbook will run forever on ollama. v1 H1 recommended a `max_calls` fallback — still not implemented.
+3. **Retries.** `RetryPolicy` is defined in schema.py:49-55 but the executor never wraps `_execute_step` in a retry loop. Failures are terminal. (v1 H14, unchanged.)
+4. **`pause_at_pct` is a no-op.** cost_guard.py:153-161:
+   ```python
+   if self.spent_usd >= effective_budget * self.budget.pause_at_pct:
+       self._paused = True
+       logger.warning("cost_guard_pause", ...)
+       self._paused = False  # immediately un-pauses
+   ```
+   Set and unset in the same branch. The HITL pause documented in the module docstring (cost_guard.py:1-20, "HITL: pause and ask for approval at 95% of budget") does not exist. (v1 H2, unchanged.)
+5. **NEW: Playbook `budget_usd` field is ignored.** `audit-pr.yaml:6` declares `budget_usd: 0.50`. The compiler parses it into `playbook.metadata.budget_usd` (schema.py:133). But `PlaybookExecutor.__init__` (executor.py:90) uses `self.cost_budget = cost_budget or CostBudget()` — it never reads `playbook.metadata.budget_usd`. The CLI passes `--budget` (cli/main.py:64, default 0.50) into `CostBudget(task_budget_usd=budget)`. So the playbook's declared budget is decorative; the actual budget comes from the CLI flag or the executor constructor.
+
+### 2.6 Are the example playbooks useful?
+
+**Verdict: As DSL demos, yes. As functional playbooks, no. Same role mismatches as v1.**
+
+**`debug-python-issue.yaml`:**
+- `read_traceback` (line 9-20): passes an inline traceback to `@debugger`. Conceptually OK. But the debugger has no way to `fs_read` `src/app.py` line 42 to actually inspect the failing code — because on the default ollama model the tool-use loop is inert (see §2.8). On a Claude/OpenAI model it could, but the prompt (debugger.py:9-29) never tells the LLM to read the file referenced in the traceback. So even with a capable model, the debugger will guess at a fix without reading the surrounding code.
+- `review_fix` (line 22-26): passes `code: "{{ steps.read_traceback.output }}"` to `@reviewer`. But `read_traceback.output` is a JSON object `{"root_cause": "...", "confidence": ..., "fix": {...}, ...}` — **not code**. The reviewer is asked to review a diagnostic JSON as if it were source. The reviewer's prompt (reviewer.py:9-22) says "Read the code" and "Cite line numbers" — there are no line numbers in a JSON diagnostic.
+- `verify_tests` (line 28-32): passes the same diagnostic JSON as `code` to `@tester`. Same type mismatch.
+
+**`audit-pr.yaml`:**
+- `read_diff` (line 13-18): uses `@reviewer` to "Read the diff and structure it for analysis." The reviewer is not a diff reader. There is no `@diff-reader` specialist.
+- `security_audit` (line 20-24): uses `@reviewer` with `focus: "Security review..."`. The reviewer's prompt mentions security as one of five concerns but is not a dedicated security auditor.
+- `parallel` (line 26-37): the `lint` and `tests` sub-steps reference `{{ steps.read_diff.output }}` (lines 30, 35). This works — single-template resolution on a top-level step output is fine. But:
+- `synthesis` (line 39-46): references `{{ steps.parallel.lint.output }}` and `{{ steps.parallel.tests.output }}`. **These do not resolve.** `_execute_parallel` (executor.py:421-437) stores `outputs["parallel"] = {"lint": <raw_output>, "tests": <raw_output>}` where `<raw_output>` is the specialist's parsed JSON (e.g., `{"verdict": "approve", ...}`), not a dict with an `output` key. The template path `["parallel", "lint", "output"]` walks to `outputs["parallel"]["lint"]` (the reviewer JSON) and then tries `["output"]` — KeyError — and `_resolve_expr` (executor.py:577) returns the literal string `"{{ steps.parallel.lint.output }}"`. The synthesis `@reviewer` receives literal template strings as its `lint` and `tests` inputs. **Confirmed by trace, not tested.**
+
+**`write-feature-tdd.yaml`:**
+- Conceptually correct TDD flow (plan → tests → code → review → verify).
+- `verify_tests_pass` (line 33-38) asks `@tester` to "Run the tests and confirm they all pass." The tester has `tools=["fs_read", "fs_write", "shell"]` (tester.py:58) and could run pytest via `shell` — but only if the LLM is on a provider that returns `tool_calls`. On ollama default, the tester cannot run anything. Its prompt (tester.py:9-23) says "Run the tests" and asks for `test_results.passed/failed`. The LLM will fabricate `{"passed": 5, "failed": 0}` without running anything. **The prompt incentivizes hallucination when tools are unavailable.**
+
+**`hello-world.yaml`:**
+- Uses `@coder` to "Write a markdown outline" (line 14-18). Coder's prompt (coder.py:18) says "Write production-quality code, not pseudo-code" and demands "type hints, docstrings, and inline comments." Applying that to a markdown outline is incoherent. Needs a `@writer` specialist or a different default.
+
+### 2.7 Is anything critical missing?
+
+**Yes — same list as v1, plus confirmation that some v1 "missing" items are still missing:**
+
+1. **Streaming.** No `stream_complete` on `LLMProvider` (llm/base.py:62-82). For `audit-pr.yaml` (5+ specialist calls), the user waits minutes with only a spinner. v1 M1, unchanged.
+2. **Multi-turn within a step.** `specialist.run()` is single-shot per ReAct iteration. There's no way for the user to say "no, that's wrong, try again" within a step. v1 M3, unchanged.
+3. **Persistent memory.** No `MemoryStore`. Each run starts from scratch. v1 M2, unchanged.
+4. **Retry with backoff.** `RetryPolicy` in schema (schema.py:49-55), never used in executor. v1 H14, unchanged.
+5. **Per-step timeout.** `timeout_s` in schema (schema.py:109), never enforced. v1 H15, unchanged.
+6. **HITL gate enforcement.** `HITLGate` in schema (schema.py:58-64, 112), never enforced by executor. The `human_approval` tool exists (builtin.py:345-388) and the specialist's HITL check (base.py:218-234) auto-rejects in non-interactive mode, but the playbook-level `human_approval` field is decorative. v1 H16, unchanged.
+7. **Native tool calling for ollama.** `OllamaProvider` hardcodes `tool_calls=[]` (ollama.py:66). v1 L1 noted this; the v1 fix was to add the ReAct loop, but the ollama provider was never updated to actually return tool calls. **This is the biggest regression.**
+8. **Structured output with pydantic.** `SpecialistConfig.pydantic_model` field exists (base.py:45) and the validation path is implemented (base.py:291-309), but **no specialist uses it**. All 5 use `output_schema` (dict) instead. The strong-validation path is dead code.
+9. **Observability events.** `MODEL_ROUTED`, `CACHE_HIT`, `CONTEXT_COMPACTED`, `REFUSAL_TRIGGERED`, `CONFIDENCE_SCORED` (events.py:58-64) are defined but never emitted. Middleware has no access to the Thread. v1 M16, unchanged.
+10. **JSON cleaning post-processing.** No `_clean_json_response()` helper to strip ```` ```json ```` fences or extract the first `{...}` from a prose-wrapped response. Llama 3.2 will produce fenced JSON ~30% of the time. v1 §4 #5 option B, not implemented.
+
+### 2.8 Is defaulting to ollama/llama3.2 realistic?
+
+**Verdict: No. Same answer as v1, now worse because the ReAct loop is dead on this model.**
+
+Llama 3.2 (1B/3B, the sizes that run on commodity hardware via ollama) with `format: "json"`:
+- Can produce valid JSON for flat schemas (`{"steps": [...]}`) ~70-85% of the time.
+- Frequently wraps JSON in ```` ```json ... ```` fences or adds prose before/after.
+- Struggles with nested schemas (Coder's `files: [{path, language, content, action}]`).
+- Does not respect enum constraints reliably (`action: "create"` may come back as `"create_new"` or `"CREATE"`).
+- Truncates long outputs (a 200-line `@coder` response may be cut off mid-object).
+- **Cannot do tool use through ollama's current API** as wired in `ollama.py` — `tool_calls` is hardcoded to `[]`.
+
+**What will happen in alpha on the default stack:**
+
+- `@planner` (no tools, simple schema): ~70% success rate. JSON parse failures surface as `success=False, error: "LLM did not return valid JSON"`.
+- `@coder` (tools declared, complex schema): ~40-50% success rate. Tool-use loop never triggers. JSON parse failures and schema mismatches common. Even when JSON parses, `files[0].action` may be `"create_new"` instead of `"create"` — currently accepted because schema validation only checks required-field presence (base.py:312-323).
+- `@reviewer` (no tools, simple schema): ~75% success rate.
+- `@tester` (tools declared): cannot run tests (tool-use inert). Will fabricate `test_results` ~90% of the time. The system reports `success=True` with hallucinated test counts.
+- `@debugger` (tools declared): cannot read files (tool-use inert). Will propose fixes from the traceback alone, without reading the failing code. Confidence will be ~0.85-0.95 regardless of accuracy.
+
+**Recommendation (unchanged from v1):** Default to `anthropic/claude-3-5-haiku-20241022` ($0.80/$4.00 per M tokens) for the example playbooks. Keep `ollama/llama3.2` as the default for `hello-world.yaml` only, with a clear disclaimer. Alternatively, implement `_clean_json_response()` and a proper ollama tool-call parser — both are 1-2 days of work.
+
+### 2.9 Is the specialist/tool/playbook separation correct?
+
+**Verdict: Conceptual separation correct. Implementation coupling is better than v1 but still has issues.**
+
+**Correct:**
+- Specialist = `(system_prompt + tools + output_schema)` data class. ✔
+- Tool = `(Args + Result + execute())` with auto-registry. ✔
+- Playbook = YAML → DAG with separate compiler and executor. ✔
+- Thread = immutable event log. ✔
+- Harness wraps the provider once and passes it to the specialist (agent.py:96-107). ✔ (intent is right; the dead `_provider` check breaks it — see §2.10 N2)
+
+**Coupling issues:**
+
+1. **Specialist hardcodes its own middleware wrapping** (base.py:111-122). The intent (per the comment) is "if not already wrapped, wrap fresh." But the check `hasattr(provider, "_provider")` is dead (no middleware sets `_provider`; they all set `provider`). So the specialist always re-wraps. When called from `Harness.run()` (which already wraps), the result is double-wrapping: `VL → TO → CG → VL → TO → LLM`. The refusal prompt gets injected twice (once per VL), two caches exist, and the inner CostGuard is shadowed by the outer one.
+2. **Executor passes `cost_guard` as `provider` to the specialist** (executor.py:345) with `# type: ignore[arg-type]`. `CostGuard` does not inherit from `LLMProvider`. Works by duck typing. Fragile — adding a new abstract method to `LLMProvider` would break at runtime, not at type-check time.
+3. **`ToolContext.budget_remaining_usd`** is computed from the executor's CostGuard (executor.py:335-338) but the specialist wraps the provider with its own middleware stack, so tools that read `ctx.budget_remaining_usd` see the executor's view, not the specialist's. Inconsistent.
+4. **Specialists reference tools by string name** (`tools=["fs_read"]`). No validation at specialist-registration time that the tool exists. If `fs_read` is renamed to `filesystem.read`, every specialist silently drops it (base.py:99-104 just skips missing tools with no warning).
+5. **Playbooks reference specialists by string name** (`specialist: "@reviewer"`). The compiler checks syntax (starts with `@`) but not existence (compiler.py:155-161). A playbook referencing `@nonexistent` compiles fine and fails at runtime.
+6. **`SpecialistRegistry` auto-registers via `__init_subclass__`** (base.py:71-74) AND explicitly in `get_default_specialist_registry()` (base.py:399-401). Double registration mechanism. The auto-registry is fragile to import order; the explicit registry is the one actually used. The auto-registry should be removed.
+7. **`HarnessConfig.budget_usd`** (agent.py:46) is a float, but `CostBudget` (cost_guard.py:46-79) is a richer model with org/project/agent/task levels. The Harness flattens it to `CostBudget(task_budget_usd=self.config.budget_usd)` (agent.py:106), losing the hierarchy. For a "killer differentiator" (cost_guard.py:1-20), the integration is shallow.
+
+### 2.10 Are there bugs in the executor?
+
+**Verdict: 4 of v1's 7 bugs are fixed. 3 remain. 2 new bugs introduced.**
+
+**Fixed since v1:**
+- ✅ `saltar_a` semantics (v1 C3). Now uses `__skip_steps_until` dict (executor.py:121-133, 476-481). When the target step is reached, it's removed from the skip set and executed. Steps between current and target are skipped. Correct.
+- ✅ Multi-template resolution (v1 C4). `_resolve_template` now iterates all matches in reverse order (executor.py:529-555). Verified by `test_multi_template_resolution` (test_executor.py:164-180).
+- ✅ List template recursion (v1 H18). `_resolve_input` now recurses into lists (executor.py:514-522).
+- ✅ `if_not_met` with `action: terminate` (v1 Bug 6, partial). Tested by `test_conditional_branch_terminate` (test_executor.py:300-315). But explicit `conditionals: [...]` with `when:` expressions are still not evaluated — only `if_not_met` (implicit else) is handled.
+
+**Still broken (v1, unchanged):**
+
+- **BUG-1 (CRITICAL, v1 C5): Parallel output structure.** `outputs["parallel"]` is `{"lint": <raw_output>, "tests": <raw_output>}` (executor.py:421-437). Templates like `{{ steps.parallel.lint.output }}` walk to `<raw_output>["output"]` which doesn't exist (the raw output is the specialist's parsed JSON, e.g., `{"verdict": "approve", ...}`). Returns literal string. Affects `audit-pr.yaml` synthesis step. **Not tested.**
+- **BUG-2 (HIGH, v1 H13): Template path not found leaves literal silently.** `_resolve_expr` (executor.py:577) returns `f"{{{{ {expr} }}}}"` on KeyError. No warning, no error. The downstream specialist receives a literal template string as input and tries to interpret it as data.
+- **BUG-3 (MEDIUM, v1 Bug 7): `__skip_steps_until` leaks into `result.outputs`.** executor.py:146 does `outputs[step.id] = step_result.get("output")` for every step. The `__skip_steps_until` dict (executor.py:121, 479) is stored in `outputs` and ends up in `PlaybookRunResult.outputs` (executor.py:210). Internal state leaks to the user.
+
+**New bugs introduced by v1 fixes:**
+
+- **BUG-4 (CRITICAL, new): Dead `_provider` check causes double-wrapping.** base.py:111-122:
+  ```python
+  wrapped_provider = provider
+  if not hasattr(provider, "_provider"):  # ← always True
+      wrapped_provider = TokenOptimizer(provider, enable_cache=True)
+      if self.config.output_schema or self.config.pydantic_model:
+          wrapped_provider = VerificationLayer(wrapped_provider, ...)
+  ```
+  Verified by grep: `verification.py:73`, `cost_guard.py:95`, `token_optimizer.py:65` all assign `self.provider = provider`, never `self._provider`. So `hasattr(provider, "_provider")` is False for every middleware instance. The guard never short-circuits. When `Harness.run()` (agent.py:97-107) passes an already-wrapped `CostGuard(VerificationLayer(TokenOptimizer(provider)))` to `specialist.run()`, the specialist wraps it again with its own `VerificationLayer(TokenOptimizer(...))`. Final stack: `VL → TO → CG → VL → TO → LLM`. Refusal prompt injected twice. Two caches. Outer CostGuard shadows inner.
+- **BUG-5 (HIGH, new): ReAct loop with `max_iterations` reached produces misleading error.** base.py:128-182: the loop runs up to `max_iterations` (default 5). If the LLM keeps returning `tool_calls` (e.g., it wants to read 6 files but `max_iterations=5`), the loop exits with `response` still containing `tool_calls` and likely empty `content`. Then `_parse_and_validate_output` (base.py:256-331) tries `json.loads("")` → fails → returns `success=False, error="LLM did not return valid JSON. Got: "`. The user sees a JSON parse error when the real problem is "the LLM needed more iterations." No `max_iterations_reached` flag, no clear error message.
+- **BUG-6 (MEDIUM, new): JSON mode + tools passed simultaneously.** base.py:130-139 passes both `tools=tool_schemas` and `response_format={"type": "json_object"}` when the specialist has both. Ollama's `/api/chat` does not support both `format: "json"` and `tools` together — ollama silently ignores one (behavior varies by version). LiteLLM's behavior varies by vendor: OpenAI accepts both, Anthropic prefers `tool_choice` + system-prompt instruction over `response_format`. The combination is unspecified and will produce inconsistent results across providers.
+
+---
+
+## 3. Issue table
+
+### CRITICAL (blocks alpha)
+
+| # | Issue | File:Line | Fix |
+|---|-------|-----------|-----|
+| C1 | `output_schema` never passed to `VerificationLayer` → schema validation is dead code in production | `specialists/base.py:130-139` | Pass `response_schema=self.config.output_schema` in the `wrapped_provider.complete()` call. Have `VerificationLayer._validate_structured` validate the parsed JSON against the schema (ideally via pydantic `Type[BaseModel]`). On failure, return `success=False` with the validation error. |
+| C2 | ReAct loop is inert on the default model — `OllamaProvider` hardcodes `tool_calls=[]` | `llm/ollama.py:66` | Implement ollama tool-call parsing: pass `tools` in the payload, parse `message.tool_calls` from the response. Alternatively, implement a text-based fallback parser that extracts `{"name": "...", "arguments": {...}}` from the content. Without this, `@coder`, `@tester`, `@debugger` are prompt templates on the default stack. |
+| C3 | Parallel-step outputs cannot be referenced via `{{ steps.parallel.X.output }}` — `audit-pr.yaml` synthesis receives literal strings | `playbooks/executor.py:421-437` | Wrap parallel outputs: `outputs_map[sub_step.id] = {"output": result.get("output")}`. Or change the template path semantics so `steps.parallel.lint` resolves to the raw output (drop the trailing `.output` requirement for parallel sub-steps). Add a test that references parallel outputs in a downstream step. |
+| C4 | Dead `_provider` check in `Specialist.run()` — specialist always re-wraps the provider, causing double-wrapping when called from `Harness` | `specialists/base.py:112` | Either (a) remove the wrapping from `Specialist.run()` entirely and require callers to pass a pre-wrapped provider (the `Harness` and `PlaybookExecutor` already do this), or (b) fix the guard: check `isinstance(provider, (CostGuard, VerificationLayer, TokenOptimizer))` or have middleware set `self._provider = provider` and check `hasattr(provider, "_provider")` correctly. Option (a) is cleaner. |
+
+### HIGH (serious before alpha)
+
+| # | Issue | File:Line | Fix |
+|---|-------|-----------|-----|
+| H1 | Specialist prompts don't enforce JSON-only output — Llama 3.2 wraps in ```` ```json ```` fences ~30% of the time | `specialists/{planner,coder,reviewer,tester,debugger}.py` | Append to each system prompt: "Return ONLY valid JSON. No markdown fences, no prose before or after. If you cannot comply, return `{\"error\": \"reason\"}`." Additionally, implement `_clean_json_response(content)` in `Specialist._parse_and_validate_output` to strip fences and extract the first `{...}` block. |
+| H2 | Specialists that declare tools don't tell the LLM how/when to use them — prompts are silent on tool use | `specialists/{coder,tester,debugger}.py` | Add to each tool-using specialist's prompt: "You have access to tools: [list]. Use `fs_read` to read existing code before writing new code. Use `shell` to run tests after writing them. Use `fs_write` to persist files. Call tools when you need information you don't have." |
+| H3 | `confidence` hardcoded to 0.8 — confidence gate is useless | `middleware/verification.py:136` | Extract `confidence` from the LLM's JSON output if present (the `@debugger` prompt already asks for it). Default to 0.5 (not 0.8) when absent. Wire `confidence_gate` to actually compare. |
+| H4 | Hedging detection false positives on JSON values — honest `{"summary": "I'm not sure"}` is replaced with refusal string | `middleware/verification.py:32-39, 166-168` | Only apply hedging patterns to string leaf values of the parsed JSON (e.g., `summary`, `explanation`, `root_cause` fields), not to the raw content. Or skip hedging detection when `structured_outputs=True` and the JSON parses successfully. |
+| H5 | CostGuard never aborts on $0-cost models (ollama, mock) — infinite loops possible | `middleware/cost_guard.py:191` | Add `max_calls` field to `CostBudget` (default 50). Track `calls_made` (already done, cost_guard.py:98). Abort when `calls_made >= max_calls` regardless of spend. |
+| H6 | `pause_at_pct` is a no-op — set and unset in the same branch | `middleware/cost_guard.py:153-161` | Either implement real HITL pause (emit `HumanApprovalRequestedEvent`, raise `BudgetExceeded(level="pause")`, let the caller resume), or delete the dead `_paused = True` / `_paused = False` lines and document that pause is v0.2. |
+| H7 | Playbook `budget_usd` field is ignored by executor — CLI flag overrides silently | `playbooks/executor.py:90`, `playbooks/schema.py:133` | In `PlaybookExecutor.run()`, if `self.cost_budget` was not explicitly set, read `playbook.metadata.budget_usd` and construct `CostBudget(task_budget_usd=playbook.metadata.budget_usd)`. |
+| H8 | Routing silently downgrades premium models to ollama for short inputs | `middleware/token_optimizer.py:30-35, 135-151` | (a) Only route if `config.allow_routing=True` (new field, default False). (b) Always log at WARNING level when routing. (c) Emit `MODEL_ROUTED` event to the Thread. (d) Respect the caller's `model=` choice — don't override `default_model`. |
+| H9 | `RetryPolicy` defined in schema but never used in executor | `playbooks/schema.py:49-55`, `playbooks/executor.py:244-307` | Wrap `_execute_step` in a retry loop: `for attempt in range(policy.max_attempts): try: ...; except Exception as e: if not _matches_retry_on(e, policy.retry_on): raise; await asyncio.sleep(policy.backoff_s * (2 ** attempt))`. |
+| H10 | `timeout_s` defined in schema but never enforced | `playbooks/schema.py:109`, `playbooks/executor.py:244-307` | Wrap the step coroutine: `await asyncio.wait_for(self._execute_step(...), timeout=step.timeout_s)`. Catch `TimeoutError` and emit `StepFailedEvent` with `retry=True`. |
+| H11 | `HITLGate` defined in schema but never enforced | `playbooks/schema.py:58-64, 112`, `playbooks/executor.py:244-307` | If `step.human_approval`, emit `HumanApprovalRequestedEvent`, pause execution, await an external `HumanApprovalReceivedEvent` (via MCP/CLI/queue). On timeout, apply `on_timeout` policy. |
+| H12 | Ollama provider doesn't handle 404 (model not pulled) | `llm/ollama.py:49-58` | Catch `httpx.HTTPStatusError`. If 404, raise `RuntimeError(f"Model '{model}' not found. Run: ollama pull {model}")`. |
+| H13 | `max_iterations` reached produces misleading "LLM did not return valid JSON" error | `specialists/base.py:128-182` | After the loop, check if `response.tool_calls` is non-empty (meaning the loop exited due to iteration cap). If so, return `success=False, error=f"Specialist reached max_iterations={self.config.max_iterations} with pending tool calls. Increase max_iterations or simplify the task."` |
+| H14 | JSON mode + tools passed simultaneously — behavior varies by provider | `specialists/base.py:130-139` | When `tools` is non-empty, don't pass `response_format={"type": "json_object"}`. Instead, instruct the LLM in the system prompt to return JSON. Most providers handle tool-use + system-prompt JSON instruction more reliably than tool-use + `response_format`. |
+| H15 | `hello-world.yaml` uses `@coder` for a markdown outline — role mismatch | `manuals/hello-world.yaml:14-18` | Create a `@writer` specialist for prose/markdown, or change the step to `@planner` with a prompt tweak. |
+| H16 | `audit-pr.yaml` uses `@reviewer` for diff reading, security audit, lint, and synthesis — role mismatches | `manuals/audit-pr.yaml:13, 20, 28, 33, 40` | Create dedicated specialists (`@diff-reader`, `@security-auditor`, `@linter`, `@synthesizer`) OR add a `mode:` input field to `@reviewer` and branch the system prompt on it. |
+| H17 | `debug-python-issue.yaml` passes diagnostic JSON as `code` to `@reviewer` and `@tester` | `manuals/debug-python-issue.yaml:25, 32` | Change the input field to `diagnosis: "{{ steps.read_traceback.output }}"` and update the reviewer/tester prompts to accept a diagnosis. Or add an intermediate `@coder` step that extracts the proposed fix from the diagnosis and materializes it as code. |
+| H18 | Parallel branches execute sequentially (documented as MVP) | `playbooks/executor.py:421-437` | Implement with `asyncio.gather`. Each sub-step gets its own Thread segment; merge events back via `Thread.extend`. Requires a Thread merge helper. |
+| H19 | `MockLLMProvider` returns generic JSON that doesn't conform to any specialist schema | `llm/mock.py:38-48` | Add a `responses_by_specialist: dict[str, str]` field. Detect the specialist from the system prompt and return schema-conforming JSON. The CLI's `_SchemaValidMockLLMProvider` (cli/main.py:304-364) and the test fixtures (test_executor.py:13-64, test_e2e.py:15-57) already do this — extract and reuse. |
+| H20 | `output_schema` validation is weak — only checks required-field presence, no type/enum/nested validation | `specialists/base.py:312-323` | Use pydantic `Type[BaseModel]` for `output_schema` (the `pydantic_model` field already exists at base.py:45 but no specialist uses it). Define a proper model per specialist and validate via `model.model_validate(parsed)`. |
+
+### MEDIUM (improvements)
+
+| # | Issue | File:Line | Fix |
+|---|-------|-----------|-----|
+| M1 | No streaming — long playbooks show only a spinner | `llm/base.py:62-82` | Add `async def stream_complete()`. Executor emits `AssistantMessageEvent` per chunk. |
+| M2 | No persistent memory between runs | n/a | `MemoryStore` interface; `ctx.memory.recall(query)` / `ctx.memory.store(fact)`. v0.3. |
+| M3 | No multi-turn within a step | `specialists/base.py:76-182` | Accept `prior_turns: list[dict]` in `input_data`; append as messages. |
+| M4 | `output_schema` too permissive (`issues: {"type": "array"}` without item schema) | `specialists/reviewer.py:54`, `specialists/coder.py:54` | Define full item schemas. Use pydantic models (see H20). |
+| M5 | Circuit breaker `$1/min` may be too aggressive for Claude Sonnet 4 | `middleware/cost_guard.py:64` | Default to `$5/min`. Make configurable per playbook. |
+| M6 | `_estimate_cost` fallback assumes $1/M tokens — wrong for unknown models | `llm/litellm_provider.py:28-30` | If model not in pricing table, log warning and use `max(pricing values)` to overestimate. |
+| M7 | LiteLLM doesn't pass JSON Schema to provider — only `{"type": "json_object"}` | `llm/litellm_provider.py:76-77` | Use `response_format={"type": "json_schema", "schema": {...}}` for providers that support it (OpenAI, Anthropic, Gemini). |
+| M8 | Token estimate `len(content) // 4` underestimates for JSON | `middleware/token_optimizer.py:137` | Use `tiktoken` if available, fallback to `len(content) // 3`. |
+| M9 | `as an ai` hedging pattern too broad | `middleware/verification.py:36` | Tighten to `r"\bas\s+an\s+ai(?:,|\.|\s)"` or remove. |
+| M10 | Cache TTL fixed at 1h — not per-specialist | `middleware/token_optimizer.py:62` | Add `cache_ttl_s` to `SpecialistConfig`. `@planner` 24h, `@debugger` 0 (no cache). |
+| M11 | `cached.response.usage.cached = True` mutates the cached entry | `middleware/token_optimizer.py:99` | Return a copy: `cached.response.model_copy(update={"usage": cached.response.usage.model_copy(update={"cached": True})})`. |
+| M12 | `__skip_steps_until` leaks into `result.outputs` | `playbooks/executor.py:121, 146, 210` | Use a private key like `"_arnes_skip_until"` and exclude from `result.outputs` before returning. |
+| M13 | `SpecialistRegistry` auto-registration via `__init_subclass__` is fragile to import order | `specialists/base.py:71-74` | Remove `__init_subclass__` auto-registration. Rely on explicit `register_class()` in `get_default_specialist_registry()` (already done at base.py:399-401). |
+| M14 | `MODEL_ROUTED`, `CACHE_HIT`, `REFUSAL_TRIGGERED`, `CONFIDENCE_SCORED` events defined but never emitted | `thread/events.py:58-64`, middleware | Give middleware a `thread_id` + an event emitter callback. Emit on each decision. |
+| M15 | `__import__("time").time()` instead of `import time` | `middleware/token_optimizer.py:125` | `import time` at top of module. |
+| M16 | `PlaybookStep.output` field (variable name) is defined but never used | `playbooks/schema.py:99` | In executor: if `step.output`, do `outputs[step.output] = result.output` instead of `outputs[step.id] = ...`. |
+| M17 | `max_iterations=5` may be too low for complex debugging | `specialists/base.py:49` | Make per-specialist: `@debugger` 10, `@coder` 8, `@planner` 3, `@reviewer` 5, `@tester` 8. |
+| M18 | HITL auto-reject in non-interactive mode is silent — user has no way to know | `specialists/base.py:228-234` | Emit a `TOOL_CALL` event with `error="auto_rejected: non_interactive"` to the Thread. Log at WARNING. |
+| M19 | `CostBudget.effective_budget()` returns `task_budget_usd` first — if user sets only `org_budget_usd`, the task default of $0.50 overrides it | `middleware/cost_guard.py:70-79` | Change precedence: walk from most-specific **set** value, not most-specific field. `next((v for v in [task, agent, project, org] if v is not None), None)`. |
+| M20 | `CostGuard.stats()` not exposed in `RunCompletedEvent` | `middleware/cost_guard.py:222-234`, `thread/events.py:191-195` | Add `cost_guard.stats()` and `verification.stats()` to `RunCompletedEvent.data`. |
+| M21 | Specialist `_format_input` always says "Use tools if needed" even for specialists without tools | `specialists/base.py:337-343` | Branch on `self.config.tools`. |
+| M22 | Bitácora markdown header is Spanish ("Bitácora ARNES") in an otherwise English codebase | `thread/thread.py:158` | Change to "ARNES Logbook" or make it bilingual via config. |
+
+### LOW (polish)
+
+| # | Issue | File:Line | Fix |
+|---|-------|-----------|-----|
+| L1 | `if "/" in model` logic duplicated | `llm/factory.py:30`, `llm/ollama.py:35` | Extract `_parse_model_string(model) -> (vendor, name)` helper. |
+| L2 | No compile-time validation of specialist references in playbooks | `playbooks/compiler.py:155-161` | Pass a specialist registry to the compiler; error if `step.specialist` not in registry. |
+| L3 | `logger.info` for cache hits is noisy | `middleware/token_optimizer.py:103-107` | Demote to `logger.debug`. |
+| L4 | `estimated_savings_usd` hardcoded at $3/M tokens | `middleware/token_optimizer.py:229` | Compute from `litellm_provider._PRICING_USD_PER_1M_TOKENS`. |
+| L5 | `_HEDGING_PATTERNS` has no false-positive tests | `middleware/verification.py:32-39` | Add tests with JSON containing "I don't know" in legitimate values. |
+| L6 | System prompts in EN, playbook comments mixed EN/ES, `Bitácora` in thread output | various | Unify or document bilingual policy. |
+| L7 | `Specialist.run()` doesn't log input/output | `specialists/base.py:76-182` | Log debug with input hash and output summary (no PII). |
+| L8 | `cli/main.py` has Spanish alias `ejecutar` | `cli/main.py:81` | Document deprecation timeline in CHANGELOG. |
+| L9 | `HarnessConfig.budget_usd` flattens `CostBudget` hierarchy | `agent/agent.py:46, 106` | Accept a full `CostBudget` in `HarnessConfig` instead of a float. |
+| L10 | `SpecialistConfig.pydantic_model` field exists but no specialist uses it | `specialists/base.py:45` | Either migrate all specialists to pydantic models (see H20) or remove the field. |
+| L11 | Tool name references in specialist config silently dropped if tool missing | `specialists/base.py:99-104` | Log WARNING when a declared tool is not in the registry. |
+| L12 | `Playbook.metadata` built but `metadata.budget_usd` not read by executor | `playbooks/schema.py:158-173`, `playbooks/executor.py:90` | See H7. |
+
+---
+
+## 4. Top 5 mandatory improvements before launch
+
+### #1 — Make the ReAct loop work on the default model (C2 + H2)
+
+**Why:** The v1 fix added the loop but the ollama provider returns `tool_calls=[]`. Without this, `@coder`, `@tester`, `@debugger` are prompt templates on the default stack — the exact problem v1 C2 was supposed to solve. Additionally, the specialist prompts don't tell the LLM when to use tools, so even with a capable provider the LLM may not call them.
+
+**What to do:**
+- `llm/ollama.py`: pass `tools` in the `/api/chat` payload; parse `message.tool_calls` from the response; map to the `LLMResponse.tool_calls` shape expected by `base.py:166-176`.
+- Add a text-based fallback parser: if the LLM returns `<tool_call>{"name": "fs_read", "arguments": {"path": "..."}}</tool_call>` in content (Llama 3.2's format when tools are described in the prompt), extract and convert.
+- Update `@coder`, `@tester`, `@debugger` prompts to describe when to use each tool.
+- Add an integration test that runs `@coder` with a real (or mocked-to-return-tool-calls) provider and asserts `result["tool_results"]` is non-empty.
+
+**Effort:** 2-3 days.
+
+### #2 — Wire `output_schema` to the VerificationLayer and validate with pydantic (C1 + H20)
+
+**Why:** Today the schema is decorative. The system reports `success=True` with outputs that conform only in the presence of required fields, not in type or enum. Combined with Llama 3.2's unreliable enum handling, the system silently accepts `"verdict": "Approve"` (capitalized) as if it were `"approve"`.
+
+**What to do:**
+- In `specialists/base.py:130-139`, pass `response_schema=self.config.output_schema` (or the pydantic model's JSON schema) to `wrapped_provider.complete()`.
+- Migrate each specialist's `output_schema` dict to a `pydantic_model: Type[BaseModel]` with full field types, enums, and nested models.
+- In `_parse_and_validate_output`, validate via `pydantic_model.model_validate(parsed)`; on `ValidationError`, return `success=False` with the field-level errors.
+- Add a `_clean_json_response(content)` helper that strips ```` ```json ```` fences and extracts the first `{...}` block before parsing.
+- Update `MockLLMProvider` to return schema-conforming JSON per specialist (the CLI and test fixtures already do this — extract and reuse).
+
+**Effort:** 1.5 days.
+
+### #3 — Fix the executor: parallel outputs, template-not-found, double-wrapping (C3 + C4 + BUG-2 + BUG-3)
+
+**Why:** `audit-pr.yaml` — the flagship example — produces literal template strings in its synthesis step. The double-wrapping via `Harness` doubles the middleware overhead and injects the refusal prompt twice. Template-not-found fails silently.
+
+**What to do:**
+- `executor.py:421-437`: wrap parallel outputs as `{"output": result.get("output")}` so `{{ steps.parallel.lint.output }}` resolves. Add a test that references parallel outputs in a downstream step (currently uncovered).
+- `executor.py:577`: on template path not found, log WARNING and either substitute `None` or fail the step with a clear error. Add compile-time validation that all `{{ steps.X.output }}` references point to existing step IDs.
+- `specialists/base.py:111-122`: remove the specialist's middleware wrapping entirely. Require callers (`Harness`, `PlaybookExecutor`) to pass a pre-wrapped provider. Delete the dead `hasattr(provider, "_provider")` check.
+- `executor.py:121, 146, 210`: use a private `_arnes_skip_until` key; exclude from `result.outputs`.
+
+**Effort:** 1 day + tests.
+
+### #4 — Change the default model or add JSON post-processing (H1 + §2.8)
+
+**Why:** `ollama/llama3.2` 3B cannot reliably produce the structured outputs the specialists require, cannot do tool use, and truncates long outputs. The flagship playbooks will fail or produce garbage on the default stack.
+
+**What to do (option A — recommended):** Default to `anthropic/claude-3-5-haiku-20241022` for `audit-pr.yaml`, `debug-python-issue.yaml`, `write-feature-tdd.yaml`. Keep `ollama/llama3.2` as the default for `hello-world.yaml` only. Document clearly that ollama support is experimental and works best with the `@planner` and `@reviewer` specialists on simple inputs.
+
+**What to do (option B):** Keep ollama default but implement `_clean_json_response()` (part of #2), the ollama tool-call parser (part of #1), and add `max_tokens` defaults that prevent truncation. Test all 4 example playbooks against `ollama/llama3.2` and `ollama/llama3.3` before release.
+
+**Effort:** Option A: 2 hours (config + docs). Option B: 2 days (overlaps with #1 and #2).
+
+### #5 — Enforce `RetryPolicy`, `timeout_s`, and `HITLGate` in the executor (H9 + H10 + H11)
+
+**Why:** All three are defined in the schema, documented in the README, and silently ignored at runtime. A transient rate-limit error kills the entire run. A hung LLM call runs until the httpx timeout (120s). A destructive step that should require human approval executes without asking.
+
+**What to do:**
+- Wrap `_execute_step` in a retry loop using `step.retry` (default `RetryPolicy()`).
+- Wrap the step coroutine in `asyncio.wait_for(coro, timeout=step.timeout_s)`.
+- If `step.human_approval`, emit `HumanApprovalRequestedEvent`, raise a `PauseExecution` exception, let the caller (CLI/MCP) handle the approval, then resume.
+- Add tests for each.
+
+**Effort:** 2 days.
+
+---
+
+## 5. What was fixed since v1 (verification)
+
+For traceability, the v1 issues that are now resolved:
+
+| v1 # | Issue | Status | Evidence |
+|-------|-------|--------|----------|
+| v1 C2 | No tool-use loop | ✅ Fixed | `specialists/base.py:128-178` implements the ReAct loop. `_execute_tool_call` (base.py:188-250) executes tool calls. Test `test_tool_use_loop_in_specialist` (test_e2e.py:235-307) verifies. **Caveat:** loop is inert on ollama (see C2 above). |
+| v1 C3 | `saltar_a` inverted | ✅ Fixed | `executor.py:121-133, 476-481` uses `__skip_steps_until` dict with correct clear-on-reach semantics. |
+| v1 C4 | Multi-template only resolves first | ✅ Fixed | `executor.py:529-555` iterates all matches in reverse. Test `test_multi_template_resolution` (test_executor.py:164-180). |
+| v1 C6 | Double CostGuard | ✅ Partially fixed | `PlaybookExecutor` no longer wraps in CostGuard twice — it creates one CostGuard (executor.py:108) and passes it to the specialist. **But:** `Harness.run()` still wraps, and the specialist's dead `_provider` check (C4 above) re-wraps. |
+| v1 C7 | VerificationLayer replaces with string, specialist reports success | ✅ Fixed | `base.py:276-286` now returns `success=False` on JSON parse failure of the refusal message. |
+| v1 C8 | Mock returns generic JSON | ✅ Partially fixed | The CLI mock (cli/main.py:304-364) and test fixtures (test_executor.py:13-64, test_e2e.py:15-57) are schema-aware. The `MockLLMProvider` in `llm/mock.py` is still generic (H19). |
+| v1 H18 | `_resolve_input` doesn't recurse in lists | ✅ Fixed | `executor.py:514-522` handles lists. |
+
+---
+
+## 6. Verdict: are the AI patterns ready for alpha?
+
+### **NO-GO for public alpha. GO for internal alpha (team + invited testers).**
+
+**Justification:**
+
+The v1 audit identified 8 CRITICAL issues. v2 confirms that **4 are fixed** and **4 remain** (3 carried over + 1 new). The codebase has demonstrably improved — the ReAct loop, multi-template resolution, `saltar_a` semantics, and the refusal→parse→failure chain are all real progress. The test suite is more honest (schema-aware mocks in three places).
+
+However, the v1 fixes are **incomplete in ways that matter for production**:
+
+1. **The ReAct loop is inert on the default model.** This is the single biggest blocker. The v1 fix added the loop scaffold but never updated the ollama provider to return tool calls. Users following the quickstart will get prompt-template behavior, not agent behavior. The flagship differentiator of ARNES (specialists that can read code, run tests, debug) does not work on the default stack.
+
+2. **Schema validation is still dead code.** The `output_schema` field is decorative. The system will accept `"verdict": "Approve"` (capitalized) and `"action": "create_new"` (not in enum) as valid. Combined with Llama 3.2's unreliability, this produces silent garbage.
+
+3. **The flagship example playbook (`audit-pr.yaml`) is broken.** Its synthesis step receives literal template strings because parallel outputs aren't wrapped. The test suite doesn't catch this because no test references parallel outputs in a downstream step.
+
+4. **The double-wrapping bug** (new in v2, introduced by the dead `_provider` check) means `Harness` users get two caches, two verification layers, and a shadowed CostGuard. The refusal prompt is injected twice. This doesn't break functionality but it's wasteful and confusing.
+
+5. **15 v1 HIGHs are still open**, including: CostGuard no-op on $0 models, `pause_at_pct` no-op, `RetryPolicy`/`timeout_s`/`HITLGate` unenforced, playbook `budget_usd` ignored, hedging false positives, example playbook role mismatches.
+
+**Recommended path to public alpha:**
+
+- **Week 1:** Top 5 improvements (#1 to #5 above). This unblocks internal alpha.
+- **Week 2:** Fix HIGH issues (H1-H20). Add integration tests that exercise the ReAct loop with a mock provider that returns tool_calls. Add a test that references parallel outputs in a downstream step. Run all 4 example playbooks against `anthropic/claude-3-5-haiku-20241022` and `ollama/llama3.2` and record the success rates.
+- **Week 3:** Internal alpha with 3 real playbooks. Iterate prompts based on actual LLM outputs. Write a "known limitations" section in the README (ollama tool use is experimental, schema validation is best-effort, etc.).
+- **Week 4:** Public alpha with clear disclaimer: "v0.1.0a1 — works best with Claude Haiku or Groq Llama 70B. Ollama support is experimental. Tool use requires a provider that returns tool_calls (not ollama yet)."
+
+**Do not publish public alpha without at least:**
+- ReAct loop working on the default model (or a default model that supports it).
+- `output_schema` actually validated with pydantic.
+- Parallel-output template resolution fixed and tested.
+- Double-wrapping removed.
+- Example playbooks tested against a real LLM (not just mock) with documented success rates.
+
+---
+
+**Auditor:** Senior AI Engineer (sub-agent)
+**Report:** AI_AUDIT_V2.md v1.0
+**Previous:** AI_AUDIT.md v1.0 (NO-GO, 8 CRITICAL)
+**Current:** AI_AUDIT_V2.md v1.0 (NO-GO, 4 CRITICAL — progress, but not enough)

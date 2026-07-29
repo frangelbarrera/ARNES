@@ -6,7 +6,6 @@ from typing import ClassVar
 
 from arnes.specialists.base import Specialist, SpecialistConfig
 
-
 _DEBUGGER_SYSTEM_PROMPT = """You are @debugger, a senior debugger who diagnoses root causes and proposes minimal fixes.
 
 Your job:
@@ -47,7 +46,7 @@ Return JSON matching this schema:
 
 
 class Debugger(Specialist):
-    """@debugger — diagnoses root causes and proposes minimal fixes."""
+    """@debugger — diagnoses root causes of bugs and proposes minimal, verified fixes."""
 
     config: ClassVar[SpecialistConfig] = SpecialistConfig(
         name="@debugger",

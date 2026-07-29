@@ -24,9 +24,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
-from arnes.middleware.cost_guard import BudgetExceeded, CostGuard
-from arnes.middleware.token_optimizer import TokenOptimizer
-from arnes.middleware.verification import VerificationConfig, VerificationLayer
+from arnes.middleware.cost_guard import BudgetExceeded
 from arnes.tools.base import Tool, ToolContext, ToolRegistry
 
 logger = structlog.get_logger(__name__)
@@ -104,21 +102,28 @@ class Specialist(ABC):
                     tool_schemas.append(self._tool_to_schema(tool))
 
         # Build middleware-wrapped provider
-        # Order: cost_guard(verification(token_optimizer(provider)))
-        # The caller (Agent or PlaybookExecutor) may have already wrapped the
-        # provider. We detect this by checking if provider has _provider attr.
-        # If it's already wrapped, use as-is. Otherwise wrap fresh.
+        # The caller (Harness or PlaybookExecutor) is responsible for wrapping
+        # the provider with the full middleware stack (CostGuard → Verification →
+        # TokenOptimizer → provider). The specialist should NOT re-wrap.
+        #
+        # We detect already-wrapped providers by checking for the _arnes_wrapped
+        # marker attribute that all our middleware classes set.
         wrapped_provider = provider
-        if not hasattr(provider, "_provider"):
-            # Fresh wrapping
-            wrapped_provider = TokenOptimizer(provider, enable_cache=True)
+
+        # If the provider is not already wrapped, wrap it with the full stack.
+        # This is a safety net — in normal usage, the caller always wraps first.
+        if not getattr(provider, "_arnes_wrapped", False):
+            from arnes.middleware.cost_guard import CostBudget, CostGuard
+            from arnes.middleware.token_optimizer import TokenOptimizer
+            from arnes.middleware.verification import VerificationConfig, VerificationLayer
+
+            inner = TokenOptimizer(provider, enable_cache=True)
             if self.config.output_schema or self.config.pydantic_model:
-                wrapped_provider = VerificationLayer(
-                    wrapped_provider,
+                inner = VerificationLayer(
+                    inner,
                     VerificationConfig(structured_outputs=True, refusal_pattern=True),
                 )
-            # CostGuard wrapping is the caller's responsibility (PlaybookExecutor
-            # already wraps the provider in CostGuard before calling specialist.run)
+            wrapped_provider = CostGuard(inner, budget=CostBudget(task_budget_usd=1.0))
 
         # ReAct tool-use loop
         total_usage = LLMUsage()
@@ -136,9 +141,13 @@ class Specialist(ABC):
                     response_format={"type": "json_object"}
                     if (self.config.output_schema or self.config.pydantic_model)
                     else None,
+                    response_schema=self.config.output_schema,
+                    interactive=ctx.metadata.get("interactive", False),
                 )
             except BudgetExceeded as e:
-                logger.error("specialist_budget_exceeded", specialist=self.config.name, error=str(e))
+                logger.error(
+                    "specialist_budget_exceeded", specialist=self.config.name, error=str(e)
+                )
                 return {
                     "specialist": self.config.name,
                     "success": False,
@@ -162,9 +171,7 @@ class Specialist(ABC):
             )
 
             for tc in response.tool_calls:
-                tool_result = await self._execute_tool_call(
-                    tc, available_tools, ctx
-                )
+                tool_result = await self._execute_tool_call(tc, available_tools, ctx)
                 all_tool_results.append(tool_result)
                 messages.append(
                     LLMMessage(
@@ -214,24 +221,40 @@ class Specialist(ABC):
                 "error": f"Tool '{tool_name}' not available",
             }
 
-        # HITL check: if tool requires approval, fingerprint args
+        # HITL check: if tool requires approval, fingerprint args and
+        # compare against any pre-approved fingerprint (rug-pull defense).
         if tool.requires_approval:
             fingerprint = Tool.fingerprint(args)
-            logger.info(
-                "tool_approval_check",
-                tool=tool_name,
-                fingerprint=fingerprint,
-                requires_approval=True,
-            )
-            # In MVP non-interactive mode, approval-required tools auto-reject
-            # unless ctx.metadata says interactive
-            if not ctx.metadata.get("interactive", False):
+            approved_fingerprints = ctx.metadata.get("_approved_fingerprints", {})
+
+            if fingerprint in approved_fingerprints:
+                # Pre-approved: execute
+                logger.info(
+                    "tool_approved_fingerprint_match",
+                    tool=tool_name,
+                    fingerprint=fingerprint,
+                )
+            elif not ctx.metadata.get("interactive", False):
+                # Non-interactive and not pre-approved: auto-reject
                 return {
                     "tool": tool_name,
                     "success": False,
                     "error": f"Tool '{tool_name}' requires human approval. Set interactive=True.",
                     "fingerprint": fingerprint,
                 }
+            else:
+                # Interactive: prompt for approval
+                approval = await self._request_human_approval(tool_name, args, fingerprint, ctx)
+                if not approval:
+                    return {
+                        "tool": tool_name,
+                        "success": False,
+                        "error": f"Human rejected tool call for '{tool_name}'.",
+                        "fingerprint": fingerprint,
+                    }
+                # Record the approved fingerprint so we can detect rug-pull
+                # if the LLM tries to call the same tool with different args
+                approved_fingerprints[fingerprint] = tool_name
 
         try:
             result = await tool.execute(args, ctx)
@@ -248,6 +271,27 @@ class Specialist(ABC):
                 "success": False,
                 "error": str(e),
             }
+
+    async def _request_human_approval(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        fingerprint: str,
+        ctx: ToolContext,
+    ) -> bool:
+        """Request human approval for a tool call. Returns True if approved."""
+        try:
+            from rich.console import Console
+            from rich.prompt import Confirm
+
+            console = Console()
+            console.print(f"\n[yellow]⚠ Approval required for tool:[/yellow] {tool_name}")
+            console.print(f"  [dim]Args fingerprint:[/dim] {fingerprint}")
+            console.print(f"  [dim]Args:[/dim] {json.dumps(args, indent=2, default=str)}")
+            return Confirm.ask("  Approve this tool call?", default=False)
+        except ImportError:
+            logger.warning("rich not available — auto-rejecting tool call")
+            return False
 
     # ============================================================
     # Schema validation
@@ -350,7 +394,9 @@ class Specialist(ABC):
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": args_schema.model_json_schema() if args_schema else {"type": "object", "properties": {}},
+                "parameters": args_schema.model_json_schema()
+                if args_schema
+                else {"type": "object", "properties": {}},
             },
         }
 

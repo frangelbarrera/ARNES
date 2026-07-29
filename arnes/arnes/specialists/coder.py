@@ -6,7 +6,6 @@ from typing import ClassVar
 
 from arnes.specialists.base import Specialist, SpecialistConfig
 
-
 _CODER_SYSTEM_PROMPT = """You are @coder, a senior software engineer who writes clean, tested, idiomatic code.
 
 Your job:

@@ -1,4 +1,5 @@
 """Tests for arnes.playbooks.executor (end-to-end with mock LLM)."""
+
 from __future__ import annotations
 
 import pytest
@@ -44,7 +45,6 @@ class SchemaValidMockProvider(LLMProvider):
         elif "@debugger" in sys_content:
             content = '{"root_cause": "x", "confidence": 0.9, "fix": {"file": "f.py", "line": 1, "original": "x", "fixed": "y", "explanation": "ok"}, "verification": "v", "alternative_causes": []}'
         else:
-            # Generic valid JSON
             content = '{"result": "ok"}'
 
         tokens_in = sum(len(m.content) // 4 for m in messages)
@@ -82,12 +82,12 @@ class TestPlaybookExecutor:
     @pytest.mark.asyncio
     async def test_simple_playbook_execution(self, executor):
         yaml_str = """
-nombre: simple_test
-objetivo: Test
+name: simple_test
+objective: Test
 budget_usd: 1.0
-pasos:
+steps:
   - id: s1
-    especialista: "@planner"
+    specialist: "@planner"
     input:
       task: "Plan something"
 """
@@ -102,18 +102,18 @@ pasos:
     @pytest.mark.asyncio
     async def test_multi_step_playbook(self, executor):
         yaml_str = """
-nombre: multi_step
-objetivo: Test multi-step
-pasos:
+name: multi_step
+objective: Test multi-step
+steps:
   - id: plan
-    especialista: "@planner"
+    specialist: "@planner"
     input: {task: "Plan"}
   - id: code
-    especialista: "@coder"
-    input: {spec: "Code", context: "{{ pasos.plan.salida }}"}
+    specialist: "@coder"
+    input: {spec: "Code", context: "{{ steps.plan.output }}"}
   - id: review
-    especialista: "@reviewer"
-    input: {codigo: "{{ pasos.code.salida }}"}
+    specialist: "@reviewer"
+    input: {code: "{{ steps.code.output }}"}
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
         result = await executor.run(playbook)
@@ -124,35 +124,34 @@ pasos:
     @pytest.mark.asyncio
     async def test_parallel_branch_execution(self, executor):
         yaml_str = """
-nombre: parallel_test
-objetivo: Test parallel
-pasos:
+name: parallel_test
+objective: Test parallel
+steps:
   - id: parallel
-    paralelo:
+    parallel:
       - id: sub1
-        especialista: "@planner"
+        specialist: "@planner"
         input: {task: "Subtask 1"}
       - id: sub2
-        especialista: "@coder"
+        specialist: "@coder"
         input: {spec: "Subtask 2"}
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
         result = await executor.run(playbook)
 
         assert result.success is True, f"Failed: {result.error}"
-        # The parallel step itself counts as 1 step in steps_executed
         assert result.steps_executed == 1
 
     @pytest.mark.asyncio
     async def test_template_resolution(self, executor):
         yaml_str = """
-nombre: template_test
-objetivo: Test template resolution
+name: template_test
+objective: Test template resolution
 variables:
   pr_number: 9999
-pasos:
+steps:
   - id: s1
-    especialista: "@planner"
+    specialist: "@planner"
     input:
       task: "Plan for PR {{ variables.pr_number }}"
 """
@@ -163,16 +162,16 @@ pasos:
 
     @pytest.mark.asyncio
     async def test_multi_template_resolution(self, executor):
-        """FIX-8: Multiple {{ }} in the same string must all resolve."""
+        """Multiple {{ }} in the same string must all resolve."""
         yaml_str = """
-nombre: multi_template
-objetivo: Test multi-template
+name: multi_template
+objective: Test multi-template
 variables:
   a: "alpha"
   b: "beta"
-pasos:
+steps:
   - id: s1
-    especialista: "@planner"
+    specialist: "@planner"
     input:
       task: "Mix {{ variables.a }} and {{ variables.b }}"
 """
@@ -183,11 +182,11 @@ pasos:
     @pytest.mark.asyncio
     async def test_bitacora_generated(self, executor):
         yaml_str = """
-nombre: bitacora_test
-objetivo: Test bitácora
-pasos:
+name: bitacora_test
+objective: Test bitácora
+steps:
   - id: s1
-    especialista: "@planner"
+    specialist: "@planner"
     input: {task: "Test"}
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
@@ -203,10 +202,9 @@ pasos:
     @pytest.mark.asyncio
     async def test_budget_exceeded_aborts_run(self, mock_provider):
         """Budget enforcement: tiny budget should abort before second step."""
-        from arnes.middleware.cost_guard import BudgetExceeded, CostBudget, CostGuard
-        from arnes.llm.base import LLMMessage
+        from arnes.llm.base import LLMProvider, LLMResponse, LLMUsage
+        from arnes.middleware.cost_guard import CostBudget
 
-        # Use a provider that charges fake cost to trigger budget exceeded
         class CostlyMockProvider(LLMProvider):
             async def complete(self, messages, *, model="mock", response_schema=None, **kwargs):
                 return LLMResponse(
@@ -215,29 +213,29 @@ pasos:
                     usage=LLMUsage(tokens_in=10, tokens_out=5, cost_usd=0.001, model=model),
                     model=model,
                 )
+
             def list_models(self):
                 return ["mock"]
 
         executor = PlaybookExecutor(
             provider=CostlyMockProvider(),
-            cost_budget=CostBudget(task_budget_usd=0.0005),  # Tiny budget
+            cost_budget=CostBudget(task_budget_usd=0.0005),
         )
         yaml_str = """
-nombre: budget_test
-objetivo: Test budget enforcement
+name: budget_test
+objective: Test budget enforcement
 budget_usd: 0.0005
-pasos:
+steps:
   - id: s1
-    especialista: "@planner"
+    specialist: "@planner"
     input: {task: "x"}
   - id: s2
-    especialista: "@planner"
+    specialist: "@planner"
     input: {task: "y"}
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
         result = await executor.run(playbook)
 
-        # First call costs $0.001 > budget $0.0005, so should fail on s2 (pre-check)
         assert result.success is False
         assert result.error is not None
         assert "Budget" in result.error or "budget" in result.error.lower()
@@ -245,11 +243,11 @@ pasos:
     @pytest.mark.asyncio
     async def test_unknown_specialist_fails_gracefully(self, executor):
         yaml_str = """
-nombre: unknown_specialist
-objetivo: Test
-pasos:
+name: unknown_specialist
+objective: Test
+steps:
   - id: s1
-    especialista: "@nonexistent"
+    specialist: "@nonexistent"
     input: {task: "x"}
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
@@ -261,14 +259,14 @@ pasos:
     @pytest.mark.asyncio
     async def test_thread_persists_all_events(self, executor):
         yaml_str = """
-nombre: events_test
-objetivo: Test event persistence
-pasos:
+name: events_test
+objective: Test event persistence
+steps:
   - id: s1
-    especialista: "@planner"
+    specialist: "@planner"
     input: {task: "x"}
   - id: s2
-    especialista: "@coder"
+    specialist: "@coder"
     input: {spec: "y"}
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
@@ -280,13 +278,13 @@ pasos:
     @pytest.mark.asyncio
     async def test_initial_input_overrides_variables(self, executor):
         yaml_str = """
-nombre: input_test
-objetivo: Test initial input
+name: input_test
+objective: Test initial input
 variables:
   default_value: "default"
-pasos:
+steps:
   - id: s1
-    especialista: "@planner"
+    specialist: "@planner"
     input: {task: "Use {{ variables.default_value }}"}
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
@@ -299,20 +297,19 @@ pasos:
         assert result.outputs["default_value"] == "overridden"
 
     @pytest.mark.asyncio
-    async def test_conditional_branch_terminar(self, executor):
-        """Test si_no_se_cumple with accion=terminar."""
+    async def test_conditional_branch_terminate(self, executor):
+        """Test if_not_met with action=terminate."""
         yaml_str = """
-nombre: conditional_test
-objetivo: Test conditional
-pasos:
+name: conditional_test
+objective: Test conditional
+steps:
   - id: s1
-    especialista: "@planner"
+    specialist: "@planner"
     input: {task: "x"}
-    si_no_se_cumple:
-      accion: terminar
-      terminar: rechazado
+    if_not_met:
+      action: terminate
+      terminate: rejected
 """
         playbook = PlaybookCompiler.from_string(yaml_str)
         result = await executor.run(playbook)
-        # Should succeed (s1 succeeds, conditional not triggered)
         assert result.success is True
