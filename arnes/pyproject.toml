@@ -134,7 +134,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "ANN", "PLR2004"]
+"tests/**" = ["S", "ANN", "PLR2004", "PLR0915", "RUF003", "RUF046", "RUF059"]
 "examples/**" = ["ANN", "T201"]
 "arnes/cli/**" = ["ANN"]
 

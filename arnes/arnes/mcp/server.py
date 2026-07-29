@@ -276,24 +276,33 @@ class ArnesMCPServer:
 
 
 async def serve_stdio(server: ArnesMCPServer) -> None:
-    """Run the MCP server over stdio (JSON-RPC)."""
-    # Read JSON-RPC messages from stdin, write responses to stdout
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await asyncio.get_event_loop().connect_read_pipe(lambda: protocol, __import__("sys").stdin)
+    """Run the MCP server over stdio (JSON-RPC).
+
+    Cross-platform: reads line-delimited JSON from stdin, writes JSON to stdout.
+    Uses synchronous readline in a thread executor to avoid Windows asyncio
+    pipe compatibility issues.
+    """
+    import sys
 
     while True:
-        line = await reader.readline()
-        if not line:
-            break
-
         try:
-            request = json.loads(line.decode("utf-8"))
-        except json.JSONDecodeError:
-            continue
+            # Read line from stdin in a thread (Windows-compatible)
+            line = await asyncio.to_thread(sys.stdin.readline)
+            if not line:
+                break
 
-        response = await server.handle_request(request)
-        print(json.dumps(response), flush=True)
+            try:
+                request = json.loads(line.strip())
+            except json.JSONDecodeError:
+                continue
+
+            response = await server.handle_request(request)
+            print(json.dumps(response), flush=True)
+        except (EOFError, KeyboardInterrupt):
+            break
+        except Exception as e:
+            logger.error("mcp_stdio_error", error=str(e))
+            break
 
 
 async def serve_http(server: ArnesMCPServer, host: str = "127.0.0.1", port: int = 8765) -> None:

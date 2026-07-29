@@ -1,0 +1,34 @@
+# migrate-config.yaml — Migrate configuration files between formats
+name: migrate-config
+objective: Migrate a configuration file from one format to another
+budget_usd: 0.20
+
+variables:
+  source_path: "config/legacy.yaml"
+  target_format: "toml"
+  backup: true
+
+steps:
+  - id: read_source
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.source_path }}"
+      focus: "Read and understand the source configuration structure"
+
+  - id: plan_migration
+    specialist: "@planner"
+    input:
+      task: "Plan the migration from current format to {{ variables.target_format }} based on: {{ steps.read_source.output }}"
+
+  - id: write_target
+    specialist: "@coder"
+    input:
+      spec: "Write the configuration in {{ variables.target_format }} format"
+      context: "{{ steps.plan_migration.output }}"
+      original: "{{ steps.read_source.output }}"
+
+  - id: verify_migration
+    specialist: "@tester"
+    input:
+      code: "{{ steps.write_target.output }}"
+      focus: "Verify the migrated config preserves all settings from source"

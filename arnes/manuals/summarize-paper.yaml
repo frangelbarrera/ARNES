@@ -1,0 +1,32 @@
+# summarize-paper.yaml — Summarize a research paper with structured extraction
+name: summarize-paper
+objective: Read a research paper and extract structured summary, key findings, and implications
+budget_usd: 0.20
+
+variables:
+  paper_path: "papers/sample.pdf"
+  focus_area: "methodology"
+
+steps:
+  - id: extract_abstract
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.paper_path }}"
+      focus: "Extract the abstract, authors, and publication info"
+
+  - id: extract_methodology
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.paper_path }}"
+      focus: "Extract the methodology section: approach, datasets, models used, evaluation metrics"
+
+  - id: extract_findings
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.paper_path }}"
+      focus: "Extract key findings, results, and quantitative metrics"
+
+  - id: synthesize
+    specialist: "@planner"
+    input:
+      task: "Synthesize a structured summary from: abstract={{ steps.extract_abstract.output }}, methodology={{ steps.extract_methodology.output }}, findings={{ steps.extract_findings.output }}"

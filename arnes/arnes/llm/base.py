@@ -80,3 +80,28 @@ class LLMProvider(ABC):
     def list_models(self) -> list[str]:
         """List available models for this provider."""
         raise NotImplementedError
+
+    def peek_cost(
+        self,
+        *,
+        model: str,
+        messages: list[LLMMessage],
+        tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> float | None:
+        """Estimate the USD cost of the upcoming ``complete()`` call.
+
+        Returns ``None`` if the provider cannot estimate the cost upfront
+        (the default — real LLM costs depend on the response, which isn't
+        known until the call returns). CostGuard uses this for **pre-flight
+        budget checking**: when a non-None estimate is available and
+        ``spent + estimate > budget``, the call is rejected *before* it
+        reaches the provider, preventing any spend on a call that would
+        breach the budget.
+
+        Override in subclasses that can provide accurate estimates
+        (e.g. fixed-cost mock providers, or providers with per-token
+        pricing tables and a local tokenizer).
+        """
+        return None

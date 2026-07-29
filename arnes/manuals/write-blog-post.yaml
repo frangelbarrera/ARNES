@@ -1,0 +1,34 @@
+# write-blog-post.yaml — Generate a blog post from a topic
+name: write-blog-post
+objective: Write a structured blog post from a topic with outline, draft, and review
+budget_usd: 0.25
+
+variables:
+  topic: "Introduction to Agent Harnesses"
+  audience: "developers"
+  word_count: 1500
+
+steps:
+  - id: plan_outline
+    specialist: "@planner"
+    input:
+      task: "Plan a blog post outline for topic '{{ variables.topic }}' targeting {{ variables.audience }}, ~{{ variables.word_count }} words"
+
+  - id: write_draft
+    specialist: "@coder"
+    input:
+      spec: "Write the full blog post based on the outline"
+      context: "{{ steps.plan_outline.output }}"
+
+  - id: review_draft
+    specialist: "@reviewer"
+    input:
+      code: "{{ steps.write_draft.output }}"
+      focus: "Review for clarity, accuracy, flow, and audience fit"
+
+  - id: final_polish
+    specialist: "@coder"
+    input:
+      spec: "Apply review feedback and produce final polished version"
+      context: "{{ steps.review_draft.output }}"
+      original: "{{ steps.write_draft.output }}"

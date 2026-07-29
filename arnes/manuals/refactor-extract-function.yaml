@@ -1,0 +1,34 @@
+# refactor-extract-function.yaml — Refactor by extracting a function
+name: refactor-extract-function
+objective: Identify a complex code block and extract it into a named function
+budget_usd: 0.30
+
+variables:
+  file_path: "src/large_function.py"
+  line_start: 1
+  line_end: 100
+
+steps:
+  - id: analyze_code
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.file_path }}"
+      focus: "Analyze lines {{ variables.line_start }}-{{ variables.line_end }} for complexity, identify blocks that should be extracted"
+
+  - id: plan_extraction
+    specialist: "@planner"
+    input:
+      task: "Plan the extraction based on analysis: {{ steps.analyze_code.output }}"
+
+  - id: write_refactored
+    specialist: "@coder"
+    input:
+      spec: "Extract the identified block into a named function"
+      context: "{{ steps.plan_extraction.output }}"
+      original: "{{ steps.analyze_code.output }}"
+
+  - id: verify_refactor
+    specialist: "@tester"
+    input:
+      code: "{{ steps.write_refactored.output }}"
+      focus: "Verify the refactored code preserves behavior"

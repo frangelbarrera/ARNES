@@ -139,13 +139,22 @@ class CostGuard:
         # Pre-call budget check
         effective_budget = self.budget.effective_budget()
         if effective_budget is not None:
-            if self.spent_usd >= effective_budget * self.budget.abort_at_pct:
+            abort_threshold = effective_budget * self.budget.abort_at_pct
+            # pct_used is informational only — guard against budget<=0 to avoid
+            # ZeroDivisionError when effective_budget is 0.0 (EC4: zero budget).
+            pct_used = (
+                (self.spent_usd / effective_budget)
+                if effective_budget > 0
+                else (1.0 if self.spent_usd > 0 else 0.0)
+            )
+
+            if self.spent_usd >= abort_threshold:
                 self._aborted = True
                 logger.error(
                     "cost_guard_abort",
                     spent=self.spent_usd,
                     budget=effective_budget,
-                    pct=self.spent_usd / effective_budget,
+                    pct=pct_used,
                 )
                 raise BudgetExceeded(
                     f"Budget exceeded: ${self.spent_usd:.4f} >= ${effective_budget:.4f}",
@@ -153,6 +162,37 @@ class CostGuard:
                     budget=effective_budget,
                     level="hard_stop",
                 )
+
+            # Pre-flight check: if the provider can estimate the upcoming cost,
+            # reject the call BEFORE it's made when the projected spend would
+            # breach the budget. This prevents spending money on a call that
+            # is guaranteed to push us over (e.g. budget=$0.0009, cost=$0.001).
+            estimated_cost = self._peek_cost(
+                model=model,
+                messages=messages,
+                tools=tools,
+                response_schema=response_schema,
+                **kwargs,
+            )
+            if estimated_cost is not None and estimated_cost > 0:
+                projected = self.spent_usd + estimated_cost
+                if projected > abort_threshold:
+                    self._aborted = True
+                    logger.error(
+                        "cost_guard_preflight_abort",
+                        spent=self.spent_usd,
+                        estimated_cost=estimated_cost,
+                        projected=projected,
+                        budget=effective_budget,
+                    )
+                    raise BudgetExceeded(
+                        f"Budget would be exceeded by next call: "
+                        f"${projected:.6f} (spent ${self.spent_usd:.6f} "
+                        f"+ est ${estimated_cost:.6f}) > ${effective_budget:.6f}",
+                        spent=self.spent_usd,
+                        budget=effective_budget,
+                        level="preflight",
+                    )
 
             if self.spent_usd >= effective_budget * self.budget.pause_at_pct:
                 # Emit a pause event — in interactive mode, this would block
@@ -162,7 +202,7 @@ class CostGuard:
                     "cost_guard_pause_threshold_reached",
                     spent=self.spent_usd,
                     budget=effective_budget,
-                    pct=self.spent_usd / effective_budget,
+                    pct=pct_used,
                     interactive=interactive,
                 )
                 # TODO v0.2: emit HumanApprovalRequestedEvent and block
@@ -172,7 +212,7 @@ class CostGuard:
                     "cost_guard_warn",
                     spent=self.spent_usd,
                     budget=effective_budget,
-                    pct=self.spent_usd / effective_budget,
+                    pct=pct_used,
                 )
 
         # Circuit breaker: check spend rate
@@ -221,6 +261,39 @@ class CostGuard:
         window_s = 60.0
         recent_spend = sum(cost for ts, cost in self._spend_history if now - ts < window_s)
         return recent_spend > self.budget.max_usd_per_minute
+
+    def _peek_cost(
+        self,
+        *,
+        model: str,
+        messages: list[LLMMessage],
+        tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> float | None:
+        """Ask the wrapped provider to estimate the upcoming call's cost.
+
+        Uses duck typing (``getattr``) so this works whether ``self.provider``
+        is a real ``LLMProvider`` subclass, a middleware wrapper
+        (``TokenOptimizer`` / ``VerificationLayer`` — plain classes), or a
+        third-party callable. Returns ``None`` when no estimate is available,
+        in which case the pre-flight check is skipped and the guard falls
+        back to the existing post-call ``spent >= budget`` enforcement.
+        """
+        peek = getattr(self.provider, "peek_cost", None)
+        if not callable(peek):
+            return None
+        try:
+            return peek(
+                model=model,
+                messages=messages,
+                tools=tools,
+                response_schema=response_schema,
+                **kwargs,
+            )
+        except Exception:
+            logger.warning("cost_guard_peek_cost_failed", exc_info=True)
+            return None
 
     # ============================================================
     # Stats

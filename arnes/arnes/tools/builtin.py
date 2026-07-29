@@ -17,6 +17,7 @@ import ipaddress
 import os
 import re
 import socket
+import sys
 import time
 import urllib.parse
 from pathlib import Path
@@ -100,9 +101,16 @@ class ShellTool(Tool):
                 continue
             env[key] = value
 
-        # Only inherit PATH from os.environ if not set (needed for basic commands)
+        # Cross-platform PATH: inherit from os.environ if available
+        # (needed for basic commands like 'python', 'echo', etc.)
         if "PATH" not in env:
-            env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+            env["PATH"] = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+        # On Windows, also preserve SystemRoot and COMSPEC (needed for subprocess)
+        if sys.platform == "win32":
+            if "SYSTEMROOT" not in env:
+                env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
+            if "COMSPEC" not in env:
+                env["COMSPEC"] = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
 
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -493,8 +501,8 @@ async def _check_ssrf_async(url: str) -> str | None:
     except ValueError:
         # It's a hostname — resolve DNS and validate ALL IPs
         try:
-            loop = asyncio.get_event_loop()
-            infos = await loop.run_in_executor(None, lambda: socket.getaddrinfo(hostname, None))
+            # Use asyncio.to_thread for cross-platform compatibility
+            infos = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
             for _, _, _, _, sockaddr in infos:
                 ip_str = sockaddr[0]
                 try:

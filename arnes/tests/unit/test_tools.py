@@ -64,9 +64,12 @@ class TestShellTool:
 
     @pytest.mark.asyncio
     async def test_execute_echo(self, ctx):
+        """Cross-platform: use python -c instead of echo (works on all OS)."""
         tool = ShellTool()
-        result = await tool.execute({"command": "echo hello", "timeout_s": 5}, ctx)
-        assert result.success is True
+        result = await tool.execute(
+            {"command": "python -c \"print('hello')\"", "timeout_s": 10}, ctx
+        )
+        assert result.success is True, f"Shell failed: {result.error}"
         assert "hello" in result.output["stdout"]
 
     @pytest.mark.asyncio
@@ -88,16 +91,21 @@ class TestShellTool:
 
     @pytest.mark.asyncio
     async def test_secrets_filtered_from_env(self, ctx):
-        """SECURITY: API keys in args.env must be filtered out."""
+        """SECURITY: API keys in args.env must be filtered out.
+        Cross-platform: use python -c to print env vars."""
         tool = ShellTool()
         result = await tool.execute(
-            {"command": "env", "env": {"API_KEY": "sk-secret", "FOO": "bar"}},
+            {
+                "command": "python -c \"import os; print(os.environ.get('API_KEY', 'NOT_SET')); print(os.environ.get('FOO', 'NOT_SET'))\"",
+                "env": {"API_KEY": "sk-secret", "FOO": "bar"},
+            },
             ctx,
         )
-        assert result.success is True
+        assert result.success is True, f"Shell failed: {result.error}"
         # The secret must NOT appear in the subprocess env
         assert "sk-secret" not in result.output["stdout"]
-        assert "bar" in result.output["stdout"]
+        assert "NOT_SET" in result.output["stdout"]  # API_KEY was filtered
+        assert "bar" in result.output["stdout"]  # FOO was passed through
 
     @pytest.mark.asyncio
     async def test_invalid_args(self, ctx):
