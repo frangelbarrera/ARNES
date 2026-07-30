@@ -16,7 +16,7 @@ ARNES CostGuard provides:
 - Model fallback: if budget < threshold, switch to cheaper model
 - HITL: pause and ask for approval at 95% of budget
 - Hard stop: abort at 100% of budget
-- Audit log: every decision logged to Thread events
+- Audit log: every decision logged to Thread events via the event sink
 """
 
 from __future__ import annotations
@@ -24,13 +24,23 @@ from __future__ import annotations
 import time
 from collections import deque
 from typing import Any
+from uuid import UUID
 
 import structlog
 from pydantic import BaseModel
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse
+from arnes.thread.events import CostThresholdEvent, Event
 
 logger = structlog.get_logger(__name__)
+
+
+# Sentinel thread_id used by middleware when the real Thread id is not
+# available (middleware does not receive a ToolContext). The PlaybookExecutor
+# patches these events with the real thread_id and step_id when it drains the
+# event sink after each step. Using a stable nil UUID makes the placeholder
+# easy to spot in logs.
+NIL_THREAD_ID = UUID(int=0)
 
 
 class BudgetExceeded(Exception):
@@ -79,7 +89,7 @@ class CostBudget(BaseModel):
         return None
 
 
-class CostGuard:
+class CostGuard(LLMProvider):
     """Middleware that enforces cost budgets.
 
     Wraps an LLMProvider and tracks spend. If budget exceeded, raises
@@ -99,9 +109,34 @@ class CostGuard:
         self._spend_history: deque[tuple[float, float]] = deque(maxlen=1000)  # (timestamp, cost)
         self._paused = False
         self._aborted = False
+        # Event sink: middleware that does not have direct access to the
+        # Thread (it only sees LLMMessage lists) appends events here. The
+        # PlaybookExecutor drains this list after each step and appends the
+        # events to the Thread (patching thread_id and step_id). The list is
+        # shared with any inner middleware (TokenOptimizer, VerificationLayer)
+        # so they can emit through the same sink.
+        self._events: list[Event] = []
         # Marker so specialists can detect already-wrapped providers
         # and avoid double-wrapping the middleware stack.
         self._arnes_wrapped = True
+        # Share our event sink with any inner ARNES middleware in the chain.
+        self._propagate_event_sink()
+
+    def _propagate_event_sink(self) -> None:
+        """Share ``self._events`` with inner ARNES middleware.
+
+        Walks the ``provider`` chain. Each middleware that has an
+        ``_events`` attribute is pointed at our shared list so that all
+        middleware emit through a single sink that the executor drains.
+        """
+        inner: Any = self.provider
+        while hasattr(inner, "provider") and hasattr(inner, "_events"):
+            inner._events = self._events
+            inner = inner.provider
+
+    def _emit(self, event: Event) -> None:
+        """Append an event to the shared sink (drained by the executor)."""
+        self._events.append(event)
 
     async def complete(
         self,
@@ -156,6 +191,17 @@ class CostGuard:
                     budget=effective_budget,
                     pct=pct_used,
                 )
+                self._emit(
+                    CostThresholdEvent(
+                        thread_id=NIL_THREAD_ID,
+                        data={
+                            "threshold_pct": pct_used,
+                            "threshold_level": "abort",
+                            "spent_usd": self.spent_usd,
+                            "budget_usd": effective_budget,
+                        },
+                    )
+                )
                 raise BudgetExceeded(
                     f"Budget exceeded: ${self.spent_usd:.4f} >= ${effective_budget:.4f}",
                     spent=self.spent_usd,
@@ -185,6 +231,19 @@ class CostGuard:
                         projected=projected,
                         budget=effective_budget,
                     )
+                    self._emit(
+                        CostThresholdEvent(
+                            thread_id=NIL_THREAD_ID,
+                            data={
+                                "threshold_pct": projected / effective_budget,
+                                "threshold_level": "preflight_abort",
+                                "spent_usd": self.spent_usd,
+                                "budget_usd": effective_budget,
+                                "estimated_cost_usd": estimated_cost,
+                                "projected_usd": projected,
+                            },
+                        )
+                    )
                     raise BudgetExceeded(
                         f"Budget would be exceeded by next call: "
                         f"${projected:.6f} (spent ${self.spent_usd:.6f} "
@@ -205,6 +264,18 @@ class CostGuard:
                     pct=pct_used,
                     interactive=interactive,
                 )
+                self._emit(
+                    CostThresholdEvent(
+                        thread_id=NIL_THREAD_ID,
+                        data={
+                            "threshold_pct": pct_used,
+                            "threshold_level": "pause",
+                            "spent_usd": self.spent_usd,
+                            "budget_usd": effective_budget,
+                            "interactive": interactive,
+                        },
+                    )
+                )
                 # TODO v0.2: emit HumanApprovalRequestedEvent and block
 
             elif self.spent_usd >= effective_budget * self.budget.warn_at_pct:
@@ -213,6 +284,17 @@ class CostGuard:
                     spent=self.spent_usd,
                     budget=effective_budget,
                     pct=pct_used,
+                )
+                self._emit(
+                    CostThresholdEvent(
+                        thread_id=NIL_THREAD_ID,
+                        data={
+                            "threshold_pct": pct_used,
+                            "threshold_level": "warn",
+                            "spent_usd": self.spent_usd,
+                            "budget_usd": effective_budget,
+                        },
+                    )
                 )
 
         # Circuit breaker: check spend rate
@@ -284,7 +366,7 @@ class CostGuard:
         if not callable(peek):
             return None
         try:
-            return peek(
+            estimate = peek(
                 model=model,
                 messages=messages,
                 tools=tools,
@@ -294,6 +376,12 @@ class CostGuard:
         except Exception:
             logger.warning("cost_guard_peek_cost_failed", exc_info=True)
             return None
+        # ``peek`` is untyped (duck-typed via getattr), so the return is Any.
+        # Coerce to float | None — providers that don't return a number will
+        # surface as a TypeError at the call site, which the caller handles.
+        if estimate is None:
+            return None
+        return float(estimate)
 
     # ============================================================
     # Stats
@@ -320,3 +408,7 @@ class CostGuard:
         self._spend_history.clear()
         self._paused = False
         self._aborted = False
+
+    def list_models(self) -> list[str]:
+        """Delegate to the wrapped provider (middleware is transparent)."""
+        return self.provider.list_models()

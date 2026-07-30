@@ -44,10 +44,21 @@ jobs:
         run: uv run ruff format --check arnes/ tests/
 
       - name: Type check with mypy
-        run: uv run mypy arnes/ --no-error-summary || true  # Non-blocking for now
+        # AGENTS.md mandates ``mypy --strict`` must pass. Previously this was
+        # non-blocking (``|| true``), which let type regressions slip through
+        # CI. It is now a hard gate — fix the type errors rather than silence.
+        run: uv run mypy arnes/ --strict
 
-      - name: Test with pytest
-        run: uv run pytest tests/ --cov=arnes --cov-report=xml --cov-report=term
+      - name: Test with pytest (with coverage floor >= 65%)
+        # ``--cov-fail-under=65`` is set in pyproject.toml addopts too —
+        # passing it here explicitly makes the coverage gate visible at the
+        # CI step level so a future pyproject change can't silently disable it.
+        run: |
+          uv run pytest tests/ \
+            --cov=arnes \
+            --cov-report=xml \
+            --cov-report=term \
+            --cov-fail-under=65
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

@@ -129,7 +129,11 @@ class Tool(ABC, BaseModel):
             return args
         # Pydantic validation
         validated = args_schema.model_validate(args)
-        return validated.model_dump(exclude_none=True)
+        # ``model_dump`` returns a dict[str, Any] for a pydantic BaseModel, but
+        # ``args_schema`` is duck-typed via getattr so the return type is Any.
+        dumped = validated.model_dump(exclude_none=True)
+        assert isinstance(dumped, dict)
+        return dumped
 
 
 # ============================================================
@@ -178,7 +182,8 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
-    def list(self) -> list[str]:
+    def list_names(self) -> list[str]:
+        """Return a sorted list of registered tool names."""
         return sorted(self._tools.keys())
 
     def has(self, name: str) -> bool:

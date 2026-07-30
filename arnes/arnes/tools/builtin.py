@@ -3,9 +3,12 @@ ARNES built-in tools: shell, http, fs_read, fs_write, human_approval.
 
 SECURITY NOTES (post-audit fixes):
 - Shell tool defaults to sandboxed execution. Local execution requires explicit
-  ARNES_DEV_MODE=1 env var AND ctx.sandbox_enabled=False.
-- HTTP tool performs full DNS resolution + IP validation to prevent SSRF
-  (including DNS rebinding TOCTOU).
+  ARNES_DEV_MODE=1 env var AND ctx.sandbox_enabled=False. The dangerous-command
+  regex is DEFENSE-IN-DEPTH ONLY — it is not a substitute for sandboxing.
+- HTTP tool performs full DNS resolution + IP validation to prevent SSRF.
+  The resolved IP is PINNED for the actual httpx request (URL rewritten to
+  use the IP, Host header set to original hostname, SNI preserved for HTTPS)
+  to defeat DNS-rebinding TOCTOU. Redirects are NOT followed automatically.
 - Filesystem tools validate against symlinks (path traversal protection).
 - Tool args fingerprinting is enforced for tools with requires_approval=True.
 """
@@ -41,6 +44,14 @@ class ShellTool(Tool):
     - ARNES_DEV_MODE environment variable set to "1"
 
     This double-gate prevents accidental RCE in production.
+
+    .. warning::
+        The dangerous-command regex checked by ``_is_dangerous_command`` is
+        **defense-in-depth only** and is trivially bypassable by an
+        adversarial prompt (obfuscation, env-var expansion, heredocs,
+        aliasing, etc.). It exists to catch careless commands, not to
+        substitute for a real sandbox (Docker / nsjail / gVisor). For
+        untrusted input, ALWAYS run inside ``ctx.sandbox_container``.
     """
 
     name: ClassVar[str] = "shell"
@@ -201,7 +212,12 @@ class HttpTool(Tool):
     - Blocks localhost, private IPs, link-local, multicast by default
     - Performs DNS resolution and validates ALL resolved IPs
     - Blocks cloud metadata endpoints (AWS, GCP, Azure)
-    - Prevents DNS rebinding via TOCTOU-resistant validation
+    - **DNS-rebinding mitigation**: the resolved IP is pinned for the actual
+      httpx request by rewriting the URL to use the IP directly, setting the
+      ``Host`` header to the original hostname, and (for HTTPS) setting
+      ``sni_hostname`` in the request extensions. Redirects are NOT followed
+      by default — a ``Location`` header could point to a brand-new hostname
+      and re-trigger DNS resolution.
     """
 
     name: ClassVar[str] = "http"
@@ -224,8 +240,9 @@ class HttpTool(Tool):
         except Exception as e:
             return ToolResult.fail("http", f"Invalid args: {e}")
 
-        # Full SSRF check with DNS resolution
-        ssrf_error = await _check_ssrf_async(validated.url)
+        # Full SSRF check with DNS resolution. Returns the resolved IP so we
+        # can pin it for the request (DNS-rebinding TOCTOU mitigation).
+        ssrf_error, resolved_ip = await _check_ssrf_async(validated.url)
         if ssrf_error:
             return ToolResult.fail("http", ssrf_error, duration_s=time.monotonic() - start)
 
@@ -234,14 +251,37 @@ class HttpTool(Tool):
         if ctx.secret_broker:
             headers = ctx.secret_broker.inject_secrets(headers, ctx)
 
+        # Rewrite the URL to use the resolved IP directly. This prevents
+        # httpx from re-resolving DNS (which would re-open the DNS-rebinding
+        # TOCTOU window that _check_ssrf_async just closed). The original
+        # hostname is preserved as the Host header (HTTP) and as SNI (HTTPS).
         try:
-            async with httpx.AsyncClient(timeout=validated.timeout_s) as client:
-                response = await client.request(
+            pinned_url, original_host, scheme = _build_ip_pinned_url(validated.url, resolved_ip)
+        except ValueError as e:
+            return ToolResult.fail("http", str(e), duration_s=time.monotonic() - start)
+
+        # The Host header must match the original hostname for virtual-host
+        # routing to work. httpx lets us override it explicitly.
+        headers.setdefault("Host", original_host)
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=validated.timeout_s,
+                follow_redirects=False,  # redirects would re-trigger DNS
+            ) as client:
+                request = client.build_request(
                     method=validated.method,
-                    url=validated.url,
+                    url=pinned_url,
                     headers=headers,
                     content=validated.body,
                 )
+                # For HTTPS, set SNI to the original hostname so the TLS
+                # handshake presents the correct cert and validates against
+                # the original hostname (not the IP). The httpcore backend
+                # expects ``sni_hostname`` to be a ``str``.
+                if scheme == "https":
+                    request.extensions["sni_hostname"] = original_host
+                response = await client.send(request)
             return ToolResult.ok(
                 "http",
                 {
@@ -413,11 +453,29 @@ _DANGEROUS_PATTERNS = [
     r"\bnc\s+-l",  # reverse shell
     r"\b/dev/tcp/",  # bash reverse shell
     r"\bnohup\s+.*&\s*$",  # daemon escape
+    # --- Added in v0.1.x security hardening (defense-in-depth) ---
+    r"\bpython\s+-c\b",  # arbitrary code execution via -c
+    r"\bpython3\s+-c\b",  # arbitrary code execution via -c
+    r"\beval\s*\(",  # JS/Python eval() invocation
+    r"\bexec\s*\(",  # Python exec() invocation
+    r"\bfind\s+.*-delete\b",  # find ... -delete
+    r"\bbase64\s+-d\b",  # base64 decode (payload decoding)
+    r"\bbase64\s+--decode\b",  # base64 decode long form
+    r"\b\s{2,}.*&&",  # suspiciously-indented chained commands
 ]
 
 
 def _is_dangerous_command(cmd: str) -> bool:
-    """Basic dangerous command detection. Not exhaustive — combine with sandbox."""
+    """Basic dangerous command detection.
+
+    .. warning::
+        This regex is **defense-in-depth only**. It catches common careless
+        payloads but is trivially bypassable by an adversarial prompt
+        (obfuscation, env-var expansion, heredocs, aliasing, etc.). It is
+        NOT a substitute for running shell commands inside a real sandbox
+        (Docker / nsjail / gVisor). For untrusted input, ALWAYS configure
+        ``ctx.sandbox_container``.
+    """
     return any(re.search(p, cmd, re.IGNORECASE) for p in _DANGEROUS_PATTERNS)
 
 
@@ -470,51 +528,119 @@ _BLOCKED_IPS = {
 }
 
 
-async def _check_ssrf_async(url: str) -> str | None:
+async def _check_ssrf_async(url: str) -> tuple[str | None, str | None]:
     """Full SSRF check with DNS resolution.
 
-    Returns error message if URL is SSRF-risky, None if safe.
-    Performs DNS resolution and validates ALL resolved IPs.
+    Returns ``(error_message, resolved_ip)``:
+    - On success: ``(None, ip_str)`` — ``ip_str`` is the resolved IP that
+      the caller should pin into the actual HTTP request to defeat
+      DNS-rebinding TOCTOU attacks.
+    - On failure: ``(error_message, None)``.
+
+    The caller is responsible for using ``resolved_ip`` when issuing the
+    request (see ``_build_ip_pinned_url``). Returning the IP here means
+    the SSRF check and the request share the same DNS resolution result.
     """
     try:
         parsed = urllib.parse.urlparse(url)
     except ValueError:
-        return f"Invalid URL: {url}"
+        return f"Invalid URL: {url}", None
 
     if parsed.scheme not in ("http", "https"):
-        return f"Blocked scheme: {parsed.scheme}"
+        return f"Blocked scheme: {parsed.scheme}", None
 
     if not parsed.hostname:
-        return "No hostname in URL"
+        return "No hostname in URL", None
 
     hostname = parsed.hostname.lower()
 
     # Block obvious internal hostnames
     if hostname in _BLOCKED_HOSTS:
-        return f"Blocked internal host: {hostname}"
+        return f"Blocked internal host: {hostname}", None
 
-    # Try to parse as IP first
+    # Try to parse as IP first — if the URL already contains an IP, we
+    # validate it but don't need to resolve DNS. The IP itself is the
+    # pinned IP.
     try:
         ip = ipaddress.ip_address(hostname)
         if _is_blocked_ip(ip):
-            return f"Blocked private/loopback IP: {hostname}"
+            return f"Blocked private/loopback IP: {hostname}", None
+        return None, str(ip)
     except ValueError:
-        # It's a hostname — resolve DNS and validate ALL IPs
-        try:
-            # Use asyncio.to_thread for cross-platform compatibility
-            infos = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
-            for _, _, _, _, sockaddr in infos:
-                ip_str = sockaddr[0]
-                try:
-                    ip = ipaddress.ip_address(ip_str)
-                    if _is_blocked_ip(ip):
-                        return f"Blocked: {hostname} resolves to private IP {ip_str}"
-                except ValueError:
-                    continue
-        except socket.gaierror:
-            return f"DNS resolution failed for: {hostname}"
+        pass
 
-    return None
+    # It's a hostname — resolve DNS and validate ALL resolved IPs.
+    # We also pick the FIRST safe IP to pin for the request.
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
+    except socket.gaierror:
+        return f"DNS resolution failed for: {hostname}", None
+
+    safe_ip: str | None = None
+    for _, _, _, _, sockaddr in infos:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if _is_blocked_ip(ip):
+            return f"Blocked: {hostname} resolves to private IP {ip_str}", None
+        if safe_ip is None:
+            safe_ip = str(ip_str)
+
+    if safe_ip is None:
+        return f"No usable IPs resolved for: {hostname}", None
+    return None, safe_ip
+
+
+def _build_ip_pinned_url(url: str, resolved_ip: str | None) -> tuple[str, str, str]:
+    """Rewrite ``url`` to use ``resolved_ip`` as the host.
+
+    Returns ``(pinned_url, original_hostname, scheme)``.
+
+    - The path / query / fragment / port / scheme are preserved.
+    - The hostname is replaced by the resolved IP (IPv6 is bracketed per
+      RFC 3986 so httpx parses it correctly).
+    - The original hostname is returned separately so the caller can set
+      the ``Host`` header (HTTP) and ``sni_hostname`` extension (HTTPS)
+      for TLS cert validation + virtual-host routing.
+
+    Raises ``ValueError`` if the URL cannot be parsed or no IP is given.
+    """
+    if resolved_ip is None:
+        raise ValueError("No resolved IP available to pin")
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.hostname:
+        raise ValueError("URL has no hostname")
+    scheme = parsed.scheme.lower()
+    hostname = parsed.hostname.lower()
+
+    # Bracket IPv6 literals per RFC 3986.
+    ip_for_url = resolved_ip
+    if ":" in resolved_ip and not resolved_ip.startswith("["):
+        ip_for_url = f"[{resolved_ip}]"
+
+    # Reconstruct netloc: [user[:pass]@]host[:port]
+    netloc = ip_for_url
+    if parsed.port is not None:
+        netloc = f"{ip_for_url}:{parsed.port}"
+    if parsed.username:
+        userinfo = parsed.username
+        if parsed.password:
+            userinfo = f"{userinfo}:{parsed.password}"
+        netloc = f"{userinfo}@{netloc}"
+
+    pinned = urllib.parse.urlunparse(
+        (
+            parsed.scheme,
+            netloc,
+            parsed.path or "/",
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+    return pinned, hostname, scheme
 
 
 def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:

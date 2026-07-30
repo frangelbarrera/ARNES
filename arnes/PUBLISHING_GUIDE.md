@@ -1,61 +1,61 @@
-# Guía de Publicación — ARNES v0.1.0a1
+# Publishing Guide — ARNES v0.1.0a1
 
-Esta guía te lleva paso a paso desde el código listo en `/home/z/my-project/arnes/`
-hasta un repo público en GitHub listo para viralizar.
+This guide walks you step by step from the code ready in `/home/z/my-project/arnes/`
+to a public GitHub repo ready to share.
 
-## ⚠️ Antes de empezar
+## ⚠️ Before you start
 
-**REVOCAR EL PAT EXPUESTO.** Ve a https://github.com/settings/tokens y elimina
-cualquier token que empiece con `github_pat_11BQAR7JY0...`. Genera uno NUEVO
-con scope mínimo (`repo` fine-grained al repo ARNES).
+**REVOKE THE EXPOSED PAT.** Go to https://github.com/settings/tokens and delete
+any token starting with `github_pat_11BQAR7JY0...`. Generate a NEW one with
+minimum scope (`repo` fine-grained to the ARNES repo).
 
-## Paso 1 — Verifica el código localmente
+## Step 1 — Verify the code locally
 
 ```bash
 cd /home/z/my-project/arnes
 
-# Activa el venv
+# Activate the venv
 source .venv/bin/activate
 
 # Run tests
 python -m pytest tests/ --no-cov -q
-# Expected: 74 passed
+# Expected: all tests pass
 
 # Run linters
 ruff check arnes/ tests/
 ruff format --check arnes/ tests/
 
-# Smoke test del quickstart
+# Quickstart smoke test
 cd /tmp && rm -rf arnes-smoke && mkdir arnes-smoke && cd arnes-smoke
 arnes init --manual smoke-test
-arnes lint manuales/smoke-test.md.yaml
-arnes ejecutar manuales/smoke-test.md.yaml --mock
-# Expected: ✅ Manual ejecutado, 3 steps, bitácora generada
+arnes lint manuals/smoke-test.yaml
+arnes run manuals/smoke-test.yaml --mock
+# Expected: ✅ Manual executed, 3 steps, bitácora generated
 ```
 
-Si todo pasa, continúa. Si algo falla, NO publiques aún.
+If everything passes, continue. If anything fails, do NOT publish yet.
 
-## Paso 2 — Push al repo GitHub privado
+## Step 2 — Push to the private GitHub repo
 
 ```bash
 cd /home/z/my-project/arnes
 
-# Opción fácil: usa el script automático
+# Easy option: use the automated script
 bash scripts/setup-and-push.sh
 ```
 
-El script:
-1. Verifica dependencias
-2. Corre tests
-3. Corre linters
-4. Hace smoke test del quickstart
-5. Inicializa git + primer commit
-6. Agrega remote origin
-7. Hace `git push -u origin main`
+The script:
+1. Verifies dependencies
+2. Runs tests
+3. Runs linters
+4. Runs the quickstart smoke test
+5. Initializes git + first commit
+6. Adds remote origin
+7. Runs `git push -u origin main`
 
-Te pedirá confirmación en cada paso.
+It will ask for confirmation at each step.
 
-### Opción manual (si prefieres controlar cada comando)
+### Manual option (if you prefer to control each command)
 
 ```bash
 cd /home/z/my-project/arnes
@@ -66,10 +66,10 @@ git branch -M main
 git config user.name "Frangel Barrera"
 git config user.email "frangelbarrera@users.noreply.github.com"
 
-# Add todos los archivos
+# Add all files
 git add -A
 
-# Primer commit
+# First commit
 git commit -m "feat: initial ARNES v0.1.0a1 — The Open Agent Harness
 
 - Core: Thread + stateless reducer
@@ -81,20 +81,20 @@ git commit -m "feat: initial ARNES v0.1.0a1 — The Open Agent Harness
 
 ARNES — Control the agent. Don't worship it."
 
-# Agrega remote (HTTPS con PAT nuevo)
+# Add remote (HTTPS with new PAT)
 git remote add origin https://github.com/frangelbarrera/ARNES.git
 
-# Push (te pedirá credenciales — usa tu NUEVO PAT como password)
+# Push (it will ask for credentials — use your NEW PAT as password)
 git push -u origin main
 ```
 
-## Paso 3 — Configura el repo en GitHub
+## Step 3 — Configure the repo on GitHub
 
-Después del push, ve a https://github.com/frangelbarrera/ARNES/settings y:
+After the push, go to https://github.com/frangelbarrera/ARNES/settings and:
 
-### 3.1 Topics SEO (en la página principal del repo)
+### 3.1 SEO Topics (on the repo main page)
 
-Copia y pega estos 20 topics en el campo "Topics":
+Copy and paste these 20 topics in the "Topics" field:
 
 ```
 ai-agents agent-framework agent-harness llm-agents llm python mcp
@@ -103,11 +103,11 @@ stateless-reducer arnes agent-runtime agentic-ai self-hosted
 token-optimization anti-hallucination
 ```
 
-(En octubre, añade también `hacktoberfest`)
+(In October, also add `hacktoberfest`)
 
 ### 3.2 Repo Description
 
-Pega esto en el campo "Description":
+Paste this in the "Description" field:
 
 ```
 ARNES — The Open Agent Harness. A Python runtime for production AI agents: stateless reducer, first-class HITL, bidirectional MCP, native A2A. Apache-2.0. Bilingual EN/ES.
@@ -117,19 +117,19 @@ ARNES — The Open Agent Harness. A Python runtime for production AI agents: sta
 
 - **Default branch**: `main`
 - **Allow issues**: ✓
-- **Allow discussions**: ✓ (crítico para comunidad)
+- **Allow discussions**: ✓ (critical for community)
 - **Allow sponsorships**: ✓
 - **Projects**: ✓
-- **Wiki**: ✗ (mantén docs en `/docs`)
+- **Wiki**: ✗ (keep docs in `/docs`)
 
 ### 3.4 GitHub Actions
 
-Las workflows ya están en `.github/workflows/`. En GitHub Settings → Actions:
+The workflows are already in `.github/workflows/`. In GitHub Settings → Actions:
 - **Allow all actions**: ✓
 - **Workflow permissions**: Read and write
-- **Status checks**: requiere `CI` para pull requests a `main`
+- **Status checks**: require `CI` for pull requests to `main`
 
-### 3.5 Branch protection (cuando tengas primeros contributors)
+### 3.5 Branch protection (when you have first contributors)
 
 Settings → Branches → Add rule for `main`:
 - Require pull request before merging
@@ -137,76 +137,76 @@ Settings → Branches → Add rule for `main`:
 - Require branches to be up to date
 - Do NOT require linear history (allow merge commits)
 
-## Paso 4 — Verifica el CI
+## Step 4 — Verify the CI
 
-Ve a https://github.com/frangelbarrera/ARNES/actions
+Go to https://github.com/frangelbarrera/ARNES/actions
 
-Deberías ver el workflow `CI` corriendo. Espera a que pase en los 9 jobs
-(3 OS × 3 Python versions). Si falla algo, revisa los logs.
+You should see the `CI` workflow running. Wait for it to pass on the 9 jobs
+(3 OS × 3 Python versions). If anything fails, check the logs.
 
-## Paso 5 — Test con un LLM real (opcional pero recomendado)
+## Step 5 — Test with a real LLM (optional but recommended)
 
-Antes de hacer público el repo, prueba con un LLM real para asegurarte
-de que los specialists devuelven outputs útiles:
+Before making the repo public, test with a real LLM to make sure the
+specialists return useful outputs:
 
-### 5.1 Con Ollama (gratis, local)
+### 5.1 With Ollama (free, local)
 
 ```bash
-# Instala Ollama
+# Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Descarga un modelo
+# Download a model
 ollama pull llama3.2
 
-# Verifica que corre
+# Verify it runs
 ollama run llama3.2 "Hello"
 
-# Ejecuta un playbook con ARNES
+# Run a playbook with ARNES
 cd /home/z/my-project/arnes
-arnes ejecutar manuales/hola-mundo.md.yaml
-# (sin --mock, usará ollama/llama3.2 por defecto)
+arnes run manuals/hello-world.yaml
+# (without --mock, it uses ollama/llama3.2 by default)
 ```
 
-### 5.2 Con Anthropic (paid, mejor calidad)
+### 5.2 With Anthropic (paid, better quality)
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...  # tu key NUEVA
+export ANTHROPIC_API_KEY=sk-ant-...  # your NEW key
 
-arnes ejecutar manuales/debug-python-issue.md.yaml \
+arnes run manuals/debug-python-issue.yaml \
     --model anthropic/claude-sonnet-4-20250514 \
     --budget 0.50
 ```
 
-Verifica que:
-- Los specialists devuelven JSON válido conforme a sus schemas
-- La bitácora markdown se genera correctamente
-- El cost guard reporta el gasto correcto
-- Los events se acumulan en el thread
+Verify that:
+- Specialists return valid JSON conforming to their schemas
+- The markdown bitácora is generated correctly
+- The cost guard reports the correct spend
+- Events accumulate in the thread
 
-## Paso 6 — Cambia el repo de privado a público
+## Step 6 — Change the repo from private to public
 
-Cuando TODO esto pase:
+When ALL of this passes:
 
-1. Ve a https://github.com/frangelbarrera/ARNES/settings
-2. Scroll al final → "Danger Zone"
+1. Go to https://github.com/frangelbarrera/ARNES/settings
+2. Scroll to the bottom → "Danger Zone"
 3. "Change repository visibility" → **Public**
-4. Confirma con tu password
+4. Confirm with your password
 
-## Paso 7 — Anuncia en X (tu canal principal)
+## Step 7 — Announce on X (your main channel)
 
-Con tus 1100 followers de X, este es el momento crítico. Template sugerido:
+With your 1100 X followers, this is the critical moment. Suggested template:
 
 ```
-🚀 Después de meses de trabajo, hoy lanzo ARNES — The Open Agent Harness.
+🚀 After months of work, today I'm launching ARNES — The Open Agent Harness.
 
-Un runtime Python para agentes de IA que respeta tus prompts, tu contexto, tu modelo y tu dinero. No es un framework más. Es un arnés.
+A Python runtime for AI agents that respects your prompts, your context, your model, and your money. It's not another framework. It's a harness.
 
-✅ Manual YAML → DAG de especialistas
-✅ 5 specialists pre-construidos (@planner, @coder, @reviewer, @tester, @debugger)
-✅ MCP server nativo (Claude Desktop, Cursor, Cline, Zed)
-✅ Budget enforcement con circuit breaker
-✅ Anti-hallucination layer con structured outputs
-✅ Default: Ollama local ($0 costo)
+✅ YAML manual → DAG of specialists
+✅ 5 pre-built specialists (@planner, @coder, @reviewer, @tester, @debugger)
+✅ Native MCP server (Claude Desktop, Cursor, Cline, Zed)
+✅ Budget enforcement with circuit breaker
+✅ Anti-hallucination layer with structured outputs
+✅ Default: local Ollama ($0 cost)
 ✅ Vendor-neutral: Apache 2.0
 
 From Latam to the world. 🌎
@@ -216,33 +216,33 @@ github.com/frangelbarrera/ARNES
 #AgentHarness #AI #OpenSource #Python
 ```
 
-### Hashtags sugeridos
-- #AgentHarness (canonizado por Microsoft/LangChain)
+### Suggested hashtags
+- #AgentHarness (canonized by Microsoft/LangChain)
 - #AI #OpenSource #Python
 - #MCP #ModelContextProtocol
 - #LocalAI #Ollama
 - #LatamTech
 
-### Timing óptimo
-- Martes o miércoles (no lunes ni viernes)
+### Optimal timing
+- Tuesday or Wednesday (not Monday or Friday)
 - 9am ET / 10am BRT / 2pm UK
-- NO durante holidays US
+- NOT during US holidays
 
-## Paso 8 — Post-launch (24-48h)
+## Step 8 — Post-launch (24-48h)
 
-1. **Responde a todos los issues/PRs en <4h**. Crítico para momentum.
-2. **Si alguien tweetea sobre ARNES**, dale like + RT + comentario.
-3. **Si aparece un bug crítico**, fix + release v0.1.1 en <24h.
-4. **Track métricas**: stars, forks, clones (GitHub Insights), PyPI downloads.
+1. **Respond to all issues/PRs in <4h**. Critical for momentum.
+2. **If someone tweets about ARNES**, like + RT + comment.
+3. **If a critical bug appears**, fix + release v0.1.1 in <24h.
+4. **Track metrics**: stars, forks, clones (GitHub Insights), PyPI downloads.
 
-## Paso 9 — Siguientes milestones
+## Step 9 — Next milestones
 
-- **100 stars**: envía PR a `awesome-mcp-servers` y `awesome-ai-agents`
-- **500 stars**: publica en dev.to un tutorial "How to build a multi-agent system with ARNES"
-- **1000 stars**: aplica a Anthropic Open Source Program para credits
-- **5000 stars**: considera levantar pre-seed
+- **100 stars**: submit PR to `awesome-mcp-servers` and `awesome-ai-agents`
+- **500 stars**: publish on dev.to a tutorial "How to build a multi-agent system with ARNES"
+- **1000 stars**: apply to the Anthropic Open Source Program for credits
+- **5000 stars**: consider raising pre-seed
 
-## Estructura final del repo
+## Final repo structure
 
 ```
 ARNES/
@@ -257,8 +257,8 @@ ARNES/
 │   ├── mcp/                # MCP server
 │   └── cli/                # arnes CLI
 ├── tests/                  # 74 tests (66% coverage)
-├── manuales/               # 4 example playbooks
-├── docs/                   # Mintlify source (placeholder)
+├── manuals/                # 10 example playbooks
+├── docs/                   # Logo, social card (placeholder)
 ├── .github/workflows/      # CI/CD
 ├── MANIFESTO.md            # 10 immutable declarations
 ├── README.md               # Bilingual EN/ES
@@ -271,45 +271,45 @@ ARNES/
 ├── LICENSE                 # Apache 2.0
 ├── pyproject.toml
 └── scripts/
-    └── setup-and-push.sh   # Este script
+    └── setup-and-push.sh   # This script
 ```
 
 ## Troubleshooting
 
-### "Tests fallan en CI pero pasan localmente"
-- Verifica versión de Python (CI usa 3.11/3.12/3.13)
-- Verifica OS (CI usa Ubuntu/macOS/Windows)
-- Revisa si hay dependencias no declaradas
+### "Tests fail in CI but pass locally"
+- Verify the Python version (CI uses 3.11/3.12/3.13)
+- Verify the OS (CI uses Ubuntu/macOS/Windows)
+- Check for undeclared dependencies
 
-### "Push rechazado por authentication"
-- NO uses el PAT expuesto en el chat
-- Genera uno nuevo en https://github.com/settings/tokens
-- Usa el PAT como password (username puede ser cualquier cosa)
+### "Push rejected by authentication"
+- Do NOT use the PAT exposed in chat
+- Generate a new one at https://github.com/settings/tokens
+- Use the PAT as password (username can be anything)
 
 ### "arnes: command not found"
-- Activa el venv: `source .venv/bin/activate`
-- O instala globalmente: `pip install -e .`
+- Activate the venv: `source .venv/bin/activate`
+- Or install globally: `pip install -e .`
 
 ### "Ollama not found"
-- Instala: `curl -fsSL https://ollama.com/install.sh | sh`
-- Pull modelo: `ollama pull llama3.2`
-- Verifica: `ollama list`
+- Install: `curl -fsSL https://ollama.com/install.sh | sh`
+- Pull a model: `ollama pull llama3.2`
+- Verify: `ollama list`
 
 ### "Module not found: arnes"
-- Reinstala en editable mode: `uv pip install -e .`
-- Verifica PYTHONPATH: `echo $PYTHONPATH`
+- Reinstall in editable mode: `uv pip install -e .`
+- Verify PYTHONPATH: `echo $PYTHONPATH`
 
-## Soporte
+## Support
 
-Si algo no funciona, abre un issue en:
+If something doesn't work, open an issue at:
 https://github.com/frangelbarrera/ARNES/issues
 
-O escribe en Discussions:
+Or post in Discussions:
 https://github.com/frangelbarrera/ARNES/discussions
 
 ---
 
-**Recuerda:** ARNES compite contra Microsoft. La calidad del código y la
-claridad de la narrativa son nuestras únicas ventajas. No las desperdicies.
+**Remember:** ARNES competes against Microsoft. The quality of the code and the
+clarity of the narrative are our only advantages. Don't waste them.
 
 *Control the agent. Don't worship it.*

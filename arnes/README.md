@@ -1,6 +1,6 @@
 <div align="center">
 
-# ARNES
+<img src="docs/logo.svg" alt="ARNES" width="320" />
 
 ### The Open Agent Harness
 
@@ -9,12 +9,11 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://img.shields.io/github/actions/workflow/status/frangelbarrera/ARNES/ci.yml?branch=main&label=CI)](https://github.com/frangelbarrera/ARNES/actions)
-[![Coverage](https://img.shields.io/endpoint?url=.coverage.json)](https://github.com/frangelbarrera/ARNES)
-[![PyPI](https://img.shields.io/pypi/v/arnes.svg)](https://pypi.org/project/arnes/)
-[![Discord](https://img.shields.io/discord/ARNES.svg?label=Discord)](https://discord.gg/ARNES)
+[![PyPI: not yet published](https://img.shields.io/badge/PyPI-not%20yet%20published-lightgrey.svg)](https://github.com/frangelbarrera/ARNES#readme)
+[![Discord: coming soon](https://img.shields.io/badge/Discord-coming%20soon-lightgrey.svg)](https://github.com/frangelbarrera/ARNES/discussions)
 [![GitHub stars](https://img.shields.io/github/stars/frangelbarrera/ARNES?style=social)](https://github.com/frangelbarrera/ARNES)
 
-[Manifesto](MANIFESTO.md) · [Documentation](https://arnes.dev) · [Examples](examples/) · [Contributing](CONTRIBUTING.md)
+[Manifesto](MANIFESTO.md) · [Documentation](https://github.com/frangelbarrera/ARNES#readme) · [Examples](examples/) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -31,8 +30,10 @@ YAML. We compile it into a DAG of specialists, run it with cost guardrails
 and anti-hallucination middleware, and return an auditable bitácora.
 
 ```bash
-pip install arnes
-arnes run manuals/debug-python-issue.yaml
+git clone https://github.com/frangelbarrera/ARNES.git
+cd ARNES
+uv sync --all-extras --dev
+uv run arnes run manuals/hello-world.yaml --mock
 ```
 
 ---
@@ -212,28 +213,33 @@ ARNES aligns explicitly with the [12 factors](https://github.com/humanlayer/12-f
 
 ## Installation
 
+ARNES is not yet on PyPI. Install from source with `uv` (recommended) or `pip`:
+
 ```bash
-# With pip
-pip install arnes
-
 # With uv (recommended)
-uv add arnes
+git clone https://github.com/frangelbarrera/ARNES.git
+cd ARNES
+uv sync --all-extras --dev
 
-# With extras for specific vendors
-pip install "arnes[ollama,anthropic,openai]"
+# With pip (editable)
+git clone https://github.com/frangelbarrera/ARNES.git
+cd ARNES
+pip install -e ".[dev]"
 ```
 
 ## Quickstart (60 seconds)
 
 ```bash
-# 1. Install
-pip install arnes
+# 1. Clone and install (see Installation above)
 
 # 2. Create your first manual
-arnes init --manual debug-python-issue
+arnes init --manual hello-world
 
-# 3. Run it (uses Ollama local by default, $0 cost)
-arnes run manuals/debug-python-issue.yaml
+# 3. Run it with the mock LLM (no network, $0 cost)
+arnes run manuals/hello-world.yaml --mock
+
+# 4. Run it with Ollama local (free, requires `ollama pull llama3.2`)
+arnes run manuals/hello-world.yaml
 ```
 
 If you do not have Ollama installed, ARNES detects it and guides you. To use
@@ -294,7 +300,7 @@ arnes run manuals/audit-pr.yaml --model anthropic/claude-sonnet-4-20250514
 
 ## Community
 
-- **Discord:** [discord.gg/ARNES](https://discord.gg/ARNES) — channels `#general`, `#español`, `#help`, `#showcase`
+- **Discord:** coming soon — meanwhile, use GitHub Discussions for chat-style threads.
 - **Discussions:** [GitHub Discussions](https://github.com/frangelbarrera/ARNES/discussions)
 - **Issues:** [Bug reports and feature requests](https://github.com/frangelbarrera/ARNES/issues)
 - **Contributing:** read [CONTRIBUTING.md](CONTRIBUTING.md) — we accept PRs from day one.
@@ -302,8 +308,8 @@ arnes run manuals/audit-pr.yaml --model anthropic/claude-sonnet-4-20250514
 ### Latam wedge
 
 500M Spanish-speaking developers underserved by the current offering. ARNES
-is born bilingual: README, docs, quickstart, and Discord in EN and ES. If
-you want to contribute translations, open an issue with the `i18n` label.
+is born bilingual: README, docs, and quickstart in EN and ES. If you want
+to contribute translations, open an issue with the `i18n` label.
 
 ---
 

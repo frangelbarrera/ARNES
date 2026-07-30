@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
@@ -45,6 +46,11 @@ class OllamaProvider(LLMProvider):
             payload["options"]["num_predict"] = max_tokens
         if response_format and response_format.get("type") == "json_object":
             payload["format"] = "json"
+        # Pass tools through — Ollama supports tool calling since v0.3.0.
+        # Silently dropping the parameter here would mean any specialist that
+        # relies on the ReAct loop never sees a tool_call back from the model.
+        if tools:
+            payload["tools"] = tools
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -57,13 +63,46 @@ class OllamaProvider(LLMProvider):
                 "Install with: curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2"
             ) from e
 
-        content = data.get("message", {}).get("content", "")
+        message = data.get("message", {}) or {}
+        content = message.get("content", "") or ""
         eval_count = data.get("eval_count", 0)
         prompt_eval_count = data.get("prompt_eval_count", 0)
 
+        # Parse tool_calls from the Ollama response (v0.3.0+). Older versions
+        # or non-tool-aware models won't return this field — fall back to an
+        # empty list rather than hardcoding [] so callers can distinguish
+        # "model returned no tool calls" from "provider didn't look".
+        tool_calls: list[dict[str, Any]] = []
+        raw_tool_calls = message.get("tool_calls")
+        if isinstance(raw_tool_calls, list):
+            for tc in raw_tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                function = tc.get("function") or {}
+                # Ollama returns {"function": {"name": ..., "arguments": {...}}}.
+                # Normalize to the OpenAI shape used everywhere else in ARNES:
+                # {"id": ..., "type": "function", "function": {"name": ..., "arguments": "<json-str>"}}
+                name = function.get("name")
+                if not name:
+                    continue
+                args = function.get("arguments", {})
+                # OpenAI ships arguments as a JSON string; mirror that so the
+                # downstream specialist `_execute_tool_call` can json.loads it.
+                if isinstance(args, (dict, list)):
+                    args = json.dumps(args)
+                elif args is None:
+                    args = "{}"
+                tool_calls.append(
+                    {
+                        "id": tc.get("id") or f"call_{name}",
+                        "type": "function",
+                        "function": {"name": name, "arguments": args},
+                    }
+                )
+
         return LLMResponse(
             content=content,
-            tool_calls=[],  # Ollama tool use is evolving — fall back to text parsing
+            tool_calls=tool_calls,
             usage=LLMUsage(
                 tokens_in=prompt_eval_count,
                 tokens_out=eval_count,

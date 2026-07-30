@@ -140,7 +140,9 @@ class StepStartedEvent(Event):
 
 class StepCompletedEvent(Event):
     type: Literal[EventType.STEP_COMPLETED] = EventType.STEP_COMPLETED
-    data: dict[str, Any]  # {"step_id": str, "output": Any, "duration_s": float}
+    data: dict[
+        str, Any
+    ]  # {"step_id": str, "output": Any, "duration_s": float, "tokens_in": int, "tokens_out": int, "cost_usd": float}
 
 
 class StepFailedEvent(Event):

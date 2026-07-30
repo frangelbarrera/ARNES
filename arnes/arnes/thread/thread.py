@@ -194,9 +194,12 @@ def _reduce_event(state: dict[str, Any], event: Event) -> dict[str, Any]:
                 "model": event.data.get("model", ""),
             }
         )
-        state["total_tokens_in"] += event.data.get("tokens_in", 0)
-        state["total_tokens_out"] += event.data.get("tokens_out", 0)
-        state["total_cost_usd"] += event.data.get("cost_usd", 0.0)
+        # NOTE: token/cost accumulation for AssistantMessageEvent is intentionally
+        # omitted to avoid double-counting. The authoritative per-step token/cost
+        # lives on the StepCompletedEvent (one per step, summing every LLM call
+        # the specialist made inside that step). AssistantMessageEvent still
+        # carries tokens_in/out/cost_usd in its ``data`` payload for visibility
+        # in the bitácora — it's just not what the reducer sums.
 
     elif event.type == EventType.TOOL_CALL:
         state["tools_called"].append(
@@ -216,9 +219,20 @@ def _reduce_event(state: dict[str, Any], event: Event) -> dict[str, Any]:
                     "status": "completed",
                     "output": event.data.get("output"),
                     "duration_s": event.data.get("duration_s", 0.0),
+                    "tokens_in": event.data.get("tokens_in", 0),
+                    "tokens_out": event.data.get("tokens_out", 0),
+                    "cost_usd": event.data.get("cost_usd", 0.0),
                     "completed_at": event.timestamp.isoformat(),
                 }
             )
+        # Authoritative token/cost accumulator: sum from StepCompletedEvent.
+        # This avoids double-counting with AssistantMessageEvent (which fires
+        # once per LLM call inside a step) — StepCompletedEvent is the
+        # per-step aggregate produced by the executor from the specialist's
+        # total usage.
+        state["total_tokens_in"] += event.data.get("tokens_in", 0)
+        state["total_tokens_out"] += event.data.get("tokens_out", 0)
+        state["total_cost_usd"] += event.data.get("cost_usd", 0.0)
 
     elif event.type == EventType.STEP_FAILED:
         step_id = event.data.get("step_id", event.step_id or state["current_step_id"])

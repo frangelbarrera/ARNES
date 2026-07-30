@@ -22,6 +22,7 @@ import structlog
 from pydantic import BaseModel
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse
+from arnes.thread.events import Event, EventType
 
 logger = structlog.get_logger(__name__)
 
@@ -44,7 +45,7 @@ class CacheEntry(BaseModel):
     hit_count: int = 0
 
 
-class TokenOptimizer:
+class TokenOptimizer(LLMProvider):
     """Middleware that wraps an LLMProvider and optimizes token usage.
 
     Usage:
@@ -72,8 +73,16 @@ class TokenOptimizer:
         self._cache_misses = 0
         self._routing_decisions = 0
         self._tokens_saved = 0
+        # Event sink shared with the outer CostGuard (if any). The executor
+        # drains this list after each step and appends the events to the
+        # Thread. See CostGuard._propagate_event_sink().
+        self._events: list[Event] = []
         # Marker so specialists can detect already-wrapped providers
         self._arnes_wrapped = True
+
+    def _emit(self, event: Event) -> None:
+        """Append an event to the shared sink (drained by the executor)."""
+        self._events.append(event)
 
     async def complete(
         self,
@@ -91,7 +100,7 @@ class TokenOptimizer:
             effective_model = self._route_model(messages, model)
 
         # Step 2: check cache
-        cache_key = self._cache_key(messages, effective_model, tools, kwargs)
+        cache_key = self._cache_key(messages, effective_model, tools, response_schema, kwargs)
         if self.enable_cache:
             cached = self._cache.get(cache_key)
             if cached and self._is_fresh(cached):
@@ -107,6 +116,7 @@ class TokenOptimizer:
                     cache_key=cache_key[:8],
                     tokens_saved=cached.response.usage.tokens_in + cached.response.usage.tokens_out,
                 )
+                self._emit_cache_hit(cached, effective_model)
                 return cached.response
             self._cache_misses += 1
 
@@ -133,6 +143,34 @@ class TokenOptimizer:
     # ============================================================
     # Routing
     # ============================================================
+
+    def _emit_cache_hit(self, cached: CacheEntry, effective_model: str) -> None:
+        """Emit a CACHE_HIT event for observability.
+
+        The TokenOptimizer does not have direct access to the Thread (it only
+        sees LLMMessage lists). The event is appended to the shared
+        ``self._events`` sink with a nil thread_id placeholder; the
+        PlaybookExecutor patches the real thread_id and step_id when it
+        drains the sink after each step.
+        """
+        from arnes.middleware.cost_guard import NIL_THREAD_ID
+
+        # Build a generic Event of type CACHE_HIT. We use the base Event
+        # class because there is no dedicated CacheHitEvent subclass — the
+        # typed payload lives in ``data`` and consumers dispatch on
+        # ``event.type``.
+        event = Event(
+            type=EventType.CACHE_HIT,
+            thread_id=NIL_THREAD_ID,
+            data={
+                "model": effective_model,
+                "tokens_in": cached.response.usage.tokens_in,
+                "tokens_out": cached.response.usage.tokens_out,
+                "tokens_saved": cached.response.usage.tokens_in + cached.response.usage.tokens_out,
+                "hit_count": cached.hit_count,
+            },
+        )
+        self._emit(event)
 
     def _route_model(self, messages: list[LLMMessage], requested_model: str) -> str:
         """Pick a cheaper model if the task is simple."""
@@ -180,14 +218,21 @@ class TokenOptimizer:
         messages: list[LLMMessage],
         model: str,
         tools: list[dict[str, Any]] | None,
+        response_schema: dict[str, Any] | None,
         kwargs: dict[str, Any],
     ) -> str:
-        """Stable hash of inputs for cache key."""
+        """Stable hash of inputs for cache key.
+
+        Includes ``response_schema`` so two calls with the same messages but
+        different requested output schemas cannot return each other's cached
+        responses (cache-poisoning defense).
+        """
         payload = json.dumps(
             {
                 "messages": [m.model_dump() for m in messages],
                 "model": model,
                 "tools": tools,
+                "response_schema": response_schema,
                 "kwargs": {k: v for k, v in kwargs.items() if k != "temperature"},
             },
             sort_keys=True,
@@ -236,3 +281,31 @@ class TokenOptimizer:
         self._cache_misses = 0
         self._routing_decisions = 0
         self._tokens_saved = 0
+
+    def list_models(self) -> list[str]:
+        """Delegate to the wrapped provider (middleware is transparent)."""
+        return self.provider.list_models()
+
+    def peek_cost(
+        self,
+        *,
+        model: str,
+        messages: list[LLMMessage],
+        tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> float | None:
+        """Delegate pre-flight cost estimation to the wrapped provider."""
+        peek = getattr(self.provider, "peek_cost", None)
+        if not callable(peek):
+            return None
+        estimate = peek(
+            model=model,
+            messages=messages,
+            tools=tools,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        if estimate is None:
+            return None
+        return float(estimate)

@@ -31,6 +31,16 @@ def _estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     return (tokens_in * pricing["input"] + tokens_out * pricing["output"]) / 1_000_000
 
 
+def _estimate_input_tokens(messages: list[LLMMessage]) -> int:
+    """Cheap local estimate of input tokens.
+
+    4 chars ≈ 1 token is a deliberately rough heuristic — good enough for a
+    pre-flight budget check, and avoids pulling in a per-vendor tokenizer
+    just to *estimate* a call we haven't made yet.
+    """
+    return sum(len(m.content) // 4 for m in messages)
+
+
 class LiteLLMProvider(LLMProvider):
     """Universal provider for paid vendors via LiteLLM.
 
@@ -64,20 +74,25 @@ class LiteLLMProvider(LLMProvider):
         # LiteLLM uses "provider/model" format directly
         litellm_messages = [m.model_dump(exclude_none=True) for m in messages]
 
-        kwargs: dict[str, Any] = {
+        # Build the call kwargs WITHOUT clobbering caller-supplied **kwargs.
+        # Previously this code reassigned `kwargs` to a local dict, silently
+        # dropping any caller-supplied kwargs (e.g. `top_p`, `seed`, `user`).
+        call_kwargs: dict[str, Any] = {
             "model": model,
             "messages": litellm_messages,
             "temperature": temperature,
         }
         if max_tokens:
-            kwargs["max_tokens"] = max_tokens
+            call_kwargs["max_tokens"] = max_tokens
         if tools:
-            kwargs["tools"] = tools
+            call_kwargs["tools"] = tools
         if response_format and response_format.get("type") == "json_object":
-            kwargs["response_format"] = {"type": "json_object"}
+            call_kwargs["response_format"] = {"type": "json_object"}
+        # Pass through any remaining caller-supplied kwargs (top_p, seed, etc.).
+        call_kwargs.update(kwargs)
 
         # LiteLLM async call
-        response = await litellm.acompletion(**kwargs)
+        response = await litellm.acompletion(**call_kwargs)
 
         # Extract standard fields
         content = response.choices[0].message.content or ""
@@ -119,3 +134,31 @@ class LiteLLMProvider(LLMProvider):
 
     def list_models(self) -> list[str]:
         return list(_PRICING_USD_PER_1M_TOKENS.keys())
+
+    def peek_cost(
+        self,
+        *,
+        model: str,
+        messages: list[LLMMessage],
+        tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> float | None:
+        """Pre-flight cost estimate based on input tokens only.
+
+        We can't know the output token count until the model actually
+        generates a response, so we conservatively estimate *just* the input
+        portion of the bill. CostGuard uses this to reject calls that would
+        breach the budget *before* any money is spent — without this, the
+        pre-flight check in ``CostGuard`` is dead code for LiteLLMProvider.
+
+        The estimate is intentionally a lower bound (output cost is unknown
+        and not added), which is the safe direction for a budget guard: we
+        never *over*-estimate and thereby block legitimate calls.
+        """
+        input_tokens = _estimate_input_tokens(messages)
+        pricing = _PRICING_USD_PER_1M_TOKENS.get(model)
+        if not pricing:
+            # Fallback: $1/1M tokens (matches _estimate_cost's fallback)
+            return input_tokens * 1.0 / 1_000_000
+        return input_tokens * pricing["input"] / 1_000_000

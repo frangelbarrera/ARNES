@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Literal
+
+from pydantic import BaseModel, Field
 
 from arnes.specialists.base import Specialist, SpecialistConfig
 
@@ -38,6 +40,38 @@ Return JSON matching this schema:
 """
 
 
+# ============================================================
+# Pydantic output models — used as the strong `pydantic_model`
+# validator on SpecialistConfig. This is the demonstration that
+# the `pydantic_model` field on SpecialistConfig is actually
+# plumbed end-to-end: stronger than the JSON-schema `output_schema`
+# check (which only verifies required fields exist) because pydantic
+# also validates types and enum values.
+# ============================================================
+
+
+Severity = Literal["critical", "major", "minor", "nit"]
+Verdict = Literal["approve", "request_changes", "reject"]
+
+
+class ReviewerIssue(BaseModel):
+    """A single issue found during code review."""
+
+    severity: Severity
+    file: str
+    line: int | None = None
+    issue: str
+    suggestion: str | None = None
+
+
+class ReviewerOutput(BaseModel):
+    """Structured output for the @reviewer specialist."""
+
+    verdict: Verdict
+    issues: list[ReviewerIssue] = Field(default_factory=list)
+    summary: str
+
+
 class Reviewer(Specialist):
     """@reviewer — reviews code for correctness, security, performance, and readability."""
 
@@ -55,6 +89,10 @@ class Reviewer(Specialist):
                 "summary": {"type": "string"},
             },
         },
+        # Strong validation: pydantic validates field types AND enum values
+        # (verdict / severity), so a malformed `verdict: "ok"` is rejected
+        # here even though it would slip past the weak JSON-schema check.
+        pydantic_model=ReviewerOutput,
         default_model="ollama/llama3.2",
         temperature=0.0,
     )

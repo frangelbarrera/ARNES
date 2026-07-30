@@ -272,8 +272,11 @@ steps:
         playbook = PlaybookCompiler.from_string(yaml_str)
         result = await executor.run(playbook)
 
-        # Thread should have: step_started, step_completed, step_started, step_completed, run_completed = 5
-        assert len(result.thread) == 5
+        # Thread should have:
+        #   2 step_started + 2 assistant_message + 2 step_completed + 1 run_completed = 7
+        # (each specialist makes exactly one LLM call against the mock provider,
+        # which returns no tool_calls, so exactly one AssistantMessageEvent per step)
+        assert len(result.thread) == 7
 
     @pytest.mark.asyncio
     async def test_initial_input_overrides_variables(self, executor):

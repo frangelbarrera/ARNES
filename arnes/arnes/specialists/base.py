@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
 from arnes.middleware.cost_guard import BudgetExceeded
+from arnes.thread.events import AssistantMessageEvent
 from arnes.tools.base import Tool, ToolContext, ToolRegistry
 
 logger = structlog.get_logger(__name__)
@@ -108,7 +109,7 @@ class Specialist(ABC):
         #
         # We detect already-wrapped providers by checking for the _arnes_wrapped
         # marker attribute that all our middleware classes set.
-        wrapped_provider = provider
+        wrapped_provider: LLMProvider = provider
 
         # If the provider is not already wrapped, wrap it with the full stack.
         # This is a safety net — in normal usage, the caller always wraps first.
@@ -117,7 +118,7 @@ class Specialist(ABC):
             from arnes.middleware.token_optimizer import TokenOptimizer
             from arnes.middleware.verification import VerificationConfig, VerificationLayer
 
-            inner = TokenOptimizer(provider, enable_cache=True)
+            inner: LLMProvider = TokenOptimizer(provider, enable_cache=True)
             if self.config.output_schema or self.config.pydantic_model:
                 inner = VerificationLayer(
                     inner,
@@ -130,6 +131,25 @@ class Specialist(ABC):
         all_tool_results: list[dict[str, Any]] = []
         model = self.config.default_model or "ollama/llama3.2"
 
+        # Derive the response_schema sent to middleware: prefer the explicit
+        # output_schema, but fall back to a pydantic_model's JSON schema so that
+        # specialists that only declare a `pydantic_model` still get JSON-mode
+        # forcing AND schema validation in the VerificationLayer. Without this,
+        # `response_schema=None` would silently disable both.
+        effective_response_schema = self.config.output_schema
+        if effective_response_schema is None and self.config.pydantic_model is not None:
+            effective_response_schema = self.config.pydantic_model.model_json_schema()
+
+        wants_json = bool(self.config.output_schema or self.config.pydantic_model)
+
+        # Track whether the loop produced a *final* response (no tool_calls).
+        # If the LLM keeps calling tools until max_iterations is hit, the last
+        # `response` will still have tool_calls and we must NOT validate it as
+        # if it were the final answer — that would surface an empty/intermediate
+        # tool-call payload as a malformed "final" response.
+        final_response: LLMResponse | None = None
+        response: LLMResponse | None = None
+
         for iteration in range(self.config.max_iterations):
             try:
                 response = await wrapped_provider.complete(
@@ -138,10 +158,8 @@ class Specialist(ABC):
                     tools=tool_schemas if tool_schemas else None,
                     temperature=self.config.temperature,
                     max_tokens=self.config.max_tokens,
-                    response_format={"type": "json_object"}
-                    if (self.config.output_schema or self.config.pydantic_model)
-                    else None,
-                    response_schema=self.config.output_schema,
+                    response_format={"type": "json_object"} if wants_json else None,
+                    response_schema=effective_response_schema,
                     interactive=ctx.metadata.get("interactive", False),
                 )
             except BudgetExceeded as e:
@@ -157,8 +175,19 @@ class Specialist(ABC):
 
             total_usage = total_usage + response.usage
 
+            # Emit an AssistantMessageEvent for every LLM call so the
+            # conversation history and per-call token/cost are observable
+            # in the thread bitácora. The specialist has direct access to
+            # ctx.thread_id and ctx.step_id, so we can construct the event
+            # with the correct ids (no nil-UUID patching needed). The
+            # event is appended to the wrapped provider's shared event sink
+            # (CostGuard._events), which the PlaybookExecutor drains after
+            # the step completes.
+            self._emit_assistant_message(wrapped_provider, ctx, response, model)
+
             # If no tool calls, we have the final response
             if not response.tool_calls:
+                final_response = response
                 break
 
             # Execute each tool call
@@ -184,8 +213,30 @@ class Specialist(ABC):
 
             # Continue loop for next iteration
 
+        # If we exited the loop without a final (tool-call-free) response,
+        # the LLM kept calling tools past max_iterations. Return a clear error
+        # instead of trying to validate an empty / intermediate tool-call payload.
+        if final_response is None:
+            max_iter = self.config.max_iterations
+            logger.error(
+                "specialist_max_iterations_exceeded",
+                specialist=self.config.name,
+                max_iterations=max_iter,
+            )
+            return {
+                "specialist": self.config.name,
+                "success": False,
+                "error": (
+                    f"Specialist exceeded max_iterations ({max_iter}) "
+                    "without producing a final response"
+                ),
+                "raw": response.content if response is not None else None,
+                "usage": total_usage.model_dump(),
+                "tool_results": all_tool_results,
+            }
+
         # Validate output against schema
-        result = self._parse_and_validate_output(response, total_usage, all_tool_results)
+        result = self._parse_and_validate_output(final_response, total_usage, all_tool_results)
         return result
 
     # ============================================================
@@ -223,9 +274,12 @@ class Specialist(ABC):
 
         # HITL check: if tool requires approval, fingerprint args and
         # compare against any pre-approved fingerprint (rug-pull defense).
+        # NOTE: use setdefault (not .get) so the SAME dict object is stored
+        # back into ctx.metadata — otherwise approvals are never persisted
+        # and the rug-pull detector is defeated.
         if tool.requires_approval:
             fingerprint = Tool.fingerprint(args)
-            approved_fingerprints = ctx.metadata.get("_approved_fingerprints", {})
+            approved_fingerprints = ctx.metadata.setdefault("_approved_fingerprints", {})
 
             if fingerprint in approved_fingerprints:
                 # Pre-approved: execute
@@ -294,6 +348,49 @@ class Specialist(ABC):
             return False
 
     # ============================================================
+    # Event emission
+    # ============================================================
+
+    def _emit_assistant_message(
+        self,
+        wrapped_provider: Any,
+        ctx: ToolContext,
+        response: LLMResponse,
+        model: str,
+    ) -> None:
+        """Emit an ``AssistantMessageEvent`` for a single LLM call.
+
+        The event carries the response content, the model used, and the
+        per-call token usage and cost so that the conversation history is
+        fully observable in the thread bitácora. The event is appended to
+        the wrapped provider's shared ``_events`` sink (set up by
+        ``CostGuard``); the ``PlaybookExecutor`` drains that sink after each
+        step and appends the events to the ``Thread``.
+
+        If ``wrapped_provider`` has no ``_events`` attribute (e.g. a raw
+        third-party provider), the emission is a no-op — the executor will
+        still record step-level tokens/cost on the ``StepCompletedEvent``.
+        """
+        events_list = getattr(wrapped_provider, "_events", None)
+        if not isinstance(events_list, list):
+            return
+
+        event = AssistantMessageEvent(
+            thread_id=ctx.thread_id,
+            step_id=ctx.step_id,
+            specialist=self.config.name,
+            data={
+                "content": response.content,
+                "model": response.usage.model or model,
+                "tokens_in": response.usage.tokens_in,
+                "tokens_out": response.usage.tokens_out,
+                "cost_usd": response.usage.cost_usd,
+                "cached": response.usage.cached,
+            },
+        )
+        events_list.append(event)
+
+    # ============================================================
     # Schema validation
     # ============================================================
 
@@ -314,9 +411,13 @@ class Specialist(ABC):
                 "tool_results": tool_results,
             }
 
+        # Strip ```json ... ``` / ``` ... ``` fences that some models (notably
+        # Llama 3.2) wrap around a JSON payload despite being asked for raw JSON.
+        cleaned = self._clean_json_response(response.content)
+
         # Try JSON parse
         try:
-            parsed = json.loads(response.content)
+            parsed = json.loads(cleaned)
         except json.JSONDecodeError:
             # If we expected JSON, this is a failure
             if self.config.output_schema or self.config.pydantic_model:
@@ -331,7 +432,9 @@ class Specialist(ABC):
             # If no schema expected, return raw content
             parsed = {"raw": response.content}
 
-        # Strong validation with pydantic model if defined
+        # Strong validation with pydantic model if defined (preferred over
+        # the weak JSON-schema `required`-fields check below — pydantic gives
+        # us type coercion + full validation).
         if self.config.pydantic_model:
             try:
                 validated = self.config.pydantic_model.model_validate(parsed)
@@ -386,6 +489,39 @@ class Specialist(ABC):
             f"Return JSON matching the schema. Use tools if needed."
         )
 
+    @staticmethod
+    def _clean_json_response(content: str) -> str:
+        """Strip markdown code-fences wrappers from an LLM JSON response.
+
+        Many local models (Llama 3.2 in particular) ignore a ``response_format``
+        hint and wrap their JSON in ```` ```json ... ``` ```` or plain ```` ``` ... ``` ````.
+        ``json.loads`` can't parse that, so peel the fences off before parsing.
+
+        Only strips the *outer* fence — JSON string values that legitimately
+        contain ``` are left untouched because we only trim a leading fence
+        and a trailing fence, never interior backticks.
+        """
+        # ``content`` is typed as ``str``; the isinstance guard below is a
+        # defensive runtime check for callers that bypass the type system
+        # (e.g. third-party providers returning bytes). It is unreachable per
+        # mypy but kept as defense-in-depth.
+        if not isinstance(content, str):
+            return content  # type: ignore[unreachable]
+        text = content.strip()
+        # Match an opening fence ```` ```json ```` / ```` ```jsonYAML ```` / ```` ``` ````
+        # followed by content and a closing ```` ``` ````. Non-greedy so we grab
+        # the smallest outer fence.
+        if text.startswith("```"):
+            # Drop the opening fence line (and any language tag after it).
+            first_newline = text.find("\n")
+            # Single-line fence like ```{} ``` (no newline) → strip 3 backticks
+            # either side; otherwise slice off the whole opening fence line.
+            text = text[first_newline + 1 :] if first_newline != -1 else text[3:]
+            # Strip a trailing ``` if present.
+            if text.endswith("```"):
+                text = text[:-3]
+        return text.strip()
+
     def _tool_to_schema(self, tool: Tool) -> dict[str, Any]:
         """Convert an ARNES Tool to OpenAI tool schema for LLM."""
         args_schema = getattr(tool, "Args", None)
@@ -421,7 +557,8 @@ class SpecialistRegistry:
             name = "@" + name
         return self._specialists.get(name)
 
-    def list(self) -> list[str]:
+    def list_names(self) -> list[str]:
+        """Return a sorted list of registered specialist names."""
         return sorted(self._specialists.keys())
 
     def has(self, name: str) -> bool:

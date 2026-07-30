@@ -189,7 +189,8 @@ Open an [issue](https://github.com/frangelbarrera/ARNES/issues/new?template=bug_
 
 **DO NOT open a public issue for security vulnerabilities.**
 
-Send an email to `security@arnes.dev` with:
+Open a private [GitHub Security Advisory](https://github.com/frangelbarrera/ARNES/security/advisories/new)
+or email `frangelbarrera@users.noreply.github.com` with:
 - Description of the problem
 - Steps to reproduce
 - Estimated impact

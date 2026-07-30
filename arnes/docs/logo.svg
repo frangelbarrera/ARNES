@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" width="320" height="80" role="img" aria-label="ARNES logo">
+  <defs>
+    <linearGradient id="arnesGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#1E40AF"/>
+    </linearGradient>
+  </defs>
+  <!-- Background pill -->
+  <rect x="2" y="2" width="316" height="76" rx="14" ry="14" fill="#0B1220" stroke="url(#arnesGrad)" stroke-width="2"/>
+  <!-- Harness / horse motif: stylized knight chess piece -->
+  <g transform="translate(18,12)" fill="url(#arnesGrad)">
+    <!-- Knight head silhouette (simplified horse) -->
+    <path d="M6 54 L6 46 C6 38 10 32 16 28 L24 22 C28 18 28 12 24 10 L20 8 L24 4 C32 6 38 12 38 22 L38 38 C38 46 34 52 28 54 L28 54 L6 54 Z M14 54 L14 50 C14 46 18 44 22 44 L26 44 C30 44 32 46 32 50 L32 54 Z"/>
+    <!-- Base -->
+    <rect x="4" y="54" width="40" height="6" rx="2" ry="2"/>
+    <!-- Eye -->
+    <circle cx="22" cy="16" r="1.4" fill="#0B1220"/>
+  </g>
+  <!-- Wordmark ARNES -->
+  <text x="78" y="50" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="34" font-weight="700" letter-spacing="2" fill="url(#arnesGrad)">ARNES</text>
+  <!-- Tagline -->
+  <text x="80" y="66" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9" font-weight="500" letter-spacing="1.2" fill="#94A3B8">THE OPEN AGENT HARNESS</text>
+</svg>

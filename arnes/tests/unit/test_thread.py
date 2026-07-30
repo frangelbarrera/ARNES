@@ -109,7 +109,19 @@ class TestThread:
             StepCompletedEvent(
                 thread_id=tid,
                 step_id="s1",
-                data={"step_id": "s1", "output": "result", "duration_s": 0.5},
+                data={
+                    "step_id": "s1",
+                    "output": "result",
+                    "duration_s": 0.5,
+                    # The reducer now accumulates tokens/cost from
+                    # StepCompletedEvent (the per-step aggregate) rather
+                    # than from AssistantMessageEvent (the per-call view).
+                    # The two values match here because there is exactly
+                    # one LLM call in this step.
+                    "tokens_in": 10,
+                    "tokens_out": 5,
+                    "cost_usd": 0.001,
+                },
             ),
             RunCompletedEvent(
                 thread_id=tid,
@@ -133,6 +145,10 @@ class TestThread:
         assert state["status"] == "completed"
         assert "s1" in state["steps"]
         assert state["steps"]["s1"]["status"] == "completed"
+        # Per-step token/cost should also be visible on the step entry itself.
+        assert state["steps"]["s1"]["tokens_in"] == 10
+        assert state["steps"]["s1"]["tokens_out"] == 5
+        assert state["steps"]["s1"]["cost_usd"] == 0.001
 
     def test_reduce_with_failure(self):
         thread = Thread.create()

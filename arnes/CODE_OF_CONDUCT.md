@@ -31,15 +31,18 @@ Examples of unacceptable behavior:
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to `coc@arnes.dev`. All complaints will be reviewed and investigated
-and will result in a response that is deemed necessary and appropriate to the
-circumstances. The maintainers are obligated to maintain confidentiality with
-regard to the reporter of an incident.
+reported by opening a private discussion with the maintainers via
+[GitHub Discussions](https://github.com/frangelbarrera/ARNES/discussions)
+or by emailing `frangelbarrera@users.noreply.github.com`. All complaints
+will be reviewed and investigated and will result in a response that is
+deemed necessary and appropriate to the circumstances. The maintainers are
+obligated to maintain confidentiality with regard to the reporter of an
+incident.
 
 ## Scope
 
 This Code of Conduct applies in all ARNES community spaces, including GitHub,
-Discord, social media when discussing ARNES, and any official events.
+social media when discussing ARNES, and any official events.
 
 ## Attribution
 

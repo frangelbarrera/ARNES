@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="ARNES — The Open Agent Harness">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B1220"/>
+      <stop offset="55%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="arnesGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#1E40AF"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bgGrad)"/>
+  <!-- Subtle grid -->
+  <g stroke="#1E293B" stroke-width="1" opacity="0.4">
+    <path d="M0 160 H1280 M0 320 H1280 M0 480 H1280 M160 0 V640 M320 0 V640 M480 0 V640 M640 0 V640 M800 0 V640 M960 0 V640 M1120 0 V640"/>
+  </g>
+  <!-- Glow accent -->
+  <circle cx="980" cy="170" r="220" fill="url(#arnesGrad)" opacity="0.18"/>
+  <circle cx="180" cy="520" r="180" fill="url(#accentGrad)" opacity="0.10"/>
+
+  <!-- Knight / harness icon -->
+  <g transform="translate(120,200)" fill="url(#arnesGrad)">
+    <path d="M16 220 L16 188 C16 152 40 130 64 116 L96 90 C112 74 112 50 96 42 L80 34 L96 18 C128 26 152 50 152 90 L152 154 C152 184 136 208 112 220 L16 220 Z M56 220 L56 204 C56 188 72 180 88 180 L104 180 C120 180 128 188 128 204 L128 220 Z"/>
+    <rect x="16" y="220" width="160" height="24" rx="6"/>
+    <circle cx="88" cy="66" r="6" fill="#0B1220"/>
+  </g>
+
+  <!-- Wordmark + tagline -->
+  <text x="320" y="280" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="140" font-weight="800" letter-spacing="6" fill="url(#arnesGrad)">ARNES</text>
+  <text x="328" y="340" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="32" font-weight="600" letter-spacing="6" fill="#CBD5E1">THE OPEN AGENT HARNESS</text>
+
+  <!-- One-liner -->
+  <text x="328" y="404" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="24" font-weight="400" fill="#94A3B8">Write the manual. ARNES compiles it into a team of specialists.</text>
+
+  <!-- Feature chips -->
+  <g font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="20" font-weight="600" fill="#E2E8F0">
+    <g>
+      <rect x="328" y="450" width="170" height="44" rx="22" fill="#0F172A" stroke="url(#accentGrad)" stroke-width="1.5"/>
+      <text x="345" y="479">YAML → DAG</text>
+    </g>
+    <g>
+      <rect x="510" y="450" width="170" height="44" rx="22" fill="#0F172A" stroke="url(#accentGrad)" stroke-width="1.5"/>
+      <text x="525" y="479">5 specialists</text>
+    </g>
+    <g>
+      <rect x="692" y="450" width="150" height="44" rx="22" fill="#0F172A" stroke="url(#accentGrad)" stroke-width="1.5"/>
+      <text x="710" y="479">MCP server</text>
+    </g>
+    <g>
+      <rect x="854" y="450" width="190" height="44" rx="22" fill="#0F172A" stroke="url(#accentGrad)" stroke-width="1.5"/>
+      <text x="870" y="479">Budget guardrails</text>
+    </g>
+  </g>
+
+  <!-- Footer -->
+  <text x="328" y="560" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="20" font-weight="500" fill="#64748B">Apache-2.0 · Python 3.11+ · From Latam to the world 🌎</text>
+</svg>

@@ -109,8 +109,10 @@ steps:
         assert "review" in result.outputs
         assert "test" in result.outputs
 
-        # 4 step_started + 4 step_completed + 1 run_completed = 9
-        assert len(result.thread) == 9
+        # 4 step_started + 4 assistant_message + 4 step_completed + 1 run_completed = 13
+        # (each specialist makes exactly one LLM call against the mock provider,
+        # which returns no tool_calls, so exactly one AssistantMessageEvent per step)
+        assert len(result.thread) == 13
 
         bitacora = result.to_markdown()
         assert "plan" in bitacora
@@ -121,7 +123,7 @@ steps:
     @pytest.mark.asyncio
     async def test_specialist_registry_has_all_5_specialists(self):
         registry = get_default_specialist_registry()
-        specialists = registry.list()
+        specialists = registry.list_names()
         assert "@planner" in specialists
         assert "@coder" in specialists
         assert "@reviewer" in specialists

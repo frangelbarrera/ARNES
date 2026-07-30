@@ -13,13 +13,14 @@ If any check fails, raises PlaybookCompileError with a helpful message.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, ClassVar
 
 import yaml
 from pydantic import ValidationError
 
-from arnes.playbooks.schema import Playbook
+from arnes.playbooks.schema import Playbook, PlaybookStep
 
 
 class PlaybookCompileError(Exception):
@@ -131,7 +132,11 @@ class PlaybookCompiler:
     @classmethod
     def _translate_keys(cls, data: dict[str, Any]) -> dict[str, Any]:
         """Translate ES keys to canonical EN keys."""
-        return cls._translate_recursive(data)
+        translated = cls._translate_recursive(data)
+        # _translate_recursive returns Any (it accepts dict | list | scalar);
+        # at this call site we know the input is a dict so the output is too.
+        assert isinstance(translated, dict)
+        return translated
 
     @classmethod
     def _translate_recursive(cls, obj: Any) -> Any:
@@ -189,7 +194,7 @@ class PlaybookCompiler:
                     )
 
 
-def _iter_steps(playbook: Playbook):
+def _iter_steps(playbook: Playbook) -> Iterator[PlaybookStep]:
     """Iterate all steps in a playbook, including parallel sub-steps."""
     for step in playbook.steps:
         yield step

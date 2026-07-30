@@ -50,8 +50,10 @@ N_RUNS = 50
 TIME_BUDGET_S = 10.0
 STEPS_PER_RUN = 3
 EXPECTED_LLM_CALLS = N_RUNS * STEPS_PER_RUN
-# 3 step_started + 3 step_completed + 1 run_completed
-EXPECTED_EVENTS_PER_THREAD = STEPS_PER_RUN * 2 + 1
+# 3 step_started + 3 assistant_message + 3 step_completed + 1 run_completed = 10
+# (each specialist makes exactly one LLM call against the mock provider,
+# which returns no tool_calls, so exactly one AssistantMessageEvent per step)
+EXPECTED_EVENTS_PER_THREAD = STEPS_PER_RUN * 3 + 1
 
 
 # ============================================================
@@ -300,8 +302,8 @@ class TestConcurrentStress:
             )
             assert r.steps_failed == 0, f"Run {i}: {r.steps_failed} failed steps"
 
-        # 4. Each thread should have exactly 7 events
-        #    (3 step_started + 3 step_completed + 1 run_completed)
+        # 4. Each thread should have exactly 10 events
+        #    (3 step_started + 3 assistant_message + 3 step_completed + 1 run_completed)
         for i, r in enumerate(results):
             assert len(r.thread) == EXPECTED_EVENTS_PER_THREAD, (
                 f"Run {i}: expected {EXPECTED_EVENTS_PER_THREAD} thread events, got {len(r.thread)}"

@@ -87,7 +87,7 @@ class Harness:
 
         specialist_obj = self.specialist_registry.get(specialist)
         if not specialist_obj:
-            available = self.specialist_registry.list()
+            available = self.specialist_registry.list_names()
             return {
                 "success": False,
                 "error": f"Specialist '{specialist}' not found. Available: {available}",

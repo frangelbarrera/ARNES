@@ -69,7 +69,7 @@ class PlaybookExecutor:
     """Executes a compiled Playbook.
 
     Usage:
-        playbook = PlaybookCompiler.from_file("manuales/auditar-pr.md.yaml")
+        playbook = PlaybookCompiler.from_file("manuals/audit-pr.yaml")
         executor = PlaybookExecutor()
         result = await executor.run(playbook)
         print(result.to_markdown())
@@ -278,7 +278,22 @@ class PlaybookExecutor:
             else:
                 raise ValueError(f"Step '{step.id}' has no action defined")
 
-            # Record completion
+            # Drain middleware event sink BEFORE recording completion so
+            # that AssistantMessageEvent / CostThresholdEvent / CACHE_HIT /
+            # REFUSAL_TRIGGERED events emitted during the step appear in
+            # the thread before the StepCompletedEvent. The middleware
+            # creates events with a nil thread_id placeholder (it does not
+            # have access to the Thread); we patch the real thread_id and
+            # step_id here.
+            self._drain_middleware_events(thread_holder, cost_guard, step.id)
+
+            # Pull token / cost usage out of the step result so the
+            # StepCompletedEvent carries the per-step aggregate. The
+            # specialist returns ``usage`` as a model_dump() of LLMUsage
+            # (tokens_in, tokens_out, cost_usd, model, cached).
+            usage = result.get("usage") or {}
+
+            # Record completion (with token + cost accounting)
             thread_holder[0] = thread_holder[0].append(
                 StepCompletedEvent(
                     thread_id=thread_holder[0].id,
@@ -288,6 +303,9 @@ class PlaybookExecutor:
                         "step_id": step.id,
                         "output": result.get("output"),
                         "duration_s": time.monotonic() - step_start,
+                        "tokens_in": usage.get("tokens_in", 0),
+                        "tokens_out": usage.get("tokens_out", 0),
+                        "cost_usd": usage.get("cost_usd", 0.0),
                     },
                 )
             )
@@ -296,6 +314,11 @@ class PlaybookExecutor:
 
         except Exception as e:
             logger.exception("step_failed", step_id=step.id, error=str(e))
+            # Drain any events emitted before the failure too — they are
+            # still useful for debugging (e.g. a CostThresholdEvent that
+            # fired right before the crash, or an AssistantMessageEvent
+            # from the failed LLM call).
+            self._drain_middleware_events(thread_holder, cost_guard, step.id)
             thread_holder[0] = thread_holder[0].append(
                 StepFailedEvent(
                     thread_id=thread_holder[0].id,
@@ -305,6 +328,39 @@ class PlaybookExecutor:
                 )
             )
             return {"success": False, "error": str(e)}
+
+    def _drain_middleware_events(
+        self,
+        thread_holder: list[Thread],
+        cost_guard: CostGuard,
+        step_id: str,
+    ) -> None:
+        """Drain the middleware event sink and append events to the Thread.
+
+        Middleware (CostGuard, TokenOptimizer, VerificationLayer) emit
+        events to a shared ``_events`` list because they do not have direct
+        access to the Thread. The events are created with a nil thread_id
+        placeholder; here we patch the real thread_id and step_id and
+        append them to the Thread.
+
+        Idempotent: clears the sink after draining so the same events are
+        not appended twice.
+        """
+        events = getattr(cost_guard, "_events", None)
+        if not events:
+            return
+
+        thread_id = thread_holder[0].id
+        for event in events:
+            # Events are frozen pydantic models; use model_copy(update=...)
+            # to set the real thread_id and step_id without mutating the
+            # original (which may be referenced by middleware state).
+            patched = event.model_copy(
+                update={"thread_id": thread_id, "step_id": event.step_id or step_id}
+            )
+            thread_holder[0] = thread_holder[0].append(patched)
+
+        events.clear()
 
     async def _execute_specialist(
         self,
@@ -319,7 +375,7 @@ class PlaybookExecutor:
         if not specialist:
             return {
                 "success": False,
-                "error": f"Specialist '{step.specialist}' not registered. Available: {self.specialist_registry.list()}",
+                "error": f"Specialist '{step.specialist}' not registered. Available: {self.specialist_registry.list_names()}",
             }
 
         # Resolve input (may contain Jinja2-style template refs)
@@ -342,7 +398,7 @@ class PlaybookExecutor:
         result = await specialist.run(
             input_data,
             ctx,
-            provider=cost_guard,  # type: ignore[arg-type]
+            provider=cost_guard,
             tool_registry=self.tool_registry,
         )
 
@@ -382,7 +438,7 @@ class PlaybookExecutor:
         if not tool:
             return {
                 "success": False,
-                "error": f"Tool '{step.tool}' not registered. Available: {self.tool_registry.list()}",
+                "error": f"Tool '{step.tool}' not registered. Available: {self.tool_registry.list_names()}",
             }
 
         input_data = self._resolve_input(step.input, outputs)
@@ -529,7 +585,10 @@ class PlaybookExecutor:
                     resolved[k] = v
             return resolved
 
-        return {"__input__": input_value}
+        # Unreachable: ``input_value`` is typed as ``dict[str, Any] | str | None``
+        # and all three branches above return early. Kept as a defensive
+        # fallback for callers that bypass the type system (defence-in-depth).
+        return {"__input__": input_value}  # type: ignore[unreachable]
 
     def _resolve_template(self, template: str, outputs: dict[str, Any]) -> Any:
         """Resolve a template string, handling MULTIPLE {{ }} references.

@@ -28,7 +28,7 @@ class TestToolRegistry:
 
     def test_list_returns_sorted(self):
         registry = get_default_registry()
-        tools = registry.list()
+        tools = registry.list_names()
         assert tools == sorted(tools)
 
     def test_schemas_returns_json_schemas(self):
@@ -64,13 +64,20 @@ class TestShellTool:
 
     @pytest.mark.asyncio
     async def test_execute_echo(self, ctx):
-        """Cross-platform: use python -c instead of echo (works on all OS)."""
+        """Cross-platform: use python with a script file (python -c is blocked)."""
+        import tempfile
+        from pathlib import Path
+
         tool = ShellTool()
-        result = await tool.execute(
-            {"command": "python -c \"print('hello')\"", "timeout_s": 10}, ctx
-        )
-        assert result.success is True, f"Shell failed: {result.error}"
-        assert "hello" in result.output["stdout"]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('hello')\n")
+            script_path = f.name
+        try:
+            result = await tool.execute({"command": f"python {script_path}", "timeout_s": 10}, ctx)
+            assert result.success is True, f"Shell failed: {result.error}"
+            assert "hello" in result.output["stdout"]
+        finally:
+            Path(script_path).unlink(missing_ok=True)
 
     @pytest.mark.asyncio
     async def test_dangerous_command_blocked(self, ctx):
@@ -78,6 +85,28 @@ class TestShellTool:
         result = await tool.execute({"command": "rm -rf /"}, ctx)
         assert result.success is False
         assert "dangerous" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_python_c_blocked(self, ctx):
+        """SECURITY: ``python -c`` is now in the dangerous pattern list."""
+        tool = ShellTool()
+        result = await tool.execute({"command": 'python -c "print(1)"'}, ctx)
+        assert result.success is False
+        assert "dangerous" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_eval_exec_blocked(self, ctx):
+        """SECURITY: eval() and exec() invocations match the dangerous pattern."""
+        from arnes.tools.builtin import _is_dangerous_command
+
+        assert _is_dangerous_command("eval(  open  )") is True
+        assert _is_dangerous_command("exec( compile(...) )") is True
+        assert _is_dangerous_command("find / -delete") is True
+        assert _is_dangerous_command("echo abc | base64 -d") is True
+        assert _is_dangerous_command("echo abc | base64 --decode") is True
+        # sanity: normal commands are NOT flagged
+        assert _is_dangerous_command("echo hello") is False
+        assert _is_dangerous_command("ls -la") is False
 
     @pytest.mark.asyncio
     async def test_local_exec_blocked_without_dev_mode(self, monkeypatch):
@@ -92,20 +121,36 @@ class TestShellTool:
     @pytest.mark.asyncio
     async def test_secrets_filtered_from_env(self, ctx):
         """SECURITY: API keys in args.env must be filtered out.
-        Cross-platform: use python -c to print env vars."""
+
+        Uses a python script file because ``python -c`` is now blocked
+        by the dangerous-command regex (defense-in-depth).
+        """
+        import tempfile
+        from pathlib import Path
+
         tool = ShellTool()
-        result = await tool.execute(
-            {
-                "command": "python -c \"import os; print(os.environ.get('API_KEY', 'NOT_SET')); print(os.environ.get('FOO', 'NOT_SET'))\"",
-                "env": {"API_KEY": "sk-secret", "FOO": "bar"},
-            },
-            ctx,
-        )
-        assert result.success is True, f"Shell failed: {result.error}"
-        # The secret must NOT appear in the subprocess env
-        assert "sk-secret" not in result.output["stdout"]
-        assert "NOT_SET" in result.output["stdout"]  # API_KEY was filtered
-        assert "bar" in result.output["stdout"]  # FOO was passed through
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                "import os\n"
+                "print(os.environ.get('API_KEY', 'NOT_SET'))\n"
+                "print(os.environ.get('FOO', 'NOT_SET'))\n"
+            )
+            script_path = f.name
+        try:
+            result = await tool.execute(
+                {
+                    "command": f"python {script_path}",
+                    "env": {"API_KEY": "sk-secret", "FOO": "bar"},
+                },
+                ctx,
+            )
+            assert result.success is True, f"Shell failed: {result.error}"
+            # The secret must NOT appear in the subprocess env
+            assert "sk-secret" not in result.output["stdout"]
+            assert "NOT_SET" in result.output["stdout"]  # API_KEY was filtered
+            assert "bar" in result.output["stdout"]  # FOO was passed through
+        finally:
+            Path(script_path).unlink(missing_ok=True)
 
     @pytest.mark.asyncio
     async def test_invalid_args(self, ctx):

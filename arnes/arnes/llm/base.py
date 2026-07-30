@@ -62,6 +62,10 @@ class LLMResponse(BaseModel):
 class LLMProvider(ABC):
     """Abstract LLM provider. Implementations: OllamaProvider, AnthropicProvider, etc."""
 
+    # Marker so specialists can detect already-wrapped providers and avoid
+    # double-wrapping the middleware stack. Set to True by all middleware.
+    _arnes_wrapped: bool = False
+
     @abstractmethod
     async def complete(
         self,
@@ -72,6 +76,8 @@ class LLMProvider(ABC):
         temperature: float = 0.0,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         """Generate a completion."""
         raise NotImplementedError

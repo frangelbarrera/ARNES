@@ -194,9 +194,10 @@ class TestLargePlaybookStress:
 
     @pytest.mark.asyncio
     async def test_50_step_playbook_completes_under_30s(self, capsys):
-        """The headline stress test — 50 steps, 101 events, < 30s wall clock."""
+        """The headline stress test — 50 steps, 151 events, < 30s wall clock."""
         N_STEPS = 50
-        EXPECTED_EVENTS = N_STEPS * 2 + 1  # started + completed + run_completed
+        # 50 step_started + 50 assistant_message + 50 step_completed + 1 run_completed = 151
+        EXPECTED_EVENTS = N_STEPS * 3 + 1
 
         yaml_str = _generate_50_step_playbook_yaml()
 
@@ -273,7 +274,7 @@ class TestLargePlaybookStress:
             f"Expected {N_STEPS} steps executed, got {result.steps_executed}"
         )
         assert result.steps_failed == 0, f"Expected 0 failures, got {result.steps_failed}"
-        # 50 step_started + 50 step_completed + 1 run_completed = 101
+        # 50 step_started + 50 assistant_message + 50 step_completed + 1 run_completed = 151
         assert len(result.thread) == EXPECTED_EVENTS, (
             f"Expected {EXPECTED_EVENTS} events in thread, "
             f"got {len(result.thread)} (breakdown: {type_counts})"
@@ -283,6 +284,9 @@ class TestLargePlaybookStress:
         )
         assert type_counts.get("step_completed", 0) == N_STEPS, (
             f"Expected {N_STEPS} step_completed events, got {type_counts.get('step_completed', 0)}"
+        )
+        assert type_counts.get("assistant_message", 0) == N_STEPS, (
+            f"Expected {N_STEPS} assistant_message events, got {type_counts.get('assistant_message', 0)}"
         )
         assert type_counts.get("run_completed", 0) == 1, (
             f"Expected 1 run_completed event, got {type_counts.get('run_completed', 0)}"
@@ -443,7 +447,8 @@ async def _run_standalone() -> None:
     assert result.success, f"run failed: {result.error}"
     assert result.steps_executed == 50, f"steps_executed={result.steps_executed}"
     assert result.steps_failed == 0, f"steps_failed={result.steps_failed}"
-    assert len(result.thread) == 101, f"events={len(result.thread)}"
+    # 50 step_started + 50 assistant_message + 50 step_completed + 1 run_completed = 151
+    assert len(result.thread) == 151, f"events={len(result.thread)}"
     assert total_wall < 30.0, f"wall={total_wall:.3f}s"
     print("\nAll standalone assertions PASSED.")
 

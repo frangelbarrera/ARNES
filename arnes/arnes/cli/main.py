@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 import structlog
@@ -25,6 +26,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from arnes import __version__
+from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
 from arnes.llm.factory import get_provider
 from arnes.middleware.cost_guard import CostBudget
 from arnes.playbooks.compiler import PlaybookCompileError, PlaybookCompiler
@@ -82,12 +84,19 @@ cli.add_command(run, name="ejecutar")
 
 
 @cli.group()
-def list() -> None:
+def list_cmd() -> None:
     """List available specialists, playbooks, or tools."""
     pass
 
 
-@list.command("specialists")
+# Register ``list`` as an alias so the CLI command (``arnes list specialists``)
+# keeps working — the Python function is renamed to ``list_cmd`` because a
+# function named ``list`` shadows the builtin and breaks mypy type resolution
+# for any sibling annotations using ``list[...]``.
+cli.add_command(list_cmd, name="list")
+
+
+@list_cmd.command("specialists")
 def list_specialists() -> None:
     """List available specialists."""
     registry = get_default_specialist_registry()
@@ -106,7 +115,7 @@ def list_specialists() -> None:
     console.print(table)
 
 
-@list.command("playbooks")
+@list_cmd.command("playbooks")
 @click.option(
     "--dir",
     "playbooks_dir",
@@ -130,6 +139,8 @@ def list_playbooks(playbooks_dir: str) -> None:
     for yaml_file in sorted(list(path.glob("*.yaml")) + list(path.glob("*.yml"))):
         try:
             playbook = PlaybookCompiler.from_file(yaml_file)
+            # The schema validator guarantees metadata is non-None after compile.
+            assert playbook.metadata is not None
             obj = playbook.metadata.objective
             table.add_row(
                 yaml_file.name,
@@ -149,6 +160,7 @@ def lint(playbook_path: str) -> None:
     """Validate a playbook without executing it."""
     try:
         playbook = PlaybookCompiler.from_file(playbook_path)
+        assert playbook.metadata is not None
         console.print(f"[green]✓[/green] Playbook valid: [cyan]{playbook.metadata.name}[/cyan]")
         console.print(f"  Objective: {playbook.metadata.objective}")
         console.print(f"  Steps: {len(playbook.steps)}")
@@ -219,10 +231,11 @@ async def _serve_mcp(transport: str, host: str, port: int) -> None:
     if transport == "stdio":
         sys.stderr.write("ARNES MCP server running on stdio\n")
         sys.stderr.flush()
-        await server.serve_stdio()
+        # serve_stdio is attached at runtime by ArnesMCPServer._attach_serve_methods.
+        await server.serve_stdio()  # type: ignore[attr-defined]
     else:
         console.print(f"[cyan]ARNES MCP server[/cyan] running on http://{host}:{port}")
-        await server.serve_http(host, port)
+        await server.serve_http(host, port)  # type: ignore[attr-defined]
 
 
 # ============================================================
@@ -246,6 +259,9 @@ async def _run_playbook(
         console.print(f"[red]✗ Compile error:[/red]\n{e}")
         sys.exit(1)
 
+    # The schema validator guarantees metadata is non-None after compile.
+    assert playbook.metadata is not None
+
     console.print(
         Panel.fit(
             f"[bold cyan]ARNES[/bold cyan] — Executing playbook\n"
@@ -259,7 +275,7 @@ async def _run_playbook(
 
     # Setup provider
     if mock or model.startswith("mock/"):
-        provider = _SchemaValidMockLLMProvider()
+        provider: LLMProvider = _SchemaValidMockLLMProvider()
     else:
         provider = get_provider(model)
 
@@ -301,7 +317,7 @@ async def _run_playbook(
         console.print(f"\n[cyan]Bitácora saved to:[/cyan] {default_path}")
 
 
-class _SchemaValidMockLLMProvider:
+class _SchemaValidMockLLMProvider(LLMProvider):
     """Mock LLM provider that returns schema-valid JSON for each specialist.
 
     Used by `arnes run --mock` for testing without network calls.
@@ -313,18 +329,16 @@ class _SchemaValidMockLLMProvider:
 
     async def complete(
         self,
-        messages,
+        messages: list[LLMMessage],
         *,
         model: str = "mock",
-        tools=None,
+        tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
-        max_tokens=None,
-        response_format=None,
-        response_schema=None,
-        **kwargs,
-    ):
-        from arnes.llm.base import LLMResponse, LLMUsage
-
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
         self.call_count += 1
 
         # Detect specialist from system prompt
@@ -360,7 +374,7 @@ class _SchemaValidMockLLMProvider:
             model=model,
         )
 
-    def list_models(self):
+    def list_models(self) -> list[str]:
         return ["mock"]
 
 
@@ -403,7 +417,7 @@ def _init_project() -> None:
 
 _MANUAL_TEMPLATE_EN = """\
 # {name}.yaml — ARNES playbook
-# Documentation: https://arnes.dev/playbook-dsl
+# Documentation: https://github.com/frangelbarrera/ARNES#readme
 
 name: {name}
 objective: Describe what this playbook does
@@ -429,7 +443,7 @@ steps:
 
 _MANUAL_TEMPLATE_ES = """\
 # {name}.yaml — Manual de ARNES
-# Documentación: https://arnes.dev/playbook-dsl
+# Documentación: https://github.com/frangelbarrera/ARNES#readme
 
 name: {name}
 objective: Describe qué hace este manual
