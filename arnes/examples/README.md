@@ -29,6 +29,9 @@ Shows how to inspect the Thread (event log) after a run: filter by event type, r
 ### 04_mcp_server.py
 Starts the ARNES MCP server on stdio for integration with Claude Desktop, Cursor, Cline, or Zed.
 
+### 05_streaming.py
+Demonstrates token-by-token streaming using `Harness.stream()`. Shows how to consume the async generator and accumulate usage stats.
+
 ## Using Real LLMs
 
 To use real LLMs instead of mock, replace `DemoMockProvider` with:

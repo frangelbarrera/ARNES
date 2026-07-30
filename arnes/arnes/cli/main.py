@@ -176,6 +176,54 @@ def lint(playbook_path: str) -> None:
 
 
 @cli.command()
+@click.argument("specialist")
+@click.option("--task", required=True, help="Task description for the specialist")
+@click.option("--model", default="ollama/llama3.2", help="LLM model to use")
+@click.option("--mock", is_flag=True, help="Use mock LLM (no network, $0 cost)")
+def stream(specialist: str, task: str, model: str, mock: bool) -> None:
+    """Stream a specialist's response token by token.
+
+    Example:
+        arnes stream @planner --task "Plan a blog post"
+        arnes stream @planner --task "Plan a blog post" --mock
+    """
+    asyncio.run(_stream_specialist(specialist, task, model, mock))
+
+
+async def _stream_specialist(specialist: str, task: str, model: str, mock: bool) -> None:
+    """Stream a specialist's response."""
+    from arnes import Harness, HarnessConfig
+
+    if mock or model.startswith("mock/"):
+        provider = _SchemaValidMockLLMProvider()
+    else:
+        provider = get_provider(model)
+
+    harness = Harness(
+        config=HarnessConfig(model=model, budget_usd=0.50),
+        provider=provider,
+    )
+
+    console.print(f"[cyan]Streaming[/cyan] {specialist}...")
+    console.print("[dim]---[/dim]")
+
+    total_in = 0
+    total_out = 0
+    total_cost = 0.0
+
+    async for chunk in harness.stream(specialist, {"task": task}):
+        if chunk.content:
+            console.print(chunk.content, end="", style="white")
+        total_in += chunk.usage.tokens_in
+        total_out += chunk.usage.tokens_out
+        total_cost += chunk.usage.cost_usd
+
+    console.print()
+    console.print("[dim]---[/dim]")
+    console.print(f"[dim]Tokens: {total_in} in, {total_out} out. Cost: ${total_cost:.4f}[/dim]")
+
+
+@cli.command()
 @click.argument("playbook_path", type=click.Path(exists=True))
 def eval(playbook_path: str) -> None:
     """Run playbook with mock LLM for testing (no network, $0 cost)."""
