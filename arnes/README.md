@@ -219,7 +219,7 @@ See [Recording a demo GIF](#recording-a-demo-gif) below for the `vhs` and
 | | 5 more (security, devops, researcher, writer, optimizer) | 🚧 v0.3 |
 | **Playbook DSL** | Declarative YAML compiled to DAG | ✅ v0.1 |
 | | Conditional branches (`if_not_met`) | ✅ v0.1 |
-| | Parallel branches (sequential in MVP) | ⚠️ v0.1 (true parallelism in v0.2) |
+| | Parallel branches (true `asyncio.gather`) | ✅ v0.1 |
 | | Retry with backoff | 🚧 v0.2 (schema defined, execution pending) |
 | | HITL gates (pause and request approval) | ⚠️ v0.1 (auto-reject in non-interactive) |
 | **MCP** | ARNES as MCP server (Claude Desktop, Cursor, Cline, Zed) | ✅ v0.1 |
@@ -238,7 +238,7 @@ See [Recording a demo GIF](#recording-a-demo-gif) below for the `vhs` and
 | | Temporal circuit breaker (max USD/min) | ✅ v0.1 |
 | | Automatic model fallback | ✅ v0.1 |
 | | Cost HITL (pause at X% exceeded) | ⚠️ v0.1 (log warning, auto-pause pending) |
-| **Sandbox** | Docker hardened (Tier 1 dev-local) | ⚠️ v0.1 (wiring pending, requires ARNES_DEV_MODE=1) |
+| **Sandbox** | Docker hardened (Tier 1 dev-local) | ✅ v0.1 (auto-detected when `docker` is on PATH; falls back to gated local exec via `ARNES_DEV_MODE=1`) |
 | | gVisor (Tier 2 production) | 🚧 v0.4 |
 | **Multi-agent** | Single-agent default | ✅ v0.1 |
 | | Crew (sequential/hierarchical) | 🚧 v0.4 |
@@ -365,8 +365,8 @@ arnes run manuals/audit-pr.yaml --model anthropic/claude-sonnet-4-20250514
 
 ## Roadmap
 
-- **v0.1.0 (Q1 2026)** — MVP: 5 specialists, 10 playbooks, basic DSL, MCP server, Token Optimizer v0, Verification v0, Cost Guard.
-- **v0.2.0** — Bidirectional MCP client, HITL as tool, AG-UI streaming, Docker sandbox.
+- **v0.1.0 (Q1 2026)** — MVP: 5 specialists, 10 playbooks, basic DSL, MCP server, Token Optimizer v0, Verification v0, Cost Guard, Docker sandbox auto-detect, parallel branches via `asyncio.gather`.
+- **v0.2.0** — Bidirectional MCP client, HITL as tool, AG-UI streaming, retry execution, full HTTP/SSE MCP transport.
 - **v0.3.0** — Episodic memory, context compaction, critic loop, 5 more specialists.
 - **v0.4.0** — Multi-agent Crew, PolicyEngine, gVisor sandbox.
 - **v0.5.0** — ARNES as MCP server exposing playbooks to Cursor/Claude Desktop.
@@ -451,14 +451,19 @@ ARNES stands on the shoulders of:
 This is an **alpha release**. The following features are documented but have
 known issues that will be fixed in v0.2:
 
-- **Parallel branches** execute sequentially in v0.1 (true `asyncio.gather`
-  comes in v0.2).
 - **HITL gates** auto-reject in non-interactive mode. Real interactive HITL
   (pausing execution and resuming on human input via the MCP transport)
   comes in v0.2. Until then, calling a HITL-gated tool without
   `interactive=True` returns a structured rejection rather than blocking.
-- **Docker sandbox** is not wired up by default. Local shell execution
-  requires `ARNES_DEV_MODE=1`. Full sandbox integration lands in v0.2.
+- **LLM streaming** is not yet implemented. `LLMProvider` declares
+  `stream_complete()` (returns `AsyncIterator[LLMResponse]`) so callers can
+  write streaming-style code today, but only `MockLLMProvider` yields a
+  single full-response chunk; `OllamaProvider` and `LiteLLMProvider` raise
+  `NotImplementedError("Streaming coming in v0.2")`. Real token-by-token
+  streaming (with per-chunk `CostGuard` accounting, `VerificationLayer`
+  validation on the reassembled final response, and `TokenOptimizer`
+  semantic-cache population from the final chunk) lands in v0.2 along with
+  AG-UI transport support.
 - **MCP HTTP transport** is minimal (simple POST endpoint, no SSE). It
   *does* ship with bearer-token auth (`ARNES_MCP_TOKEN`), per-IP rate
   limiting (100 req/min), and a 1 MiB request size cap — but for production
@@ -469,14 +474,16 @@ known issues that will be fixed in v0.2:
 - **Confidence gate** and **critic loop** are not yet implemented.
 
 **What does work in v0.1:**
-- ✅ Thread + stateless reducer pattern
+- ✅ Thread + stateless reducer pattern (append-only, O(1) per event)
 - ✅ 5 specialists with ReAct tool-use loop
 - ✅ Playbook DSL with conditionals and template resolution
+- ✅ Parallel branches (true `asyncio.gather` concurrency, isolated Threads)
 - ✅ CostGuard with budget enforcement and circuit breaker
 - ✅ VerificationLayer with structured outputs and refusal pattern
 - ✅ TokenOptimizer with model routing and semantic cache
 - ✅ MCP server (stdio transport + minimal HTTP transport with auth/rate limits)
 - ✅ CLI (init, run, lint, eval, list, mcp serve)
+- ✅ Docker sandbox auto-detected when `docker` is on PATH (Tier 1 dev-local)
 - ✅ SSRF protection with DNS resolution
 - ✅ Path traversal + symlink escape detection
 - ✅ Secret filtering from subprocess env

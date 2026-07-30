@@ -1,13 +1,29 @@
 """
-ARNES Thread — the immutable, append-only event log.
+ARNES Thread — the append-only event log.
 
 A Thread is the unit of state in ARNES. It's a list of Events that can be
 reduced to a current state. It's stateless in the sense that the same
-sequence of events always produces the same state — no hidden mutation.
+sequence of events always produces the same state — the reducer is a pure
+function over ``self.events``.
 
 The Thread is also the unit of persistence and replay. A Thread can be
 serialized to JSON, sent over the wire, persisted to SQLite/Postgres, and
 replayed from any point.
+
+Thread is **append-only**, NOT immutable: ``append()`` mutates the
+internal ``events`` list in place and returns ``self`` for chaining. The
+previous implementation rebuilt the entire list on every append
+(``events=[*self.events, event]``), which made building a thread of N
+events an O(N²) operation (1k events ≈ 43ms, 10k events would be
+minutes). The in-place mutation is O(1) per append and is safe because
+ARNES is single-threaded async — coroutine interleaving cannot tear a
+``list.append`` (it's atomic in CPython) and ``_drain_middleware_events``
+runs synchronously inside each step.
+
+Callers that previously relied on the immutability guarantee (e.g. the
+parallel-branch executor snapshotting the parent thread) must explicitly
+copy the Thread before sharing it across coroutines that mutate it.
+``_execute_parallel`` does this via ``Thread(id=..., events=list(...))``.
 """
 
 from __future__ import annotations
@@ -24,7 +40,7 @@ from arnes.thread.events import Event, EventType
 
 
 class Thread(BaseModel):
-    """Immutable, append-only event log.
+    """Append-only event log.
 
     Usage:
         thread = Thread.create()
@@ -32,8 +48,12 @@ class Thread(BaseModel):
         for event in thread.events:
             print(event)
 
-    The Thread is NOT mutated in place — append returns a new Thread with
-    the event added. This makes it safe for concurrent access and replay.
+    Thread is append-only: ``append()`` mutates ``self.events`` in place
+    and returns ``self`` (so ``thread = thread.append(e)`` is a no-op
+    reassignment but still reads naturally for chaining). This is NOT
+    thread-safe; ARNES is single-threaded async and the executor's
+    parallel-branch path explicitly copies the Thread before sharing it
+    across coroutines.
     """
 
     id: UUID = Field(default_factory=uuid4)
@@ -58,23 +78,35 @@ class Thread(BaseModel):
         return cls(id=events[0].thread_id, events=list(events))
 
     # ============================================================
-    # Mutation (returns new Thread)
+    # Mutation (in place, returns self for chaining)
     # ============================================================
 
     def append(self, event: Event) -> Thread:
-        """Append an event, returning a new Thread (immutability preserved)."""
+        """Append an event in place, returning ``self`` for chaining.
+
+        O(1) per call. The previous implementation rebuilt the entire
+        events list on every append (``events=[*self.events, event]``),
+        making N appends an O(N²) operation. Mutating in place is safe
+        because ARNES is single-threaded async; callers that need to
+        isolate a Thread across coroutines (e.g. parallel branch
+        sub-steps) must explicitly copy it before sharing.
+        """
         if event.thread_id != self.id:
             raise ValueError(
                 f"Event thread_id {event.thread_id} does not match Thread id {self.id}"
             )
-        return Thread(id=self.id, events=[*self.events, event])
+        self.events.append(event)
+        return self
 
     def extend(self, events: Sequence[Event]) -> Thread:
-        """Append multiple events."""
-        result = self
+        """Append multiple events in place, returning ``self`` for chaining."""
         for event in events:
-            result = result.append(event)
-        return result
+            if event.thread_id != self.id:
+                raise ValueError(
+                    f"Event thread_id {event.thread_id} does not match Thread id {self.id}"
+                )
+            self.events.append(event)
+        return self
 
     # ============================================================
     # Iteration / access

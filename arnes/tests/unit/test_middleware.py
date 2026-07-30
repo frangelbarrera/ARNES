@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -60,6 +61,52 @@ class TestTokenOptimizer:
 
         stats = optimizer.stats()
         assert stats["routing_decisions"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_routing_emits_model_routed_event(self):
+        """When the optimizer routes to a cheaper model, it must emit a
+        MODEL_ROUTED event to the shared sink so the audit log records
+        the routing decision (previously MODEL_ROUTED was defined but
+        never instantiated)."""
+        from arnes.thread.events import EventType
+
+        provider = MockLLMProvider()
+        optimizer = TokenOptimizer(provider, enable_routing=True)
+
+        # Short input + expensive model → routes to cheaper model
+        short_msg = [LLMMessage(role="user", content="Hi")]
+        await optimizer.complete(short_msg, model="anthropic/claude-sonnet-4-20250514")
+
+        routed_events = [e for e in optimizer._events if e.type == EventType.MODEL_ROUTED]
+        assert len(routed_events) == 1, (
+            f"Expected 1 MODEL_ROUTED event, got {len(routed_events)}. "
+            f"Events: {[(e.type, e.data) for e in optimizer._events]}"
+        )
+        event = routed_events[0]
+        assert event.data["from_model"] == "anthropic/claude-sonnet-4-20250514"
+        assert event.data["to_model"] == "ollama/llama3.2"
+        assert "reason" in event.data
+        assert "input_tokens_est" in event.data
+
+    @pytest.mark.asyncio
+    async def test_no_routing_no_model_routed_event(self):
+        """When the requested model is already at or below the fallback
+        tier, no routing decision is made and no MODEL_ROUTED event
+        should be emitted."""
+        from arnes.thread.events import EventType
+
+        provider = MockLLMProvider()
+        optimizer = TokenOptimizer(provider, enable_routing=True)
+
+        # ollama/llama3.2 is the cheapest tier (0) — _is_more_expensive
+        # returns False, so _route_model keeps the requested model and
+        # does not emit a MODEL_ROUTED event.
+        await optimizer.complete([LLMMessage(role="user", content="Hi")], model="ollama/llama3.2")
+
+        routed_events = [e for e in optimizer._events if e.type == EventType.MODEL_ROUTED]
+        assert len(routed_events) == 0, (
+            f"Expected 0 MODEL_ROUTED events for non-routed call, got {routed_events}"
+        )
 
 
 class TestVerificationLayer:
@@ -196,6 +243,25 @@ class _ConfigurableCostProvider(LLMProvider):
             model=model,
         )
 
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str = "mock",
+        tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Yield the full response in one chunk."""
+        response = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        yield response
+
     def list_models(self) -> list[str]:
         return ["mock"]
 
@@ -208,6 +274,8 @@ class TestCostGuardPause:
         """At 95% budget in interactive mode, the guard must:
         - set _paused = True
         - emit a HumanApprovalRequestedEvent
+        - emit a RUN_PAUSED lifecycle event (FIX-R4-DATA: previously
+          EventType.RUN_PAUSED was defined but never instantiated)
         - raise BudgetExceeded(level="pause")
         """
         provider = _ConfigurableCostProvider(cost_per_call=0.0)
@@ -230,7 +298,7 @@ class TestCostGuardPause:
         assert provider.call_count == 0
 
         # The events sink must contain a CostThresholdEvent AND a
-        # HumanApprovalRequestedEvent.
+        # HumanApprovalRequestedEvent AND a RUN_PAUSED event.
         event_types = [type(e).__name__ for e in guard._events]
         assert "CostThresholdEvent" in event_types
         assert "HumanApprovalRequestedEvent" in event_types
@@ -243,6 +311,20 @@ class TestCostGuardPause:
         assert "reject" in he.data["options"]
         assert he.data["spent_usd"] == pytest.approx(0.096)
         assert he.data["budget_usd"] == pytest.approx(0.10)
+
+        # FIX-R4-DATA: RUN_PAUSED lifecycle event must also be emitted so
+        # the audit log records the run-state transition explicitly.
+        run_paused_events = [e for e in guard._events if e.type == EventType.RUN_PAUSED]
+        assert len(run_paused_events) == 1, (
+            f"Expected 1 RUN_PAUSED event, got {len(run_paused_events)}. "
+            f"Event types: {[(e.type.value, type(e).__name__) for e in guard._events]}"
+        )
+        rp = run_paused_events[0]
+        assert rp.data["reason"] == "cost_pause_threshold"
+        assert rp.data["spent_usd"] == pytest.approx(0.096)
+        assert rp.data["budget_usd"] == pytest.approx(0.10)
+        assert rp.data["pct_used"] == pytest.approx(0.96)
+        assert rp.data["interactive"] is True
 
     @pytest.mark.asyncio
     async def test_interactive_pause_blocks_subsequent_calls(self):

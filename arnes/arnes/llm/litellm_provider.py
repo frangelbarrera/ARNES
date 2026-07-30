@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
@@ -130,7 +131,12 @@ class LiteLLMProvider(LLMProvider):
                     }
                 )
 
-        usage = response.usage
+        # ``response.usage`` may be unset (litellm constructs ModelResponse
+        # without populating ``usage`` for cached / short-circuited responses
+        # — the attribute is absent, not None). ``getattr(..., None)`` keeps
+        # the ``if usage else 0`` fallback below actually effective instead
+        # of letting an AttributeError escape to the caller.
+        usage = getattr(response, "usage", None)
         tokens_in = usage.prompt_tokens if usage else 0
         tokens_out = usage.completion_tokens if usage else 0
         cost = _estimate_cost(model, tokens_in, tokens_out)
@@ -151,6 +157,32 @@ class LiteLLMProvider(LLMProvider):
 
     def list_models(self) -> list[str]:
         return list(_PRICING_USD_PER_1M_TOKENS.keys())
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Streaming coming in v0.2.
+
+        LiteLLM exposes ``acompletion(..., stream=True)`` which returns a
+        ``CustomStreamWrapper``; wiring it through the ARNES middleware
+        stack (VerificationLayer needs the *final* chunk to validate the
+        structured output, CostGuard needs ``usage`` deltas which not all
+        vendors stream, TokenOptimizer's semantic cache must key on the
+        full reassembled response) is v0.2 work. Until then, iterating the
+        returned async iterator raises immediately so call sites fail fast
+        rather than silently blocking on a stream that never yields.
+        """
+        raise NotImplementedError("Streaming coming in v0.2")
+        yield  # type: ignore[unreachable]  # pragma: no cover - makes this an async generator
 
     def peek_cost(
         self,

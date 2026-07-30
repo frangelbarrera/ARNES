@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
@@ -30,7 +31,7 @@ import structlog
 from pydantic import BaseModel
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse
-from arnes.thread.events import CostThresholdEvent, Event, HumanApprovalRequestedEvent
+from arnes.thread.events import CostThresholdEvent, Event, EventType, HumanApprovalRequestedEvent
 
 logger = structlog.get_logger(__name__)
 
@@ -309,6 +310,25 @@ class CostGuard(LLMProvider):
                             },
                         )
                     )
+                    # Also emit a RUN_PAUSED lifecycle event so the audit
+                    # log records the run-state transition explicitly
+                    # (HumanApprovalRequestedEvent explains WHAT the user
+                    # must do; RUN_PAUSED records THAT the run is now
+                    # paused). Previously ``EventType.RUN_PAUSED`` was
+                    # defined but never instantiated.
+                    self._emit(
+                        Event(
+                            type=EventType.RUN_PAUSED,
+                            thread_id=NIL_THREAD_ID,
+                            data={
+                                "reason": "cost_pause_threshold",
+                                "spent_usd": self.spent_usd,
+                                "budget_usd": effective_budget,
+                                "pct_used": pct_used,
+                                "interactive": True,
+                            },
+                        )
+                    )
                     raise BudgetExceeded(
                         f"Budget paused at 95%: ${self.spent_usd:.4f} / "
                         f"${effective_budget:.4f} — awaiting human approval",
@@ -460,3 +480,40 @@ class CostGuard(LLMProvider):
     def list_models(self) -> list[str]:
         """Delegate to the wrapped provider (middleware is transparent)."""
         return self.provider.list_models()
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Delegate streaming to the wrapped provider (passthrough).
+
+        Streaming-aware cost tracking (accumulate ``usage.cost_usd``
+        deltas across chunks, apply the circuit breaker per chunk, emit
+        COST_THRESHOLD events as cumulative spend crosses percentage
+        gates) lands in v0.2 along with AG-UI transport support. Until
+        then, this is a thin passthrough so callers using the streaming
+        API against a stack that includes CostGuard don't lose the budget
+        enforcement middleware silently — but they also don't get
+        per-chunk cost enforcement yet, so streaming calls bypass the
+        budget gate until v0.2. The non-streaming ``complete()`` path
+        remains fully guarded.
+        """
+        async for chunk in self.provider.stream_complete(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        ):
+            yield chunk

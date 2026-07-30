@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
@@ -66,3 +67,36 @@ class MockLLMProvider(LLMProvider):
 
     def list_models(self) -> list[str]:
         return ["mock-llm"]
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str = "mock",
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Default streaming implementation: yield the full response in one chunk.
+
+        Real streaming (token-by-token) lands in v0.2 along with AG-UI
+        transport support. Until then, callers that consume the stream get
+        the entire response on the first (and only) iteration — this keeps
+        the streaming-style call site forward-compatible: code written
+        against the mock today will pick up the real stream for free once
+        v0.2 ships.
+        """
+        response = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        yield response

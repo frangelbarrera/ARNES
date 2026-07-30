@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
@@ -124,3 +125,28 @@ class OllamaProvider(LLMProvider):
             return [f"ollama/{m['name']}" for m in data.get("models", [])]
         except Exception:
             return ["ollama/llama3.2", "ollama/llama3.1", "ollama/qwen2.5", "ollama/mistral"]
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Streaming coming in v0.2.
+
+        Ollama supports streaming via ``/api/chat`` with ``"stream": true``,
+        but the ARNES streaming middleware (AG-UI compatible, with token-
+        by-token emission, structured-output validation on the final chunk,
+        and CostGuard accounting across partial ``usage`` deltas) lands in
+        v0.2. Until then, calling this method and iterating the result
+        raises immediately so callers fail fast instead of silently
+        receiving a buffered response masquerading as a stream.
+        """
+        raise NotImplementedError("Streaming coming in v0.2")
+        yield  # type: ignore[unreachable]  # pragma: no cover - makes this an async generator

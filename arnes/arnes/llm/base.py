@@ -15,6 +15,7 @@ done by middleware that wraps the provider, NOT by the provider itself.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -86,6 +87,39 @@ class LLMProvider(ABC):
     def list_models(self) -> list[str]:
         """List available models for this provider."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Stream a completion as an async iterator of ``LLMResponse`` chunks.
+
+        Streaming lands in v0.2 alongside AG-UI transport support. The
+        contract mirrors :meth:`complete` — same parameters, same
+        ``LLMResponse`` shape — but the response is delivered as a sequence
+        of partial chunks (typically one per generated token group) instead
+        of a single fully-buffered object.
+
+        Until v0.2:
+
+        * :class:`MockLLMProvider` provides a default implementation that
+          yields the full response in a single chunk (so callers can write
+          streaming-style code today against the mock and get the real
+          stream for free in v0.2).
+        * :class:`OllamaProvider` and :class:`LiteLLMProvider` raise
+          ``NotImplementedError("Streaming coming in v0.2")`` if iterated.
+        """
+        ...  # pragma: no cover
+        yield  # type: ignore[misc]  # pragma: no cover - makes this an async generator
 
     def peek_cost(
         self,

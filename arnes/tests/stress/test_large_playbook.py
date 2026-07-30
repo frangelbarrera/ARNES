@@ -28,6 +28,7 @@ import gc
 import statistics
 import time
 import tracemalloc
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -101,6 +102,31 @@ class SchemaValidMockProvider(LLMProvider):
             ),
             model=model,
         )
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str = "mock",
+        tools: list | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict | None = None,
+        response_schema: dict | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Yield the full response in one chunk (matches MockLLMProvider contract)."""
+        response = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        yield response
 
     def list_models(self) -> list[str]:
         return ["mock"]
@@ -353,18 +379,22 @@ class TestLargePlaybookStress:
 
     @pytest.mark.asyncio
     async def test_thread_append_scaling(self, capsys):
-        """Micro-benchmark: Thread.append() O(N) vs O(N^2) behavior.
+        """Micro-benchmark: Thread.append() must be O(1) per append.
 
-        The current Thread.append() does `events=[*self.events, event]`,
-        which is O(N) per append — so building a thread of N events is
-        O(N^2) total. This test surfaces the cost so we can decide whether
-        to optimize the data structure.
+        The original implementation did ``events=[*self.events, event]``,
+        which is O(N) per append — building a thread of N events was
+        O(N²) total. The fix mutates ``self.events`` in place and returns
+        ``self`` (ARNES is single-threaded async, so this is safe). This
+        test surfaces any regression to O(N²) behaviour: if per-append
+        cost grows linearly with N, the time/append column will rise
+        sharply across the three sizes.
         """
         from arnes.thread import Thread
         from arnes.thread.events import StepStartedEvent
 
         sizes = [100, 500, 1000]
         results: list[str] = []
+        per_append_us: list[float] = []
         for n in sizes:
             thread = Thread.create()
             tid = thread.id
@@ -378,8 +408,10 @@ class TestLargePlaybookStress:
                     )
                 )
             elapsed = time.perf_counter() - t0
+            us_per_append = elapsed / n * 1_000_000
+            per_append_us.append(us_per_append)
             results.append(
-                f"  append x{n}: {elapsed * 1000:.2f} ms ({elapsed / n * 1_000_000:.2f} us/append)"
+                f"  append x{n}: {elapsed * 1000:.2f} ms ({us_per_append:.2f} us/append)"
             )
             assert len(thread) == n
 
@@ -387,6 +419,18 @@ class TestLargePlaybookStress:
             print("\n[thread.append scaling]")
             print("\n".join(results))
             print()
+
+        # O(1) per append: the largest size's per-append cost must not
+        # be more than 5x the smallest size's. (A 5x headroom keeps the
+        # test stable on slow CI runners while still catching the old
+        # O(N) per-append pattern, where 1000 appends would be ~10x
+        # slower per-append than 100 appends.)
+        ratio = per_append_us[-1] / per_append_us[0] if per_append_us[0] > 0 else 0
+        assert ratio < 5.0, (
+            f"Thread.append per-call cost grew {ratio:.2f}x from n={sizes[0]} to "
+            f"n={sizes[-1]} — looks O(N) per append (O(N²) total), which is the "
+            f"regression we fixed. per-append: {per_append_us}"
+        )
 
 
 # ============================================================

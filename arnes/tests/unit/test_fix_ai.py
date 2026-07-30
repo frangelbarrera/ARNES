@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
@@ -163,6 +164,27 @@ class _StaticProvider(LLMProvider):
             model=model,
         )
 
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Yield the full response in one chunk (matches MockLLMProvider contract)."""
+        response = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        yield response
+
     def list_models(self) -> list[str]:
         return ["mock/test"]
 
@@ -257,6 +279,27 @@ class _AlwaysToolCallProvider(LLMProvider):
             usage=LLMUsage(tokens_in=10, tokens_out=5, cost_usd=0.0, model=model, cached=False),
             model=model,
         )
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Yield the full response in one chunk (matches MockLLMProvider contract)."""
+        response = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        yield response
 
     def list_models(self) -> list[str]:
         return ["mock/test"]

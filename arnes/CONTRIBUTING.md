@@ -165,11 +165,11 @@ class MySpecialist(Specialist):
 2. Register it in `arnes/specialists/__init__.py`
 3. Add test in `tests/unit/test_my_specialist.py`
 4. Add example in `examples/use_my_specialist.py`
-5. Document in `docs/specialists.md`
+5. Document inline in the specialist's module docstring (there is no separate `docs/specialists.md` — the source code in `arnes/specialists/` is the reference)
 
 ## Adding a New Playbook
 
-1. Create `manuals/my-playbook.yaml` (follow the spec in `docs/playbook-dsl.md`)
+1. Create `manuals/my-playbook.yaml` (follow existing manuals as the spec; see `manuals/hello-world.yaml` and `manuals/audit-pr.yaml` for examples)
 2. Add test in `tests/integration/test_my_playbook.py`
 3. Validate with `arnes lint manuals/my-playbook.yaml`
 

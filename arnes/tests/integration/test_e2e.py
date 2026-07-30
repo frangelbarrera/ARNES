@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from typing import Any
+
 import pytest
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
@@ -55,6 +58,31 @@ class SchemaValidMockProvider(LLMProvider):
             ),
             model=model,
         )
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str = "mock",
+        tools: list | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict | None = None,
+        response_schema: dict | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Yield the full response in one chunk."""
+        response = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        yield response
 
     def list_models(self) -> list[str]:
         return ["mock"]
@@ -271,6 +299,11 @@ steps:
                     usage=LLMUsage(tokens_in=20, tokens_out=10, cost_usd=0.0, model=model),
                     model=model,
                 )
+
+            async def stream_complete(self, messages, *, model="mock", **kwargs):
+                """Yield the full response in one chunk."""
+                response = await self.complete(messages, model=model, **kwargs)
+                yield response
 
             def list_models(self):
                 return ["mock"]

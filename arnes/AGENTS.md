@@ -77,14 +77,14 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 3. Register in `arnes/specialists/__init__.py`
 4. Add tests in `tests/unit/test_my_specialist.py`
 5. Add example in `examples/`
-6. Update docs in `docs/specialists.md`
+6. Document inline in the specialist's module docstring (there is no separate `docs/specialists.md` — the source code in `arnes/specialists/` is the reference)
 
 ## How to Add a New Playbook
 
 1. Create `manuals/my-playbook.yaml`
 2. Test with `arnes lint manuals/my-playbook.yaml`
 3. Test with `arnes run manuals/my-playbook.yaml --mock`
-4. Add to `docs/playbook-library.md`
+4. Use existing `manuals/*.yaml` files as the spec (there is no separate `docs/playbook-library.md`)
 
 ## When in Doubt
 

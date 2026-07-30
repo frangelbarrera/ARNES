@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -68,6 +70,31 @@ class SchemaValidMockProvider(LLMProvider):
             ),
             model=model,
         )
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str = "mock",
+        tools: list | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict | None = None,
+        response_schema: dict | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Yield the full response in one chunk (matches MockLLMProvider contract)."""
+        response = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        yield response
 
     def list_models(self) -> list[str]:
         return ["mock"]
@@ -150,6 +177,67 @@ steps:
         assert result.steps_executed == 1
 
     @pytest.mark.asyncio
+    async def test_parallel_branch_emits_started_and_completed_events(self, executor):
+        """FIX-R4-DATA: PARALLEL_BRANCH_STARTED and PARALLEL_BRANCH_COMPLETED
+        were previously defined in EventType but never instantiated. The
+        executor must now emit them around the asyncio.gather call so the
+        audit log marks the parallel-block boundaries."""
+        from arnes.thread.events import EventType
+
+        yaml_str = """
+name: parallel_events
+objective: Test parallel branch events
+steps:
+  - id: parallel
+    parallel:
+      - id: sub1
+        specialist: "@planner"
+        input: {task: "Subtask 1"}
+      - id: sub2
+        specialist: "@coder"
+        input: {spec: "Subtask 2"}
+"""
+        playbook = PlaybookCompiler.from_string(yaml_str)
+        result = await executor.run(playbook)
+
+        assert result.success is True, f"Failed: {result.error}"
+
+        started = [e for e in result.thread if e.type == EventType.PARALLEL_BRANCH_STARTED]
+        completed = [e for e in result.thread if e.type == EventType.PARALLEL_BRANCH_COMPLETED]
+        assert len(started) == 1, (
+            f"Expected 1 PARALLEL_BRANCH_STARTED event, got {len(started)}. "
+            f"Event types: {[(e.type.value) for e in result.thread]}"
+        )
+        assert len(completed) == 1, (
+            f"Expected 1 PARALLEL_BRANCH_COMPLETED event, got {len(completed)}"
+        )
+
+        # STARTED carries the sub-step ids so the audit log shows what
+        # branches were launched.
+        s = started[0]
+        assert s.step_id == "parallel"
+        assert s.data["sub_step_ids"] == ["sub1", "sub2"]
+        assert s.data["sub_step_count"] == 2
+
+        # COMPLETED carries the per-sub-step outcome.
+        c = completed[0]
+        assert c.step_id == "parallel"
+        assert c.data["all_success"] is True
+        outcomes = {o["sub_step_id"]: o for o in c.data["sub_step_outcomes"]}
+        assert "sub1" in outcomes
+        assert "sub2" in outcomes
+        assert outcomes["sub1"]["success"] is True
+        assert outcomes["sub2"]["success"] is True
+
+        # STARTED must come before COMPLETED in the thread (audit order).
+        started_idx = result.thread.events.index(started[0])
+        completed_idx = result.thread.events.index(completed[0])
+        assert started_idx < completed_idx, (
+            f"PARALLEL_BRANCH_STARTED (idx={started_idx}) must come before "
+            f"PARALLEL_BRANCH_COMPLETED (idx={completed_idx}) in the thread"
+        )
+
+    @pytest.mark.asyncio
     async def test_template_resolution(self, executor):
         yaml_str = """
 name: template_test
@@ -220,6 +308,11 @@ steps:
                     usage=LLMUsage(tokens_in=10, tokens_out=5, cost_usd=0.001, model=model),
                     model=model,
                 )
+
+            async def stream_complete(self, messages, *, model="mock", **kwargs):
+                """Yield the full response in one chunk."""
+                response = await self.complete(messages, model=model, **kwargs)
+                yield response
 
             def list_models(self):
                 return ["mock"]

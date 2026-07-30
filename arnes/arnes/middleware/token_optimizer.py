@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import structlog
@@ -172,6 +173,36 @@ class TokenOptimizer(LLMProvider):
         )
         self._emit(event)
 
+    def _emit_model_routed(
+        self,
+        *,
+        from_model: str,
+        to_model: str,
+        reason: str,
+        input_tokens_est: int,
+    ) -> None:
+        """Emit a MODEL_ROUTED event for observability.
+
+        Fired whenever the routing logic actually downgrades the requested
+        model to a cheaper one (no event when the requested model is kept
+        as-is). The event is appended to the shared ``self._events`` sink
+        with a nil thread_id placeholder; the PlaybookExecutor patches the
+        real thread_id and step_id when it drains the sink.
+        """
+        from arnes.middleware.cost_guard import NIL_THREAD_ID
+
+        event = Event(
+            type=EventType.MODEL_ROUTED,
+            thread_id=NIL_THREAD_ID,
+            data={
+                "from_model": from_model,
+                "to_model": to_model,
+                "reason": reason,
+                "input_tokens_est": input_tokens_est,
+            },
+        )
+        self._emit(event)
+
     def _route_model(self, messages: list[LLMMessage], requested_model: str) -> str:
         """Pick a cheaper model if the task is simple."""
         input_tokens_est = sum(len(m.content) // 4 for m in messages)
@@ -185,6 +216,12 @@ class TokenOptimizer(LLMProvider):
                         from_model=requested_model,
                         to_model=fallback,
                         reason=f"input<{max_tokens} tokens, no tools",
+                    )
+                    self._emit_model_routed(
+                        from_model=requested_model,
+                        to_model=fallback,
+                        reason=f"input<{max_tokens} tokens, no tools",
+                        input_tokens_est=input_tokens_est,
                     )
                     return fallback
                 break
@@ -285,6 +322,41 @@ class TokenOptimizer(LLMProvider):
     def list_models(self) -> list[str]:
         """Delegate to the wrapped provider (middleware is transparent)."""
         return self.provider.list_models()
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Delegate streaming to the wrapped provider (passthrough).
+
+        Streaming-aware cache population and routing decision emission
+        (cache the reassembled final response, emit a MODEL_ROUTED event
+        when the effective model differs from the requested one) lands in
+        v0.2 along with AG-UI transport support. Until then, this is a
+        thin passthrough so callers using the streaming API against a
+        stack that includes TokenOptimizer don't lose the optimization
+        middleware silently — they just don't get streaming-specific
+        optimizations yet.
+        """
+        async for chunk in self.provider.stream_complete(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        ):
+            yield chunk
 
     def peek_cost(
         self,

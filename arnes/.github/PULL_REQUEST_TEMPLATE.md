@@ -29,8 +29,8 @@ short note explaining why. PRs that skip the checklist will be sent back.
 
 - [ ] **Tests pass** — `uv run pytest` is green.
 - [ ] **Lint passes** — `uv run ruff check arnes/` is clean.
-- [ ] **Types pass** — `uv run mypy arnes/` (we are not yet at `--strict`
-      in CI; new code should not add mypy errors).
+- [ ] **Types pass** — `uv run mypy arnes/ --strict` is clean (strict
+      mode is enforced in CI and must stay at 0 errors).
 - [ ] **Coverage ≥ 65%** — `uv run pytest --cov=arnes` stays at or above
       65%. New features include new tests.
 - [ ] **Docs updated** — README / docs / examples updated if behavior

@@ -9,6 +9,7 @@ handler and the security primitives directly.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -421,6 +422,31 @@ class TestRunPlaybook:
                     ),
                     model=model,
                 )
+
+            async def stream_complete(
+                self,
+                messages: list[LLMMessage],
+                *,
+                model: str = "mock",
+                tools: list[dict[str, Any]] | None = None,
+                temperature: float = 0.0,
+                max_tokens: int | None = None,
+                response_format: dict[str, Any] | None = None,
+                response_schema: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> AsyncIterator[LLMResponse]:
+                """Yield the full response in one chunk."""
+                response = await self.complete(
+                    messages,
+                    model=model,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format=response_format,
+                    response_schema=response_schema,
+                    **kwargs,
+                )
+                yield response
 
             def list_models(self) -> list[str]:
                 return ["mock"]

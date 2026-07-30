@@ -19,7 +19,7 @@ from arnes.thread.events import (
 
 
 class TestThread:
-    """Tests for Thread (immutable event log)."""
+    """Tests for Thread (append-only event log)."""
 
     def test_create_empty_thread(self):
         thread = Thread.create()
@@ -27,18 +27,29 @@ class TestThread:
         assert thread.last() is None
         assert thread.id is not None
 
-    def test_append_returns_new_thread(self):
+    def test_append_mutates_in_place_returns_self(self):
+        """Thread.append mutates the events list in place and returns self.
+
+        This replaces the old immutability assertion. The previous
+        implementation rebuilt the events list on every append
+        (``events=[*self.events, event]``), which was O(N) per append and
+        O(N²) for N appends — 1k events ≈ 43ms. The new in-place mutation
+        is O(1) per append. ARNES is single-threaded async, so the
+        mutation is safe; callers that need to isolate a Thread across
+        coroutines (e.g. ``_execute_parallel``) explicitly copy it.
+        """
         thread = Thread.create()
         event = UserMessageEvent(
             thread_id=thread.id,
             data={"content": "Hello", "role": "user"},
         )
-        new_thread = thread.append(event)
-        # Original is unchanged (immutability)
-        assert len(thread) == 0
-        assert len(new_thread) == 1
-        # New thread has the event
-        assert new_thread.last() == event
+        returned = thread.append(event)
+        # Original IS mutated (append-only, not immutable)
+        assert len(thread) == 1
+        # append returns self for chaining — same object
+        assert returned is thread
+        # Event is in the thread
+        assert thread.last() == event
 
     def test_append_rejects_wrong_thread_id(self):
         thread = Thread.create()

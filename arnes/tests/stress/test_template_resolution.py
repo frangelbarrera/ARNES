@@ -20,6 +20,7 @@ Both unit-level (``_resolve_template`` direct calls) and end-to-end
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -103,6 +104,31 @@ class StructuredMockProvider(LLMProvider):
             ),
             model=model,
         )
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str = "mock",
+        tools: list | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict | None = None,
+        response_schema: dict | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Yield the full response in one chunk (matches MockLLMProvider contract)."""
+        response = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        yield response
 
     def list_models(self) -> list[str]:
         return ["mock"]

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import AsyncIterator
 from typing import Any
 
 import structlog
@@ -297,6 +298,41 @@ class VerificationLayer(LLMProvider):
     def list_models(self) -> list[str]:
         """Delegate to the wrapped provider (middleware is transparent)."""
         return self.provider.list_models()
+
+    async def stream_complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Delegate streaming to the wrapped provider (passthrough).
+
+        Streaming-aware verification (validate the *final* reassembled
+        response against the structured-output schema, run hedging
+        detection on the concatenated content, emit a refusal-mid-stream
+        event when hedging is detected on a partial chunk) lands in v0.2
+        along with AG-UI transport support. Until then, this is a thin
+        passthrough so callers using the streaming API against a stack
+        that includes VerificationLayer don't lose the verification
+        middleware silently.
+        """
+        async for chunk in self.provider.stream_complete(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+            **kwargs,
+        ):
+            yield chunk
 
     def peek_cost(
         self,
