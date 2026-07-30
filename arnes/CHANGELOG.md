@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added in Round 9
+- `Specialist.stream()` method: token-by-token streaming at the specialist layer. Mirrors `Harness.stream()` but operates directly on a `Specialist` instance, yielding `LLMResponse` chunks from `provider.stream_complete()`. After the stream completes, emits a single `AssistantMessageEvent` to the wrapped provider's `_events` sink (same audit pattern as `run()`).
+- `PlaybookExecutor.stream()` method: step-level streaming at the playbook layer. Yields `StepCompletedEvent` / `StepFailedEvent` as each step finishes (without waiting for the whole playbook), then `RunCompletedEvent` / `RunFailedEvent`, then a final `PlaybookRunResult` with the full thread + aggregate accounting. Documented as best-effort: parallel branches stream in completion order, not definition order.
+- `Harness.stream_with_audit()` method: returns `(chunks, thread)` tuple. The chunks are the token-by-token `AsyncIterator[LLMResponse]`; the thread is mutated in place as the stream is consumed, ending with a single `AssistantMessageEvent` carrying the full accumulated content + final usage. Closes the audit-trail gap: streaming no longer bypasses the bitácora.
+- `Harness.stream()` now emits an `AssistantMessageEvent` to the wrapped provider's `_events` sink after the stream completes (one event per call, not per chunk — per-chunk events would balloon the audit log without forensic value).
+- `arnes run --stream` CLI flag: streams step-level events as they complete (best-effort: parallel branches stream in completion order). The final `PlaybookRunResult` is captured from the last yield for stats + bitácora persistence.
+- README: added `arnes run --stream` example to the quick-start section.
+- 16 new tests covering `Specialist.stream()`, `PlaybookExecutor.stream()`, `Harness.stream_with_audit()`, and the streaming bitácora emission (235 → 251 tests).
+
+### Added in Round 8
+- `arnes stream` CLI command: stream a specialist's response token-by-token from the command line. Supports `--mock` and `--model` flags.
+- `tests/unit/test_harness_stream.py`: 5 dedicated tests for `Harness.stream()` (yields chunks, final chunk has usage, unknown specialist yields nothing, name normalization, middleware passthrough).
+- `examples/README.md`: entry for `05_streaming.py`.
+
+### Changed in Round 8
+- `arnes/cli/main.py`: explicit `provider: LLMProvider` annotation on `_SchemaValidMockLLMProvider` assignment (mypy --strict clean).
+
+### Added in Round 7
+- `Harness.stream()` method: async generator that wraps the provider with the full middleware stack (TokenOptimizer → VerificationLayer → CostGuard) and yields `LLMResponse` chunks from `stream_complete()`. Same `(specialist, input_data)` signature as `run()`.
+- `examples/05_streaming.py`: demonstrates token-by-token streaming using `Harness.stream()` with a `StreamingMockProvider` that yields 10-char chunks + a final usage chunk.
+- README: "LLM streaming is implemented for all providers" (was stale "not yet implemented").
+
+### Changed in Round 7
+- `arnes/cli/main.py` mock docstring: updated to reflect that real streaming exists in `OllamaProvider` and `LiteLLMProvider` (was stale "Streaming coming in v0.2").
+
+### Added in Round 6
+- REAL token-by-token streaming in `OllamaProvider.stream_complete()`: reads NDJSON from `/api/chat` with `stream: true` via `httpx.AsyncClient.stream`, yields per-token chunks, yields a final usage chunk on `done: true`, handles malformed lines, wraps `httpx.ConnectError` in `RuntimeError` with install instructions. 8 dedicated tests.
+- REAL token-by-token streaming in `LiteLLMProvider.stream_complete()`: iterates the `CustomStreamWrapper` from `litellm.acompletion(stream=True)`, extracts `delta.content` via a helper that handles both pydantic `Delta` instances and plain dicts, captures usage on chunks that carry it, yields a final usage chunk. 5 dedicated tests.
+- `CostGuard.stream_complete()`: pre-flight abort check + circuit-breaker check before stream starts, post-stream `spent_usd` update using the final chunk's `cost_usd`. 7 dedicated tests including pre-flight abort and post-abort raise.
+- `TokenOptimizer.stream_complete()`: thin passthrough (no cache population for streaming in v0.1).
+- 23 new streaming tests (207 → 230 tests). Coverage: 72.95% → 73.95%.
+
+### Changed in Round 6
+- `TokenOptimizer._cache`: `asyncio.Lock` for cache reads/writes (was unprotected — concurrent cache mutations could race). Lock is correctly scoped: provider call runs OUTSIDE the lock so slow LLM calls don't serialize concurrent requests for different keys.
+- `AGENTS.md`: "Thread: append-only event log (mutates in place for O(1) performance)" (was stale "immutable" — R5 false-fix-claim now actually applied).
+
+### Added in Round 5
+- `_filter_internal_keys()` helper: filters internal sentinel keys (`__skip_steps_until`, `__resolved_str__`, `__input__`, `_approved_fingerprints`) from `PlaybookRunResult.outputs` before returning to user. Applied at both the success path and the `BudgetExceeded` path.
+
+### Changed in Round 5
+- `Harness.run()`: separated `BudgetExceeded` from generic `Exception` in error handling. `BudgetExceeded` returns `{"success": False, "budget_exceeded": True, ...}`; generic `Exception` returns `{"success": False, "error_type": type(e).__name__, ...}`. Closes the R4 Dev top issue where budget errors and unexpected errors were indistinguishable.
+
 ### Added in Round 4
 - `LLMProvider.stream_complete()` abstract method for streaming responses (MockLLMProvider yields full response; Ollama and LiteLLM now support real token-by-token streaming).
 - `Dockerfile.sandbox` + `scripts/build-sandbox.sh` for Tier 1 Docker sandbox image.

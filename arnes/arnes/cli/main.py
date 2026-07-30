@@ -31,7 +31,8 @@ from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
 from arnes.llm.factory import get_provider
 from arnes.middleware.cost_guard import CostBudget
 from arnes.playbooks.compiler import PlaybookCompileError, PlaybookCompiler
-from arnes.playbooks.executor import PlaybookExecutor
+from arnes.playbooks.executor import PlaybookExecutor, PlaybookRunResult
+from arnes.playbooks.schema import Playbook
 from arnes.specialists.base import get_default_specialist_registry
 
 console = Console()
@@ -68,6 +69,11 @@ def init(manual: str | None, lang: str) -> None:
 @click.option("--mock", is_flag=True, help="Use mock LLM (no network, $0 cost)")
 @click.option("--interactive", is_flag=True, help="Enable interactive HITL prompts")
 @click.option("--output", "-o", type=click.Path(), help="Save bitácora to file")
+@click.option(
+    "--stream",
+    is_flag=True,
+    help="Stream step events as they complete (best-effort: parallel branches stream in completion order)",
+)
 def run(
     playbook_path: str,
     model: str,
@@ -75,9 +81,10 @@ def run(
     mock: bool,
     interactive: bool,
     output: str | None,
+    stream: bool,
 ) -> None:
     """Execute a playbook YAML."""
-    asyncio.run(_run_playbook(playbook_path, model, budget, mock, interactive, output))
+    asyncio.run(_run_playbook(playbook_path, model, budget, mock, interactive, output, stream))
 
 
 # Spanish alias for backwards compat (will be deprecated in v0.2)
@@ -204,19 +211,36 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
         provider=provider,
     )
 
+    # Normalize specialist name
+    if not specialist.startswith("@"):
+        specialist = "@" + specialist
+
+    # Check specialist exists before streaming
+    specialist_obj = harness.specialist_registry.get(specialist)
+    if not specialist_obj:
+        available = harness.specialist_registry.list_names()
+        console.print(f"[red]✗[/red] Specialist '{specialist}' not found. Available: {available}")
+        sys.exit(1)
+
     console.print(f"[cyan]Streaming[/cyan] {specialist}...")
     console.print("[dim]---[/dim]")
 
     total_in = 0
     total_out = 0
     total_cost = 0.0
+    chunks_received = 0
 
     async for chunk in harness.stream(specialist, {"task": task}):
+        chunks_received += 1
         if chunk.content:
             console.print(chunk.content, end="", style="white")
         total_in += chunk.usage.tokens_in
         total_out += chunk.usage.tokens_out
         total_cost += chunk.usage.cost_usd
+
+    if chunks_received == 0:
+        console.print("[yellow]No response received.[/yellow]")
+        sys.exit(1)
 
     console.print()
     console.print("[dim]---[/dim]")
@@ -299,8 +323,15 @@ async def _run_playbook(
     mock: bool,
     interactive: bool,
     output: str | None,
+    stream: bool = False,
 ) -> None:
-    """Execute a playbook and print results."""
+    """Execute a playbook and print results.
+
+    When ``stream=True``, uses :meth:`PlaybookExecutor.stream` to yield
+    step-level events as each step completes (instead of buffering the
+    whole run behind a spinner). The final ``PlaybookRunResult`` is
+    captured from the last yield for stats + bitácora persistence.
+    """
     # Compile
     try:
         playbook = PlaybookCompiler.from_file(playbook_path)
@@ -335,8 +366,11 @@ async def _run_playbook(
         interactive=interactive,
     )
 
-    with console.status("[cyan]Executing...[/cyan]"):
-        result = await executor.run(playbook)
+    if stream:
+        result = await _run_playbook_streaming(executor, playbook)
+    else:
+        with console.status("[cyan]Executing...[/cyan]"):
+            result = await executor.run(playbook)
 
     # Print results
     if result.success:
@@ -364,6 +398,52 @@ async def _run_playbook(
         default_path = f"bitacora-{playbook.metadata.name}-{ts}.md"
         Path(default_path).write_text(result.to_markdown(), encoding="utf-8")
         console.print(f"\n[cyan]Bitácora saved to:[/cyan] {default_path}")
+
+
+async def _run_playbook_streaming(
+    executor: PlaybookExecutor,
+    playbook: Playbook,
+) -> PlaybookRunResult:
+    """Run a playbook in streaming mode, printing step events as they arrive.
+
+    Uses :meth:`PlaybookExecutor.stream` to yield ``Event`` objects as each
+    step completes, then captures the final ``PlaybookRunResult`` from the
+    last yield. Best-effort: parallel branches stream in completion order,
+    not definition order.
+    """
+    from arnes.thread.events import (
+        RunCompletedEvent,
+        RunFailedEvent,
+        StepCompletedEvent,
+        StepFailedEvent,
+    )
+
+    final_result: PlaybookRunResult | None = None
+    console.print("[cyan]Streaming...[/cyan]\n[dim]---[/dim]")
+
+    async for item in executor.stream(playbook):
+        if isinstance(item, PlaybookRunResult):
+            final_result = item
+            break
+        # Print step-level transitions as they happen
+        if isinstance(item, StepCompletedEvent):
+            console.print(f"  [green]✓[/green] step_completed: {item.step_id}")
+        elif isinstance(item, StepFailedEvent):
+            console.print(
+                f"  [red]✗[/red] step_failed: {item.step_id} — {item.data.get('error', '')}"
+            )
+        elif isinstance(item, RunCompletedEvent):
+            console.print("  [green]✓[/green] run_completed")
+        elif isinstance(item, RunFailedEvent):
+            console.print(f"  [red]✗[/red] run_failed — {item.data.get('error', '')}")
+        else:
+            # Other event types (StepStarted, AssistantMessage, CostThreshold, etc.)
+            # are not printed to keep the streaming output focused on step transitions.
+            console.print(f"  [dim]·[/dim] {item.type.value}")
+
+    console.print("[dim]---[/dim]")
+    assert final_result is not None, "stream() must yield a final PlaybookRunResult"
+    return final_result
 
 
 class _SchemaValidMockLLMProvider(LLMProvider):

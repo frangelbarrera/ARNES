@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC
+from collections.abc import AsyncIterator
 from typing import Any, ClassVar
 
 import structlog
@@ -238,6 +239,105 @@ class Specialist(ABC):
         # Validate output against schema
         result = self._parse_and_validate_output(final_response, total_usage, all_tool_results)
         return result
+
+    async def stream(
+        self,
+        input_data: dict[str, Any],
+        ctx: ToolContext,
+        *,
+        provider: LLMProvider,
+        tool_registry: ToolRegistry | None = None,
+    ) -> AsyncIterator[LLMResponse]:
+        """Stream a specialist's response token by token.
+
+        Mirrors :meth:`run` but uses ``provider.stream_complete()`` instead
+        of ``provider.complete()``. Yields ``LLMResponse`` chunks as they
+        arrive from the provider. The final chunk carries the full
+        ``LLMUsage`` (``tokens_in``, ``tokens_out``, ``cost_usd``).
+
+        Streaming specialists do NOT execute the ReAct tool-use loop — if
+        the specialist needs tools, callers should use :meth:`run` instead.
+        This is a best-effort streaming path for read-only / generation
+        tasks (planning, summarising, drafting code without shell access).
+
+        Audit trail: after the stream completes, a single
+        :class:`AssistantMessageEvent` is appended to the wrapped
+        provider's ``_events`` sink (same pattern as :meth:`run`). The
+        event carries the full accumulated content and the final usage,
+        so the bitácora records streaming runs the same way it records
+        non-streaming runs. Streaming produces ONE event per call (not
+        per-chunk events) — per-chunk events would balloon the audit log
+        without adding forensic value, and the chunks themselves are not
+        durable (they're a transport optimisation, not a semantic unit).
+
+        Usage::
+
+            async for chunk in specialist.stream(input_data, ctx, provider=p):
+                print(chunk.content, end="", flush=True)
+        """
+        # Build messages (same as run(), minus the tool-use loop)
+        user_content = self._format_input(input_data)
+        messages: list[LLMMessage] = [
+            LLMMessage(role="system", content=self.config.system_prompt),
+            LLMMessage(role="user", content=user_content),
+        ]
+
+        # Wrap provider with the full middleware stack if not already wrapped
+        # (mirrors run()).
+        wrapped_provider: LLMProvider = provider
+        if not getattr(provider, "_arnes_wrapped", False):
+            from arnes.middleware.cost_guard import CostBudget, CostGuard
+            from arnes.middleware.token_optimizer import TokenOptimizer
+            from arnes.middleware.verification import VerificationConfig, VerificationLayer
+
+            inner: LLMProvider = TokenOptimizer(provider, enable_cache=True)
+            if self.config.output_schema or self.config.pydantic_model:
+                inner = VerificationLayer(
+                    inner,
+                    VerificationConfig(structured_outputs=True, refusal_pattern=True),
+                )
+            wrapped_provider = CostGuard(inner, budget=CostBudget(task_budget_usd=1.0))
+
+        model = self.config.default_model or "ollama/llama3.2"
+        effective_response_schema = self.config.output_schema
+        if effective_response_schema is None and self.config.pydantic_model is not None:
+            effective_response_schema = self.config.pydantic_model.model_json_schema()
+        wants_json = bool(self.config.output_schema or self.config.pydantic_model)
+
+        # Accumulate content + usage so we can emit a single
+        # AssistantMessageEvent after the stream ends. Per-chunk usage is
+        # zero on intermediate chunks (see LLMProvider.stream_complete
+        # contract); the final chunk carries the full usage.
+        accumulated_content: list[str] = []
+        total_usage = LLMUsage()
+
+        async for chunk in wrapped_provider.stream_complete(
+            messages,
+            model=model,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            response_format={"type": "json_object"} if wants_json else None,
+            response_schema=effective_response_schema,
+        ):
+            if chunk.content:
+                accumulated_content.append(chunk.content)
+            # The last non-zero usage wins (providers send the full count
+            # on the final chunk, not a running delta).
+            if chunk.usage.tokens_in > 0 or chunk.usage.tokens_out > 0 or chunk.usage.cost_usd > 0:
+                total_usage = chunk.usage
+            yield chunk
+
+        # Emit a single AssistantMessageEvent for the bitácora. We
+        # construct a synthetic LLMResponse carrying the accumulated
+        # content + final usage so we can reuse the same _emit_assistant_message
+        # helper that run() uses (DRY: same event shape, same sink).
+        synthetic_response = LLMResponse(
+            content="".join(accumulated_content),
+            tool_calls=[],
+            usage=total_usage,
+            model=model,
+        )
+        self._emit_assistant_message(wrapped_provider, ctx, synthetic_response, model)
 
     # ============================================================
     # Tool execution

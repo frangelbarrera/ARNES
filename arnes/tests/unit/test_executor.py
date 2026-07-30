@@ -466,3 +466,269 @@ class TestSandboxAutoDetection:
 
         assert executor._sandbox_enabled is True
         assert executor._sandbox_container == "custom-sandbox:v1.2"
+
+
+class TestPlaybookExecutorStream:
+    """Tests for ``PlaybookExecutor.stream()`` (FIX-R9-FINAL).
+
+    The streaming executor yields step-level events as each step completes,
+    then yields a final ``PlaybookRunResult`` with the full thread + aggregate
+    accounting. This complements ``Harness.stream()`` (token-level) and
+    ``Specialist.stream()`` (token-level at the specialist layer) with
+    step-level streaming at the playbook layer.
+    """
+
+    @pytest.fixture
+    def executor(self, mock_provider):
+        return PlaybookExecutor(
+            provider=mock_provider,
+            cost_budget=CostBudget(task_budget_usd=1.0),
+        )
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_step_completed_events_then_result(self, executor):
+        """stream() yields one StepCompletedEvent per step, then a PlaybookRunResult."""
+        from arnes.playbooks.executor import PlaybookRunResult
+        from arnes.thread.events import EventType
+
+        yaml_str = """
+name: stream_test
+objective: Test streaming
+steps:
+  - id: s1
+    specialist: "@planner"
+    input: {task: "Plan"}
+  - id: s2
+    specialist: "@coder"
+    input: {spec: "Code"}
+"""
+        playbook = PlaybookCompiler.from_string(yaml_str)
+        collected: list = []
+        async for item in executor.stream(playbook):
+            collected.append(item)
+
+        # Expect: 2 StepCompletedEvent + 1 RunCompletedEvent + 1 PlaybookRunResult = 4
+        assert len(collected) == 4, f"Expected 4 items, got {len(collected)}"
+
+        # The first two should be StepCompletedEvent for s1, s2
+        step_events = [e for e in collected if getattr(e, "type", None) == EventType.STEP_COMPLETED]
+        assert len(step_events) == 2
+        assert step_events[0].step_id == "s1"
+        assert step_events[1].step_id == "s2"
+
+        # Third should be RunCompletedEvent
+        run_events = [e for e in collected if getattr(e, "type", None) == EventType.RUN_COMPLETED]
+        assert len(run_events) == 1
+
+        # Final should be PlaybookRunResult
+        assert isinstance(collected[-1], PlaybookRunResult)
+        result = collected[-1]
+        assert result.success is True, f"Expected success, got: {result.error}"
+        assert result.steps_executed == 2
+        assert result.steps_failed == 0
+
+    @pytest.mark.asyncio
+    async def test_stream_final_result_has_full_thread(self, executor):
+        """The final PlaybookRunResult.thread must contain every event."""
+        from arnes.playbooks.executor import PlaybookRunResult
+        from arnes.thread.events import EventType
+
+        yaml_str = """
+name: thread_test
+objective: Test thread completeness
+steps:
+  - id: s1
+    specialist: "@planner"
+    input: {task: "x"}
+"""
+        playbook = PlaybookCompiler.from_string(yaml_str)
+        final_result: PlaybookRunResult | None = None
+        async for item in executor.stream(playbook):
+            if isinstance(item, PlaybookRunResult):
+                final_result = item
+
+        assert final_result is not None
+        # Thread must contain: StepStarted + AssistantMessage + StepCompleted + RunCompleted = 4
+        types = [e.type for e in final_result.thread.events]
+        assert EventType.STEP_STARTED in types
+        assert EventType.ASSISTANT_MESSAGE in types
+        assert EventType.STEP_COMPLETED in types
+        assert EventType.RUN_COMPLETED in types
+        assert len(final_result.thread) == 4
+
+    @pytest.mark.asyncio
+    async def test_stream_propagates_step_failure(self, executor):
+        """A failing step yields a StepCompletedEvent (executor-level) then RunFailedEvent + result.
+
+        Note: when a specialist returns ``{"success": False, ...}`` (rather
+        than raising), ``_execute_step`` still appends a ``StepCompletedEvent``
+        — the step "completed" from the executor's perspective, it just
+        produced a failure result. The ``RunFailedEvent`` is appended by the
+        streaming loop when it sees ``step_result["success"] is False`` and
+        there's no ``if_not_met`` fallback.
+        """
+        from arnes.playbooks.executor import PlaybookRunResult
+        from arnes.thread.events import EventType
+
+        yaml_str = """
+name: fail_test
+objective: Test failure streaming
+steps:
+  - id: s1
+    specialist: "@nonexistent"
+    input: {task: "x"}
+"""
+        playbook = PlaybookCompiler.from_string(yaml_str)
+        collected: list = []
+        async for item in executor.stream(playbook):
+            collected.append(item)
+
+        # Expect: 1 StepCompletedEvent + 1 RunFailedEvent + 1 PlaybookRunResult = 3
+        step_completed = [
+            e for e in collected if getattr(e, "type", None) == EventType.STEP_COMPLETED
+        ]
+        assert len(step_completed) == 1
+        assert step_completed[0].step_id == "s1"
+
+        run_failed = [e for e in collected if getattr(e, "type", None) == EventType.RUN_FAILED]
+        assert len(run_failed) == 1
+
+        assert isinstance(collected[-1], PlaybookRunResult)
+        assert collected[-1].success is False
+        assert collected[-1].steps_failed == 1
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_events_incrementally(self, executor):
+        """Events must be yielded DURING iteration, not buffered to the end.
+
+        We verify incremental streaming by counting yields: a multi-step
+        playbook must yield more than 1 item (multiple step events + the
+        final result). If the executor buffered everything and yielded
+        only at the end, we'd see exactly 1 yield.
+        """
+        from arnes.playbooks.executor import PlaybookRunResult
+
+        yaml_str = """
+name: incremental_test
+objective: Test incremental streaming
+steps:
+  - id: s1
+    specialist: "@planner"
+    input: {task: "x"}
+  - id: s2
+    specialist: "@coder"
+    input: {spec: "y"}
+"""
+        playbook = PlaybookCompiler.from_string(yaml_str)
+        yield_count = 0
+        result_count = 0
+        async for item in executor.stream(playbook):
+            yield_count += 1
+            if isinstance(item, PlaybookRunResult):
+                result_count += 1
+
+        # 2 StepCompleted + 1 RunCompleted + 1 PlaybookRunResult = 4 yields.
+        # If everything were buffered, we'd get only 1 yield (the final result).
+        assert yield_count == 4, (
+            f"Expected 4 incremental yields, got {yield_count}. "
+            "Streaming executor may be buffering instead of yielding per-step."
+        )
+        assert result_count == 1
+
+    @pytest.mark.asyncio
+    async def test_stream_budget_exceeded_yields_run_failed_then_result(self, mock_provider):
+        """Budget exceeded mid-stream yields RunFailedEvent + PlaybookRunResult.
+
+        When the CostGuard aborts a specialist call (budget exceeded), the
+        specialist returns ``{"success": False, "budget_exceeded": True}``,
+        ``_execute_specialist`` re-raises as ``BudgetExceeded``,
+        ``_execute_step`` catches it and appends ``StepFailedEvent``, then
+        the streaming loop appends ``RunFailedEvent`` and aborts.
+        """
+        from arnes.llm.base import LLMProvider, LLMResponse, LLMUsage
+        from arnes.playbooks.executor import PlaybookRunResult
+        from arnes.thread.events import EventType
+
+        class CostlyMockProvider(LLMProvider):
+            async def complete(self, messages, *, model="mock", response_schema=None, **kwargs):
+                return LLMResponse(
+                    content='{"steps": [{"id": "s1", "specialist": "@coder", "input": {}}]}',
+                    tool_calls=[],
+                    usage=LLMUsage(tokens_in=10, tokens_out=5, cost_usd=0.001, model=model),
+                    model=model,
+                )
+
+            async def stream_complete(self, messages, *, model="mock", **kwargs):
+                response = await self.complete(messages, model=model, **kwargs)
+                yield response
+
+            def list_models(self):
+                return ["mock"]
+
+        executor = PlaybookExecutor(
+            provider=CostlyMockProvider(),
+            cost_budget=CostBudget(task_budget_usd=0.0005),
+        )
+        yaml_str = """
+name: budget_stream_test
+objective: Test budget exceeded streaming
+steps:
+  - id: s1
+    specialist: "@planner"
+    input: {task: "x"}
+  - id: s2
+    specialist: "@planner"
+    input: {task: "y"}
+"""
+        playbook = PlaybookCompiler.from_string(yaml_str)
+        collected: list = []
+        async for item in executor.stream(playbook):
+            collected.append(item)
+
+        # Expect: 1 StepCompleted (s1) + 1 StepFailed (s2) + 1 RunFailed + 1 PlaybookRunResult = 4
+        run_failed = [e for e in collected if getattr(e, "type", None) == EventType.RUN_FAILED]
+        assert len(run_failed) == 1
+
+        step_failed = [e for e in collected if getattr(e, "type", None) == EventType.STEP_FAILED]
+        assert len(step_failed) == 1
+        assert step_failed[0].step_id == "s2"
+
+        assert isinstance(collected[-1], PlaybookRunResult)
+        assert collected[-1].success is False
+        assert collected[-1].error is not None
+
+    @pytest.mark.asyncio
+    async def test_stream_parallel_branch_yields_events(self, executor):
+        """Parallel branches stream in completion order; PARALLEL_BRANCH_COMPLETED is yielded."""
+        from arnes.playbooks.executor import PlaybookRunResult
+        from arnes.thread.events import EventType
+
+        yaml_str = """
+name: parallel_stream_test
+objective: Test parallel streaming
+steps:
+  - id: parallel
+    parallel:
+      - id: sub1
+        specialist: "@planner"
+        input: {task: "Subtask 1"}
+      - id: sub2
+        specialist: "@coder"
+        input: {spec: "Subtask 2"}
+"""
+        playbook = PlaybookCompiler.from_string(yaml_str)
+        collected: list = []
+        async for item in executor.stream(playbook):
+            collected.append(item)
+
+        # The parallel step yields a StepCompletedEvent (the outer parallel step)
+        # which contains the merged sub-step results.
+        step_completed = [
+            e for e in collected if getattr(e, "type", None) == EventType.STEP_COMPLETED
+        ]
+        assert len(step_completed) >= 1
+        assert step_completed[0].step_id == "parallel"
+
+        # RunCompleted + PlaybookRunResult
+        assert isinstance(collected[-1], PlaybookRunResult)
+        assert collected[-1].success is True

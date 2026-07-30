@@ -314,8 +314,14 @@ arnes init --manual hello-world
 # 3. Run it with the mock LLM (no network, $0 cost)
 arnes run manuals/hello-world.yaml --mock
 
-# 4. Run it with Ollama local (free, requires `ollama pull llama3.2`)
+# 4. Stream a specialist's response token-by-token
+arnes stream @planner --task "Plan a blog post about ARNES" --mock
+
+# 5. Run it with Ollama local (free, requires `ollama pull llama3.2`)
 arnes run manuals/hello-world.yaml
+
+# 6. Stream playbook step events as they complete
+arnes run manuals/hello-world.yaml --mock --stream
 ```
 
 If you do not have Ollama installed, ARNES detects it and guides you. To use

@@ -21,6 +21,7 @@ import asyncio
 import re
 import shutil
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import structlog
@@ -307,6 +308,237 @@ class PlaybookExecutor:
                 outputs=_filter_internal_keys(outputs),
                 error=str(e),
             )
+
+    async def stream(  # noqa: PLR0915 - mirrors run() body; splitting hurts readability
+        self,
+        playbook: Playbook,
+        *,
+        initial_input: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Event | PlaybookRunResult]:
+        """Stream playbook execution, yielding events as each step completes.
+
+        Yields (in order):
+
+        - For each step that runs: the ``StepCompletedEvent`` (or
+          ``StepFailedEvent``) emitted when that step finishes. The
+          event is the *last* event appended to the thread by
+          :meth:`_execute_step` — intermediate events
+          (``StepStartedEvent``, ``AssistantMessageEvent``,
+          ``CostThresholdEvent``, …) stay in the thread and are visible
+          in the final ``PlaybookRunResult.thread``.
+        - ``RunCompletedEvent`` or ``RunFailedEvent`` at the end of the run
+          (also appended to the thread).
+        - Final yield: a :class:`PlaybookRunResult` with the full thread
+          and aggregate accounting (steps_executed, tokens, cost).
+
+        Best-effort streaming contract:
+
+        - Steps are still executed sequentially in definition order
+          (the ``run()`` semantics are preserved). What streaming gives
+          you is the ability to surface each step's completion event
+          to the caller *immediately* — without waiting for the whole
+          playbook to finish.
+        - Parallel branches stream in **completion order**, not
+          definition order: when a parallel step finishes, the
+          ``PARALLEL_BRANCH_COMPLETED`` event is yielded, but the
+          per-sub-step ``StepCompletedEvent`` events were appended
+          inside ``asyncio.gather`` and arrive in the merged-event
+          timestamp order (see :meth:`_execute_parallel`).
+        - The final ``PlaybookRunResult`` is always the last yield,
+          even on failure / budget-exceeded.
+
+        Per-token streaming of LLM responses within a step is available
+        via :meth:`arnes.specialists.base.Specialist.stream`; this
+        executor-level stream yields step-level events, not token-level
+        events. The two can be composed: a UI that wants both
+        token-by-token rendering AND a final bitácora can consume
+        ``Specialist.stream()`` for the rendering and rely on the
+        ``AssistantMessageEvent`` emitted into the thread (by both
+        ``Specialist.run()`` and ``Specialist.stream()``) for the
+        audit trail.
+
+        Usage::
+
+            executor = PlaybookExecutor(provider=p)
+            async for event in executor.stream(playbook):
+                if isinstance(event, PlaybookRunResult):
+                    print(event.to_markdown())
+                else:
+                    print(f"event: {event.type.value}")
+        """
+        thread_holder: list[Thread] = [Thread.create()]
+        start_time = time.monotonic()
+        outputs: dict[str, Any] = dict(playbook.variables)
+        if initial_input:
+            outputs.update(initial_input)
+
+        cost_guard = CostGuard(self.provider, budget=self.cost_budget)
+
+        steps_executed = 0
+        steps_failed = 0
+        total_tokens_in = 0
+        total_tokens_out = 0
+        total_cost_usd = 0.0
+        aborted = False
+        abort_error: str | None = None
+
+        try:
+            for step in playbook.steps:
+                # Mirror run()'s skip-until logic verbatim.
+                skip_until = outputs.get("__skip_steps_until", {})
+                if skip_until:
+                    if step.id in skip_until:
+                        del skip_until[step.id]
+                        if not skip_until:
+                            del outputs["__skip_steps_until"]
+                        logger.info("saltar_a_reached", step_id=step.id)
+                    else:
+                        logger.info("step_skipped", step_id=step.id, reason="saltar_a")
+                        continue
+
+                step_result = await self._execute_step(
+                    step,
+                    thread_holder,
+                    outputs,
+                    cost_guard,
+                    playbook,
+                )
+
+                # Yield the last event appended by _execute_step. This is
+                # the StepCompletedEvent or StepFailedEvent — exactly the
+                # transition a streaming consumer cares about. (Earlier
+                # events like StepStartedEvent remain in the thread for
+                # the final PlaybookRunResult.)
+                last_event = thread_holder[0].last()
+                if last_event is not None:
+                    yield last_event
+
+                if step_result["success"]:
+                    steps_executed += 1
+                    outputs[step.id] = step_result.get("output")
+                    usage = step_result.get("usage", {})
+                    total_tokens_in += usage.get("tokens_in", 0)
+                    total_tokens_out += usage.get("tokens_out", 0)
+                    total_cost_usd += usage.get("cost_usd", 0.0)
+                else:
+                    steps_failed += 1
+                    if step.if_not_met:
+                        branch_result = await self._handle_conditional_branch(
+                            step,
+                            step.if_not_met,
+                            thread_holder,
+                            outputs,
+                            cost_guard,
+                            playbook,
+                        )
+                        if branch_result.get("terminate"):
+                            logger.info(
+                                "run_terminated_by_conditional",
+                                step_id=step.id,
+                                termination=branch_result["terminate"],
+                            )
+                            break
+                    else:
+                        run_failed = RunFailedEvent(
+                            thread_id=thread_holder[0].id,
+                            step_id=step.id,
+                            data={
+                                "error": step_result.get("error", "Unknown error"),
+                                "recoverable": False,
+                            },
+                        )
+                        thread_holder[0] = thread_holder[0].append(run_failed)
+                        aborted = True
+                        abort_error = step_result.get("error")
+                        # Yield the RunFailedEvent so streaming consumers
+                        # see the abort transition immediately (mirrors
+                        # the success path which yields RunCompletedEvent).
+                        yield run_failed
+                        break
+
+            if not aborted:
+                run_completed = RunCompletedEvent(
+                    thread_id=thread_holder[0].id,
+                    data={
+                        "steps_executed": steps_executed,
+                        "duration_s": time.monotonic() - start_time,
+                        "total_tokens": total_tokens_in + total_tokens_out,
+                        "total_cost_usd": total_cost_usd,
+                    },
+                )
+                thread_holder[0] = thread_holder[0].append(run_completed)
+                yield run_completed
+
+            yield self._build_run_result(
+                thread_holder[0],
+                success=not aborted,
+                steps_executed=steps_executed,
+                steps_failed=steps_failed,
+                start_time=start_time,
+                total_tokens_in=total_tokens_in,
+                total_tokens_out=total_tokens_out,
+                total_cost_usd=total_cost_usd,
+                outputs=outputs,
+                error=abort_error,
+            )
+        except BudgetExceeded as e:
+            logger.error("budget_exceeded", error=str(e), spent=e.spent, budget=e.budget)
+            run_failed = RunFailedEvent(
+                thread_id=thread_holder[0].id,
+                data={
+                    "error": f"Budget exceeded: {e}",
+                    "spent_usd": e.spent,
+                    "budget_usd": e.budget,
+                    "level": e.level,
+                },
+            )
+            thread_holder[0] = thread_holder[0].append(run_failed)
+            yield run_failed
+            yield self._build_run_result(
+                thread_holder[0],
+                success=False,
+                steps_executed=steps_executed,
+                steps_failed=steps_failed,
+                start_time=start_time,
+                total_tokens_in=total_tokens_in,
+                total_tokens_out=total_tokens_out,
+                total_cost_usd=total_cost_usd,
+                outputs=outputs,
+                error=str(e),
+            )
+
+    @staticmethod
+    def _build_run_result(
+        thread: Thread,
+        *,
+        success: bool,
+        steps_executed: int,
+        steps_failed: int,
+        start_time: float,
+        total_tokens_in: int,
+        total_tokens_out: int,
+        total_cost_usd: float,
+        outputs: dict[str, Any],
+        error: str | None,
+    ) -> PlaybookRunResult:
+        """Construct a :class:`PlaybookRunResult` from accumulated run state.
+
+        Shared by :meth:`run` and :meth:`stream` to avoid duplicating the
+        10-field construction (and to keep both methods under the ruff
+        PLR0915 statement-count limit).
+        """
+        return PlaybookRunResult(
+            thread=thread,
+            success=success,
+            steps_executed=steps_executed,
+            steps_failed=steps_failed,
+            duration_s=time.monotonic() - start_time,
+            total_tokens_in=total_tokens_in,
+            total_tokens_out=total_tokens_out,
+            total_cost_usd=total_cost_usd,
+            outputs=_filter_internal_keys(outputs),
+            error=error,
+        )
 
     # ============================================================
     # Step execution
