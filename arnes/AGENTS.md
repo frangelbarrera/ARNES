@@ -10,7 +10,7 @@ model choice, or budget. Read `MANIFESTO.md` for the full philosophy.
 
 ## Architecture in 30 seconds
 
-- **Thread**: immutable, append-only event log. State = reduce(events).
+- **Thread**: append-only event log (mutates in place for O(1) performance). State = reduce(events).
 - **Specialist**: pre-built role-based agent (planner, coder, reviewer, tester, debugger).
 - **Playbook**: YAML manual compiled to a DAG of steps. Each step invokes a specialist or tool.
 - **Executor**: walks the DAG, applies middleware (cost guard + verification + token optimizer).

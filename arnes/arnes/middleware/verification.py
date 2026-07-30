@@ -313,14 +313,23 @@ class VerificationLayer(LLMProvider):
     ) -> AsyncIterator[LLMResponse]:
         """Delegate streaming to the wrapped provider (passthrough).
 
-        Streaming-aware verification (validate the *final* reassembled
-        response against the structured-output schema, run hedging
-        detection on the concatenated content, emit a refusal-mid-stream
-        event when hedging is detected on a partial chunk) lands in v0.2
-        along with AG-UI transport support. Until then, this is a thin
-        passthrough so callers using the streaming API against a stack
-        that includes VerificationLayer don't lose the verification
-        middleware silently.
+        v0.1 behavior: thin passthrough — verification happens on the
+        *final* accumulated response, not per-chunk. Callers that need
+        verified streaming should accumulate the stream and pass the
+        reassembled content through :meth:`_verify` themselves, OR wait
+        for v0.2 which will:
+
+        1. Validate the final reassembled response against
+           ``response_schema`` (structured-output check).
+        2. Run hedging detection on the concatenated content.
+        3. Emit a ``REFUSAL_TRIGGERED`` event mid-stream when hedging is
+           detected on a partial chunk, and replace the remainder of the
+           stream with the refusal message.
+
+        Until then, this passthrough ensures callers using the streaming
+        API against a stack that includes VerificationLayer don't lose the
+        verification middleware silently — they just don't get per-chunk
+        verification yet.
         """
         async for chunk in self.provider.stream_complete(
             messages,

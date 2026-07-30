@@ -42,6 +42,35 @@ def _estimate_input_tokens(messages: list[LLMMessage]) -> int:
     return sum(len(m.content) // 4 for m in messages)
 
 
+def _get_delta_content(delta: Any) -> str:
+    """Extract ``content`` from a streaming chunk's delta.
+
+    ``delta`` may be a litellm ``Delta`` pydantic model OR a plain dict —
+    litellm's ``ModelResponse`` constructor converts ``StreamingChoices``
+    into ``Choices`` and serializes ``delta`` to a dict in the process.
+    This helper handles both shapes so the provider works against real
+    litellm streams and against test-constructed ``ModelResponse`` objects.
+    """
+    if delta is None:
+        return ""
+    if isinstance(delta, dict):
+        return delta.get("content") or ""
+    return getattr(delta, "content", None) or ""
+
+
+def _get_usage_field(usage: Any, field: str) -> int:
+    """Extract a token-count field from a usage object or dict.
+
+    Same dict-or-object reasoning as :func:`_get_delta_content` — litellm
+    may serialize ``usage`` to a dict depending on the code path.
+    """
+    if usage is None:
+        return 0
+    if isinstance(usage, dict):
+        return usage.get(field, 0) or 0
+    return getattr(usage, field, 0) or 0
+
+
 class LiteLLMProvider(LLMProvider):
     """Universal provider for paid vendors via LiteLLM.
 
@@ -167,22 +196,121 @@ class LiteLLMProvider(LLMProvider):
         temperature: float = 0.0,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
-        response_schema: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | None = None,  # Accepted but ignored
         **kwargs: Any,
     ) -> AsyncIterator[LLMResponse]:
-        """Streaming coming in v0.2.
+        """Stream a completion via ``litellm.acompletion(stream=True)``.
 
-        LiteLLM exposes ``acompletion(..., stream=True)`` which returns a
-        ``CustomStreamWrapper``; wiring it through the ARNES middleware
-        stack (VerificationLayer needs the *final* chunk to validate the
-        structured output, CostGuard needs ``usage`` deltas which not all
-        vendors stream, TokenOptimizer's semantic cache must key on the
-        full reassembled response) is v0.2 work. Until then, iterating the
-        returned async iterator raises immediately so call sites fail fast
-        rather than silently blocking on a stream that never yields.
+        LiteLLM returns a ``CustomStreamWrapper`` async iterator. Each
+        chunk has ``choices[0].delta.content`` with the new token. Usage
+        stats are not always streamed by vendors — when litellm surfaces
+        them on a chunk, we capture them and yield a final ``LLMResponse``
+        with the full ``LLMUsage`` after the stream ends.
+
+        Contract:
+
+        - Each chunk with non-empty ``delta.content`` yields an
+          ``LLMResponse`` whose ``content`` is *just the new token*.
+        - Intermediate chunks carry an empty ``LLMUsage`` (zeros).
+        - After the stream ends, if any chunk carried usage, a final
+          ``LLMResponse`` is yielded with the full ``LLMUsage`` (tokens
+          + cost). If no usage was streamed, no final usage chunk is
+          yielded — callers detect this by the absence of a chunk with
+          non-zero ``usage.tokens_out``.
         """
-        raise NotImplementedError("Streaming coming in v0.2")
-        yield  # type: ignore[unreachable]  # pragma: no cover - makes this an async generator
+        import litellm
+
+        litellm_messages = [m.model_dump(exclude_none=True) for m in messages]
+
+        # Build the call kwargs with the same precedence as complete():
+        # init kwargs < per-call kwargs < explicit named params.
+        call_kwargs: dict[str, Any] = {**self._init_kwargs}
+        call_kwargs.update(kwargs)
+        call_kwargs["model"] = model
+        call_kwargs["messages"] = litellm_messages
+        call_kwargs["temperature"] = temperature
+        call_kwargs["stream"] = True
+        if max_tokens:
+            call_kwargs["max_tokens"] = max_tokens
+        if tools:
+            call_kwargs["tools"] = tools
+        if response_format and response_format.get("type") == "json_object":
+            call_kwargs["response_format"] = {"type": "json_object"}
+
+        # ``acompletion`` is async and returns a ``CustomStreamWrapper``
+        # when ``stream=True``. The wrapper is an async iterator.
+        stream = await litellm.acompletion(**call_kwargs)
+
+        # Track the last usage seen — vendors that stream usage send it on
+        # the final chunk; vendors that don't (OpenAI without
+        # ``stream_options={"include_usage": True}``) never send it.
+        final_tokens_in = 0
+        final_tokens_out = 0
+        final_cost = 0.0
+        saw_usage = False
+
+        async for chunk in stream:
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                # Some vendors send a final chunk with only ``usage`` and
+                # an empty ``choices`` list — capture usage from it.
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    final_tokens_in = _get_usage_field(usage, "prompt_tokens")
+                    final_tokens_out = _get_usage_field(usage, "completion_tokens")
+                    final_cost = _estimate_cost(model, final_tokens_in, final_tokens_out)
+                    saw_usage = True
+                continue
+
+            delta = getattr(choices[0], "delta", None)
+            # ``delta`` may be a ``Delta`` pydantic model OR a plain dict —
+            # litellm's ``ModelResponse`` constructor converts
+            # ``StreamingChoices`` into ``Choices`` and serializes ``delta``
+            # to a dict in the process. Handle both so the provider works
+            # against real litellm streams and against test-constructed
+            # ``ModelResponse`` objects.
+            content = _get_delta_content(delta)
+
+            # Capture usage if present on this chunk (litellm surfaces it
+            # on the final chunk for vendors that stream usage).
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                ti = _get_usage_field(usage, "prompt_tokens")
+                to = _get_usage_field(usage, "completion_tokens")
+                if ti or to:
+                    final_tokens_in = ti
+                    final_tokens_out = to
+                    final_cost = _estimate_cost(model, ti, to)
+                    saw_usage = True
+
+            if content:
+                yield LLMResponse(
+                    content=content,
+                    tool_calls=[],
+                    usage=LLMUsage(
+                        tokens_in=0,
+                        tokens_out=0,
+                        cost_usd=0.0,
+                        model=model,
+                        cached=False,
+                    ),
+                    model=model,
+                )
+
+        # Yield a final chunk with usage stats if we collected them.
+        if saw_usage:
+            yield LLMResponse(
+                content="",
+                tool_calls=[],
+                usage=LLMUsage(
+                    tokens_in=final_tokens_in,
+                    tokens_out=final_tokens_out,
+                    cost_usd=final_cost,
+                    model=model,
+                    cached=False,
+                ),
+                model=model,
+            )
 
     def peek_cost(
         self,

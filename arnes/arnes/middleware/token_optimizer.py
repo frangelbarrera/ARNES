@@ -14,6 +14,7 @@ Target: 40-65% token reduction without touching playbook logic.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import AsyncIterator
@@ -70,6 +71,14 @@ class TokenOptimizer(LLMProvider):
         self.cache_ttl_s = cache_ttl_s
         self.cache_max_entries = cache_max_entries
         self._cache: dict[str, CacheEntry] = {}
+        # Lock serializes cache dict mutations and hit/miss counter
+        # increments. Without it, two concurrent ``complete()`` calls for
+        # the same uncached key could both miss, both call the provider,
+        # and both write — a benign race today (idempotent response) but a
+        # maintainability hazard and a source of flaky stats. The provider
+        # call itself runs OUTSIDE the lock so slow LLM calls don't
+        # serialize concurrent requests for different keys.
+        self._cache_lock = asyncio.Lock()
         self._cache_hits = 0
         self._cache_misses = 0
         self._routing_decisions = 0
@@ -100,28 +109,35 @@ class TokenOptimizer(LLMProvider):
         if self.enable_routing and tools is None:
             effective_model = self._route_model(messages, model)
 
-        # Step 2: check cache
+        # Step 2: check cache (under lock — cache_hits/cache_misses increments
+        # and the ``hit_count`` mutation on the shared CacheEntry must be
+        # serialized to avoid lost updates under concurrent complete() calls).
         cache_key = self._cache_key(messages, effective_model, tools, response_schema, kwargs)
         if self.enable_cache:
-            cached = self._cache.get(cache_key)
-            if cached and self._is_fresh(cached):
-                self._cache_hits += 1
-                cached.hit_count += 1
-                # Mark as cached in usage
-                cached.response.usage.cached = True
-                self._tokens_saved += (
-                    cached.response.usage.tokens_in + cached.response.usage.tokens_out
-                )
-                logger.info(
-                    "cache_hit",
-                    cache_key=cache_key[:8],
-                    tokens_saved=cached.response.usage.tokens_in + cached.response.usage.tokens_out,
-                )
-                self._emit_cache_hit(cached, effective_model)
-                return cached.response
-            self._cache_misses += 1
+            async with self._cache_lock:
+                cached = self._cache.get(cache_key)
+                if cached and self._is_fresh(cached):
+                    self._cache_hits += 1
+                    cached.hit_count += 1
+                    # Mark as cached in usage
+                    cached.response.usage.cached = True
+                    self._tokens_saved += (
+                        cached.response.usage.tokens_in + cached.response.usage.tokens_out
+                    )
+                    logger.info(
+                        "cache_hit",
+                        cache_key=cache_key[:8],
+                        tokens_saved=(
+                            cached.response.usage.tokens_in + cached.response.usage.tokens_out
+                        ),
+                    )
+                    self._emit_cache_hit(cached, effective_model)
+                    return cached.response
+                self._cache_misses += 1
 
-        # Step 3: call underlying provider
+        # Step 3: call underlying provider (NOT under the lock — provider
+        # calls may be slow and would serialize all concurrent complete()
+        # calls for different keys, defeating the point of the lock).
         response = await self.provider.complete(
             messages,
             model=effective_model,
@@ -130,14 +146,16 @@ class TokenOptimizer(LLMProvider):
             **kwargs,
         )
 
-        # Step 4: store in cache
+        # Step 4: store in cache (under lock — _cache.__setitem__ and the
+        # del _cache[key] inside _evict_if_needed must be serialized).
         if self.enable_cache and response.content:
-            self._cache[cache_key] = CacheEntry(
-                input_hash=cache_key,
-                response=response,
-                created_at=__import__("time").time(),
-            )
-            self._evict_if_needed()
+            async with self._cache_lock:
+                self._cache[cache_key] = CacheEntry(
+                    input_hash=cache_key,
+                    response=response,
+                    created_at=__import__("time").time(),
+                )
+                self._evict_if_needed()
 
         return response
 
@@ -284,7 +302,11 @@ class TokenOptimizer(LLMProvider):
         return (time.time() - entry.created_at) < self.cache_ttl_s
 
     def _evict_if_needed(self) -> None:
-        """LRU eviction when cache is full."""
+        """LRU eviction when cache is full.
+
+        Must be called while holding ``self._cache_lock`` — mutates
+        ``self._cache`` via ``del``.
+        """
         if len(self._cache) <= self.cache_max_entries:
             return
         # Sort by created_at and remove oldest 10%
@@ -298,7 +320,14 @@ class TokenOptimizer(LLMProvider):
     # ============================================================
 
     def stats(self) -> dict[str, Any]:
-        """Return optimization stats for observability."""
+        """Return optimization stats for observability.
+
+        Best-effort snapshot — this is a sync method and cannot acquire the
+        async ``_cache_lock``, so the returned values may reflect an
+        in-flight ``complete()`` call. Acceptable for observability (called
+        rarely, e.g. at end of run); not for fine-grained concurrency
+        control.
+        """
         return {
             "cache_hits": self._cache_hits,
             "cache_misses": self._cache_misses,
@@ -314,6 +343,7 @@ class TokenOptimizer(LLMProvider):
         }
 
     def reset_stats(self) -> None:
+        """Reset stats counters. Best-effort — see :meth:`stats`."""
         self._cache_hits = 0
         self._cache_misses = 0
         self._routing_decisions = 0
@@ -337,14 +367,23 @@ class TokenOptimizer(LLMProvider):
     ) -> AsyncIterator[LLMResponse]:
         """Delegate streaming to the wrapped provider (passthrough).
 
-        Streaming-aware cache population and routing decision emission
-        (cache the reassembled final response, emit a MODEL_ROUTED event
-        when the effective model differs from the requested one) lands in
-        v0.2 along with AG-UI transport support. Until then, this is a
-        thin passthrough so callers using the streaming API against a
-        stack that includes TokenOptimizer don't lose the optimization
-        middleware silently — they just don't get streaming-specific
-        optimizations yet.
+        v0.1 behavior: thin passthrough — no cache lookup, no cache
+        population, no routing decision emission. The streaming path
+        bypasses the semantic cache entirely because:
+
+        1. Caching a stream requires reassembling the full response before
+           computing the cache key, which defeats the latency benefit of
+           streaming.
+        2. Routing decisions on streaming calls would emit a
+           ``MODEL_ROUTED`` event mid-stream, interleaving with token
+           chunks — the AG-UI transport (v0.2) will handle this cleanly,
+           but ad-hoc emission today would confuse consumers expecting a
+           pure token stream.
+
+        Full streaming-aware cache (key on the reassembled final response,
+        serve cached streams as a single ``LLMResponse`` chunk) and
+        streaming-aware routing (emit ``MODEL_ROUTED`` before the first
+        token chunk) land in v0.2.
         """
         async for chunk in self.provider.stream_complete(
             messages,

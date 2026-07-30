@@ -103,20 +103,29 @@ class LLMProvider(ABC):
     ) -> AsyncIterator[LLMResponse]:
         """Stream a completion as an async iterator of ``LLMResponse`` chunks.
 
-        Streaming lands in v0.2 alongside AG-UI transport support. The
-        contract mirrors :meth:`complete` — same parameters, same
+        The contract mirrors :meth:`complete` — same parameters, same
         ``LLMResponse`` shape — but the response is delivered as a sequence
         of partial chunks (typically one per generated token group) instead
         of a single fully-buffered object.
 
-        Until v0.2:
+        Contract:
 
-        * :class:`MockLLMProvider` provides a default implementation that
-          yields the full response in a single chunk (so callers can write
-          streaming-style code today against the mock and get the real
-          stream for free in v0.2).
-        * :class:`OllamaProvider` and :class:`LiteLLMProvider` raise
-          ``NotImplementedError("Streaming coming in v0.2")`` if iterated.
+        - Each chunk's ``content`` is *just the new token* (not the
+          accumulated content). Callers that need the full text accumulate
+          themselves.
+        - Intermediate chunks carry an empty ``LLMUsage`` (zeros) — token
+          counts are only known once generation completes.
+        - A final chunk with the full ``LLMUsage`` (tokens + cost) is
+          yielded after the stream ends, when the vendor exposes usage.
+
+        Implementations:
+
+        * :class:`MockLLMProvider` yields the full response in a single
+          chunk (deterministic, no network).
+        * :class:`OllamaProvider` reads NDJSON from ``/api/chat`` with
+          ``stream: true``.
+        * :class:`LiteLLMProvider` iterates the ``CustomStreamWrapper``
+          from ``litellm.acompletion(stream=True)``.
         """
         ...  # pragma: no cover
         yield  # type: ignore[misc]  # pragma: no cover - makes this an async generator

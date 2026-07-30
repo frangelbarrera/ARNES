@@ -15,9 +15,9 @@ from ``litellm.types.utils`` so the attribute accesses (``choices[0]``,
 ``message.content``, ``message.tool_calls``, ``usage.prompt_tokens``) match
 the surface ``LiteLLMProvider.complete()`` actually depends on.
 
-Bonus (kept here for locality):
-7. ``stream_complete()`` raises ``NotImplementedError("Streaming coming in v0.2")``
-   when iterated, and the message matches the README's v0.2 commitment.
+Streaming behavior tests (``stream_complete()`` with a mocked litellm
+stream) live in ``tests/unit/test_streaming.py`` alongside the Ollama and
+middleware streaming tests.
 """
 
 from __future__ import annotations
@@ -562,41 +562,23 @@ class TestLiteLLMCompleteMissingUsage:
 
 
 # ============================================================
-# Bonus: stream_complete stub
+# Bonus: stream_complete signature smoke-test
 # ============================================================
 
 
-class TestLiteLLMStreamStub:
-    @pytest.mark.asyncio
-    async def test_stream_complete_raises_not_implemented_when_iterated(self):
-        """``stream_complete()`` returns an async iterator (so the call
-        site doesn't crash on a TypeError), but iterating it raises
-        ``NotImplementedError("Streaming coming in v0.2")`` immediately —
-        matching the README's v0.2 commitment.
-        """
-        provider = LiteLLMProvider()
-        stream = provider.stream_complete(
-            [LLMMessage(role="user", content="hi")],
-            model="openai/gpt-4o",
-        )
-        # The generator hasn't started executing yet — calling .stream_complete()
-        # alone must NOT raise (otherwise middleware that inspects the stream
-        # shape before consuming it would break).
-        assert stream is not None
-
-        with pytest.raises(NotImplementedError, match=r"Streaming coming in v0\.2"):
-            async for _chunk in stream:
-                # If we ever get here, the stub didn't raise.
-                pytest.fail("stream_complete stub yielded a chunk instead of raising")
-
+class TestLiteLLMStreamSignature:
     @pytest.mark.asyncio
     async def test_stream_complete_signature_accepts_standard_kwargs(self):
-        """Smoke-test that the stub accepts the same kwargs as ``complete()``
-        — callers should be able to swap ``complete`` for ``stream_complete``
-        without changing the call site (forward-compatibility for v0.2).
+        """Smoke-test that ``stream_complete()`` accepts the same kwargs as
+        ``complete()`` — callers should be able to swap ``complete`` for
+        ``stream_complete`` without changing the call site.
+
+        We construct the async generator but do NOT iterate it (that would
+        trigger a real ``litellm.acompletion`` call). Streaming behavior is
+        tested in ``tests/unit/test_streaming.py`` with a mocked litellm.
         """
         provider = LiteLLMProvider()
-        # Just construct the async iterator; we won't iterate it (that raises).
+        # Just construct the async iterator; we won't iterate it.
         stream = provider.stream_complete(
             [LLMMessage(role="user", content="hi")],
             model="openai/gpt-4o",
@@ -607,5 +589,5 @@ class TestLiteLLMStreamStub:
             response_schema={"type": "object"},
             top_p=0.9,
         )
-        # Close the generator without iterating (avoids the NotImplementedError).
+        # Close the generator without iterating.
         await stream.aclose()

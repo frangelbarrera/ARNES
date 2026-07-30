@@ -493,19 +493,77 @@ class CostGuard(LLMProvider):
         response_schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[LLMResponse]:
-        """Delegate streaming to the wrapped provider (passthrough).
+        """Stream a completion while tracking cost on the final chunk.
 
-        Streaming-aware cost tracking (accumulate ``usage.cost_usd``
-        deltas across chunks, apply the circuit breaker per chunk, emit
-        COST_THRESHOLD events as cumulative spend crosses percentage
-        gates) lands in v0.2 along with AG-UI transport support. Until
-        then, this is a thin passthrough so callers using the streaming
-        API against a stack that includes CostGuard don't lose the budget
-        enforcement middleware silently — but they also don't get
-        per-chunk cost enforcement yet, so streaming calls bypass the
-        budget gate until v0.2. The non-streaming ``complete()`` path
-        remains fully guarded.
+        v0.1 behavior:
+
+        - Pre-flight abort check (``spent >= abort_threshold``) and
+          circuit-breaker check run *before* the stream starts, same as
+          :meth:`complete`. If either trips, ``BudgetExceeded`` is raised
+          on the first iteration — no tokens are streamed.
+        - Tokens are accumulated as they arrive (each chunk's
+          ``usage.tokens_in`` / ``usage.tokens_out`` if non-zero).
+        - ``spent_usd`` is updated *after* the stream ends, using the
+          final chunk's ``usage.cost_usd``. The pause threshold (95% HITL)
+          and per-chunk circuit-breaker are NOT applied mid-stream — they
+          land in v0.2 alongside AG-UI transport.
+
+        Full per-chunk accounting (abort mid-stream when cumulative spend
+        crosses ``abort_at_pct``, emit ``COST_THRESHOLD`` events as
+        percentage gates are crossed, apply the circuit breaker per
+        chunk) is v0.2 work.
         """
+        # Pre-flight: refuse to start the stream if we're already aborted.
+        if self._aborted:
+            raise BudgetExceeded(
+                "Run aborted due to budget exceeded",
+                spent=self.spent_usd,
+                budget=self.budget.effective_budget() or 0.0,
+                level="hard_stop",
+            )
+        if self._paused:
+            raise BudgetExceeded(
+                "Run paused at 95% budget — awaiting human approval",
+                spent=self.spent_usd,
+                budget=self.budget.effective_budget() or 0.0,
+                level="pause",
+            )
+
+        effective_budget = self.budget.effective_budget()
+        if effective_budget is not None:
+            abort_threshold = effective_budget * self.budget.abort_at_pct
+            if self.spent_usd >= abort_threshold:
+                self._aborted = True
+                logger.error(
+                    "cost_guard_stream_abort",
+                    spent=self.spent_usd,
+                    budget=effective_budget,
+                )
+                raise BudgetExceeded(
+                    f"Budget exceeded: ${self.spent_usd:.4f} >= ${effective_budget:.4f}",
+                    spent=self.spent_usd,
+                    budget=effective_budget,
+                    level="hard_stop",
+                )
+
+        # Circuit breaker: check spend rate before starting the stream.
+        if self._check_circuit_breaker():
+            self._aborted = True
+            raise BudgetExceeded(
+                f"Circuit breaker tripped: spend rate exceeded ${self.budget.max_usd_per_minute}/min",
+                spent=self.spent_usd,
+                budget=effective_budget or 0.0,
+                level="circuit_breaker",
+            )
+
+        # Stream and accumulate tokens/cost as they arrive. The final
+        # chunk (yielded by the provider after generation completes)
+        # carries the full ``LLMUsage``; intermediate chunks have zeros.
+        final_tokens_in = 0
+        final_tokens_out = 0
+        final_cost = 0.0
+        saw_usage = False
+
         async for chunk in self.provider.stream_complete(
             messages,
             model=model,
@@ -516,4 +574,38 @@ class CostGuard(LLMProvider):
             response_schema=response_schema,
             **kwargs,
         ):
+            # Accumulate tokens/cost — the last non-zero usage wins
+            # (providers send the full count on the final chunk, not a
+            # running delta).
+            if chunk.usage.tokens_in > 0:
+                final_tokens_in = chunk.usage.tokens_in
+            if chunk.usage.tokens_out > 0:
+                final_tokens_out = chunk.usage.tokens_out
+            if chunk.usage.cost_usd > 0:
+                final_cost = chunk.usage.cost_usd
+                saw_usage = True
             yield chunk
+
+        # Post-stream accounting: update spent_usd and spend history.
+        self.calls_made += 1
+        if saw_usage and final_cost > 0:
+            self.spent_usd += final_cost
+            self._spend_history.append((time.time(), final_cost))
+            logger.info(
+                "llm_stream_call_tracked",
+                model=model,
+                cost_usd=final_cost,
+                total_spent=self.spent_usd,
+                budget=effective_budget,
+                tokens_in=final_tokens_in,
+                tokens_out=final_tokens_out,
+            )
+        else:
+            # No usage info from the stream — count the call but don't
+            # update spend (can't charge what we can't measure).
+            logger.info(
+                "llm_stream_call_no_usage",
+                model=model,
+                total_spent=self.spent_usd,
+                budget=effective_budget,
+            )
