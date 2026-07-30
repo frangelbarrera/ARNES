@@ -115,17 +115,16 @@ class Specialist(ABC):
         # If the provider is not already wrapped, wrap it with the full stack.
         # This is a safety net — in normal usage, the caller always wraps first.
         if not getattr(provider, "_arnes_wrapped", False):
-            from arnes.middleware.cost_guard import CostBudget, CostGuard
-            from arnes.middleware.token_optimizer import TokenOptimizer
-            from arnes.middleware.verification import VerificationConfig, VerificationLayer
+            from arnes.middleware import build_middleware_stack
 
-            inner: LLMProvider = TokenOptimizer(provider, enable_cache=True)
-            if self.config.output_schema or self.config.pydantic_model:
-                inner = VerificationLayer(
-                    inner,
-                    VerificationConfig(structured_outputs=True, refusal_pattern=True),
-                )
-            wrapped_provider = CostGuard(inner, budget=CostBudget(task_budget_usd=1.0))
+            wrapped_provider = build_middleware_stack(
+                provider,
+                enable_cache=True,
+                enable_verification=True,
+                budget_usd=1.0,
+                output_schema=self.config.output_schema,
+                pydantic_model=self.config.pydantic_model,
+            )
 
         # ReAct tool-use loop
         total_usage = LLMUsage()
@@ -286,17 +285,16 @@ class Specialist(ABC):
         # (mirrors run()).
         wrapped_provider: LLMProvider = provider
         if not getattr(provider, "_arnes_wrapped", False):
-            from arnes.middleware.cost_guard import CostBudget, CostGuard
-            from arnes.middleware.token_optimizer import TokenOptimizer
-            from arnes.middleware.verification import VerificationConfig, VerificationLayer
+            from arnes.middleware import build_middleware_stack
 
-            inner: LLMProvider = TokenOptimizer(provider, enable_cache=True)
-            if self.config.output_schema or self.config.pydantic_model:
-                inner = VerificationLayer(
-                    inner,
-                    VerificationConfig(structured_outputs=True, refusal_pattern=True),
-                )
-            wrapped_provider = CostGuard(inner, budget=CostBudget(task_budget_usd=1.0))
+            wrapped_provider = build_middleware_stack(
+                provider,
+                enable_cache=True,
+                enable_verification=True,
+                budget_usd=1.0,
+                output_schema=self.config.output_schema,
+                pydantic_model=self.config.pydantic_model,
+            )
 
         model = self.config.default_model or "ollama/llama3.2"
         effective_response_schema = self.config.output_schema

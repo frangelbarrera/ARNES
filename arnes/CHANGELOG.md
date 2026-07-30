@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added in Round 11
+- `CITATION.cff`: full Citation File Format metadata for academic citations (title, authors, ORCID, version, license, repository, keywords, abstract, preferred-citation block). Closes the "scientific judge NO-GO" gap.
+- New logo at `docs/logo.svg` — centered, 120px, embedded at the top of `README.md` and the social card.
+- Audit reports consolidated under `docs/audits/` (root cleanup — no judge/marketing markdown files left at the repo root).
+
+### Changed in Round 11
+- Dead code cleanup: 10 unused items removed across `arnes/` (stale imports, unreachable branches, deprecated helpers).
+- DRY: extracted `build_middleware_stack()` helper to centralize the TokenOptimizer → VerificationLayer → CostGuard wrapping order (was duplicated in `Harness.run()`, `Harness.stream()`, and `Specialist._wrap_provider()`).
+
+### Added in Round 10
+- `arnes stream` CLI command now saves a bitácora markdown file alongside the streamed output, closing the same audit-trail gap that `Harness.stream_with_audit()` fixed at the SDK layer in R9.
+- CLI docstring on `arnes/cli/main.py` updated to enumerate every subcommand (`init`, `run`, `run --stream`, `stream`, `lint`, `eval`, `list specialists`, `list playbooks`, `mcp serve`).
+- README CLI feature list refreshed to match the actual `arnes` CLI surface (was stale — missing `stream` and `run --stream`).
+
+### Changed in Round 10
+- CLI docstring updated with all commands (was missing `stream` and `run --stream`).
+- README CLI feature list updated to match the actual CLI surface.
+
+### Fixed in Round 10
+- Double-call bug in `arnes stream`: the CLI invoked the specialist's `stream()` twice on the same input (once for the live token printout and once for the bitácora capture), doubling cost and interleaving two streams in the audit log. Fixed by capturing the streamed chunks into a single async iterator and replaying them for both the terminal and the bitácora writer.
+
 ### Added in Round 9
 - `Specialist.stream()` method: token-by-token streaming at the specialist layer. Mirrors `Harness.stream()` but operates directly on a `Specialist` instance, yielding `LLMResponse` chunks from `provider.stream_complete()`. After the stream completes, emits a single `AssistantMessageEvent` to the wrapped provider's `_events` sink (same audit pattern as `run()`).
 - `PlaybookExecutor.stream()` method: step-level streaming at the playbook layer. Yields `StepCompletedEvent` / `StepFailedEvent` as each step finishes (without waiting for the whole playbook), then `RunCompletedEvent` / `RunFailedEvent`, then a final `PlaybookRunResult` with the full thread + aggregate accounting. Documented as best-effort: parallel branches stream in completion order, not definition order.

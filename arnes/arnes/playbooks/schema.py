@@ -47,7 +47,14 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class RetryPolicy(BaseModel):
-    """Retry configuration for a step."""
+    """Retry configuration for a step.
+
+    Schema defined; execution in v0.2. The executor currently does not read
+    ``step.retry`` — failed steps raise and the playbook run aborts. When v0.2
+    lands, the executor will honour ``max_attempts`` / ``backoff_s`` /
+    ``backoff_strategy`` / ``retry_on`` and emit ``StepFailedEvent`` only after
+    the policy is exhausted.
+    """
 
     max_attempts: int = Field(default=3, ge=1, le=10)
     backoff_s: float = Field(default=1.0, ge=0.0, le=60.0)
@@ -56,7 +63,15 @@ class RetryPolicy(BaseModel):
 
 
 class HITLGate(BaseModel):
-    """Human-in-the-loop gate. Pauses execution until human approves."""
+    """Human-in-the-loop gate. Pauses execution until human approves.
+
+    Schema defined; execution in v0.2. The executor currently does not read
+    ``step.human_approval`` — step-level HITL is handled via the
+    ``HumanApprovalTool`` (which specialists can call explicitly). When v0.2
+    lands, the executor will emit ``HumanApprovalRequestedEvent`` before
+    executing any step with a ``human_approval`` gate and resume from a
+    ``RUN_RESUMED`` lifecycle event on approval.
+    """
 
     question: str
     options: list[str] = Field(default_factory=lambda: ["approve", "reject"])

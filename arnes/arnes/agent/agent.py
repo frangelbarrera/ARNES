@@ -1,13 +1,6 @@
 """
 ARNES Harness — high-level wrapper for simple use cases.
 
-NOTE: This was renamed from `Agent` to comply with manifesto declaration #2:
-"ARNES nunca va a tener una clase llamada `Runnable`, `Chain`, `Workflow`
-o `Agent`. Composición = funciones."
-
-We keep `Agent` as a deprecated alias for backwards compatibility during
-the alpha period.
-
 Hello world:
     from arnes import Harness
     harness = Harness(model="ollama/llama3.2")
@@ -24,9 +17,7 @@ from pydantic import BaseModel, ConfigDict
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
 from arnes.llm.factory import get_provider
-from arnes.middleware.cost_guard import BudgetExceeded, CostBudget, CostGuard
-from arnes.middleware.token_optimizer import TokenOptimizer
-from arnes.middleware.verification import VerificationConfig, VerificationLayer
+from arnes.middleware import BudgetExceeded, build_middleware_stack
 from arnes.specialists.base import (
     SpecialistRegistry,
     get_default_specialist_registry,
@@ -95,17 +86,16 @@ class Harness:
                 "error": f"Specialist '{specialist}' not found. Available: {available}",
             }
 
-        # Wrap provider with middleware ONCE (order matters: cost outermost)
-        wrapped_provider: LLMProvider = TokenOptimizer(
-            self.provider, enable_cache=self.config.enable_cache
-        )
-        if self.config.enable_verification:
-            wrapped_provider = VerificationLayer(
-                wrapped_provider,
-                VerificationConfig(structured_outputs=True, refusal_pattern=True),
-            )
-        wrapped_provider = CostGuard(
-            wrapped_provider, budget=CostBudget(task_budget_usd=self.config.budget_usd)
+        # Wrap provider with middleware ONCE (order matters: cost outermost).
+        # The specialist's structured-output contract gates whether the
+        # VerificationLayer is added — see ``build_middleware_stack``.
+        wrapped_provider = build_middleware_stack(
+            self.provider,
+            enable_cache=self.config.enable_cache,
+            enable_verification=self.config.enable_verification,
+            budget_usd=self.config.budget_usd,
+            output_schema=specialist_obj.config.output_schema,
+            pydantic_model=specialist_obj.config.pydantic_model,
         )
 
         thread = Thread.create()
@@ -196,17 +186,14 @@ class Harness:
 
         model = specialist_obj.config.default_model or "ollama/llama3.2"
 
-        # Wrap provider with middleware (same as run())
-        wrapped_provider: LLMProvider = TokenOptimizer(
-            self.provider, enable_cache=self.config.enable_cache
-        )
-        if self.config.enable_verification:
-            wrapped_provider = VerificationLayer(
-                wrapped_provider,
-                VerificationConfig(structured_outputs=True, refusal_pattern=True),
-            )
-        wrapped_provider = CostGuard(
-            wrapped_provider, budget=CostBudget(task_budget_usd=self.config.budget_usd)
+        # Wrap provider with middleware (same stack as run()).
+        wrapped_provider = build_middleware_stack(
+            self.provider,
+            enable_cache=self.config.enable_cache,
+            enable_verification=self.config.enable_verification,
+            budget_usd=self.config.budget_usd,
+            output_schema=specialist_obj.config.output_schema,
+            pydantic_model=specialist_obj.config.pydantic_model,
         )
 
         # Track the thread_id / step_id for the AssistantMessageEvent.
@@ -330,16 +317,13 @@ class Harness:
 
         model = specialist_obj.config.default_model or "ollama/llama3.2"
 
-        wrapped_provider: LLMProvider = TokenOptimizer(
-            self.provider, enable_cache=self.config.enable_cache
-        )
-        if self.config.enable_verification:
-            wrapped_provider = VerificationLayer(
-                wrapped_provider,
-                VerificationConfig(structured_outputs=True, refusal_pattern=True),
-            )
-        wrapped_provider = CostGuard(
-            wrapped_provider, budget=CostBudget(task_budget_usd=self.config.budget_usd)
+        wrapped_provider = build_middleware_stack(
+            self.provider,
+            enable_cache=self.config.enable_cache,
+            enable_verification=self.config.enable_verification,
+            budget_usd=self.config.budget_usd,
+            output_schema=specialist_obj.config.output_schema,
+            pydantic_model=specialist_obj.config.pydantic_model,
         )
 
         accumulated_content: list[str] = []
@@ -419,9 +403,3 @@ class Harness:
             },
         )
         events_list.append(event)
-
-
-# Deprecated alias — will be removed in v0.2
-# Kept for early adopters who used the alpha within hours of release
-Agent = Harness
-AgentConfig = HarnessConfig

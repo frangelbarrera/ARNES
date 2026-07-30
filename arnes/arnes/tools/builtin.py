@@ -246,10 +246,7 @@ class HttpTool(Tool):
         if ssrf_error:
             return ToolResult.fail("http", ssrf_error, duration_s=time.monotonic() - start)
 
-        # If secret broker is set, inject secrets JIT (never in LLM context)
         headers = dict(validated.headers)
-        if ctx.secret_broker:
-            headers = ctx.secret_broker.inject_secrets(headers, ctx)
 
         # Rewrite the URL to use the resolved IP directly. This prevents
         # httpx from re-resolving DNS (which would re-open the DNS-rebinding
@@ -665,34 +662,3 @@ def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         or ip.is_reserved
         or ip.is_unspecified
     )
-
-
-# Keep sync version for backwards compat / tests
-def _check_ssrf(url: str) -> str | None:
-    """Sync SSRF check (basic, no DNS resolution). Use _check_ssrf_async for full protection."""
-    try:
-        parsed = urllib.parse.urlparse(url)
-    except ValueError:
-        return f"Invalid URL: {url}"
-
-    if parsed.scheme not in ("http", "https"):
-        return f"Blocked scheme: {parsed.scheme}"
-
-    if not parsed.hostname:
-        return "No hostname in URL"
-
-    hostname = parsed.hostname.lower()
-    if hostname in _BLOCKED_HOSTS:
-        return f"Blocked internal host: {hostname}"
-
-    if hostname in _BLOCKED_IPS:
-        return f"Blocked metadata endpoint: {hostname}"
-
-    try:
-        ip = ipaddress.ip_address(hostname)
-        if _is_blocked_ip(ip):
-            return f"Blocked private/loopback IP: {hostname}"
-    except ValueError:
-        pass
-
-    return None

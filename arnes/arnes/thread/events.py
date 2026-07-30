@@ -52,19 +52,16 @@ class EventType(StrEnum):
 
     # Cost guard
     COST_THRESHOLD = "cost_threshold"
-    COST_LIMIT_EXCEEDED = "cost_limit_exceeded"
 
     # Token optimizer
     MODEL_ROUTED = "model_routed"
     CACHE_HIT = "cache_hit"
-    CONTEXT_COMPACTED = "context_compacted"
 
     # Verification
     REFUSAL_TRIGGERED = "refusal_triggered"
-    CONFIDENCE_SCORED = "confidence_scored"
 
-    # Run lifecycle
-    RUN_STARTED = "run_started"
+    # Run lifecycle (RUN_PAUSED is emitted by CostGuard on hard budget breach;
+    # RUN_RESUMED is reserved for v0.2 HITL resume-after-pause.)
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
     RUN_PAUSED = "run_paused"
@@ -200,23 +197,3 @@ class RunCompletedEvent(Event):
 class RunFailedEvent(Event):
     type: Literal[EventType.RUN_FAILED] = EventType.RUN_FAILED
     data: dict[str, Any]  # {"error": str, "step_id": str | None, "recoverable": bool}
-
-
-# Discriminated union for type-safe event handling
-EventUnion = (
-    UserMessageEvent
-    | AssistantMessageEvent
-    | ToolCallEvent
-    | ToolResultEvent
-    | SpecialistInvokedEvent
-    | StepStartedEvent
-    | StepCompletedEvent
-    | StepFailedEvent
-    | ConditionalBranchEvent
-    | HumanApprovalRequestedEvent
-    | HumanApprovalReceivedEvent
-    | CostThresholdEvent
-    | RunCompletedEvent
-    | RunFailedEvent
-    | Event
-)

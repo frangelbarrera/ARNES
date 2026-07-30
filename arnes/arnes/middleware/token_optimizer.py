@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -153,7 +154,7 @@ class TokenOptimizer(LLMProvider):
                 self._cache[cache_key] = CacheEntry(
                     input_hash=cache_key,
                     response=response,
-                    created_at=__import__("time").time(),
+                    created_at=time.time(),
                 )
                 self._evict_if_needed()
 
@@ -297,8 +298,6 @@ class TokenOptimizer(LLMProvider):
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _is_fresh(self, entry: CacheEntry) -> bool:
-        import time
-
         return (time.time() - entry.created_at) < self.cache_ttl_s
 
     def _evict_if_needed(self) -> None:

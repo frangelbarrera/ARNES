@@ -143,7 +143,7 @@ class Tool(ABC, BaseModel):
 
 class ToolContext(BaseModel):
     """Context passed to every tool execution. Carries thread state, sandbox
-    config, secret broker, and logger."""
+    config, and logger."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -153,7 +153,6 @@ class ToolContext(BaseModel):
     working_dir: str = "."
     sandbox_enabled: bool = False
     sandbox_container: str | None = None
-    secret_broker: Any = None  # SecretBroker instance (avoids circular import)
     budget_remaining_usd: float | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

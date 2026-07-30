@@ -16,9 +16,9 @@
 
 <div align="center">
 
-<img src="docs/social-card.png" alt="ARNES — The Open Agent Harness" width="640" />
+<img src="docs/logo.svg" alt="ARNES logo" width="120" />
 
-<img src="docs/logo.svg" alt="ARNES logo" width="160" />
+# ARNES
 
 ### The Open Agent Harness
 
@@ -430,6 +430,10 @@ ARNES is 100% open-source under Apache 2.0. If it saves you money or time:
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+## Citation
+
+If you use ARNES in academic research, please cite it. See [CITATION.cff](CITATION.cff) for the preferred citation format.
 
 ## Acknowledgments
 
