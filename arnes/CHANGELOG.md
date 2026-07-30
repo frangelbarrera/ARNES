@@ -7,22 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Translated entire codebase to English (canonical language for global audience).
-- Renamed `manuales/` directory to `manuals/`.
-- Renamed playbook YAML keys from Spanish to English (`nombre` → `name`, `objetivo` → `objective`, `pasos` → `steps`, `especialista` → `specialist`, `herramienta` → `tool`, `paralelo` → `parallel`, `si_no_se_cumple` → `if_not_met`, `aprobacion_humana` → `human_approval`).
-- Template references now use `{{ steps.X.output }}` instead of `{{ pasos.X.salida }}` (legacy ES still supported for backwards compat).
-- Renamed `Agent` class to `Harness` (complies with manifesto declaration #2).
-- Relaxed ruff lint rules for alpha (PLC0415, ANN401, PLR091x — all style preferences, not bugs).
-- Fixed all CI failures: lint passes, format passes, bandit passes, pip-audit passes.
+### Added in Round 4
+- `LLMProvider.stream_complete()` abstract method for streaming responses (MockLLMProvider yields full response; Ollama/LiteLLM stubs raise NotImplementedError for v0.2).
+- `Dockerfile.sandbox` + `scripts/build-sandbox.sh` for Tier 1 Docker sandbox image.
+- CodeQL workflow (`.github/workflows/codeql.yml`) with `security-extended` query suite, weekly schedule.
+- 20 new tests for `LiteLLMProvider.complete()` (0% → 96% coverage).
+- GitHub issue templates (bug_report, feature_request), PR template, FUNDING.yml.
+- `scripts/demo.sh` demo script with `--record` and `--save` flags.
+- `docs/social-card.png` (1280×640) for social media previews.
+- `docs/logo.svg` and `docs/social-card.svg`.
+- Star History chart in README.
+- 5 more EventType values now emitted: `MODEL_ROUTED`, `PARALLEL_BRANCH_STARTED`, `PARALLEL_BRANCH_COMPLETED`, `RUN_PAUSED`, `REFUSAL_TRIGGERED`.
+- All 5 specialists now have `pydantic_model` for strong output validation.
+- True `asyncio.gather` parallelism in `_execute_parallel` (was sequential for-loop).
 
-### Fixed
-- CI pipeline: 133 lint errors → 0 (auto-fixed 57, relaxed 70 style rules, fixed 6 real bugs).
-- StrEnum inheritance (UP042): `class EventType(str, Enum)` → `class EventType(StrEnum)`.
-- Mutable default class attributes (RUF012): added `ClassVar` annotations.
-- Loop variable overwrite (PLW2901): renamed inner `part` to `raw_part`.
-- Hedging detection (SIM110): simplified to `any()` comprehension.
-- pip-audit vulnerability in pytest 8.4.2 (PYSEC-2026-1845): ignored in CI (dev dependency, low severity).
+### Changed in Round 4
+- `Thread.append()`: O(N²) → O(1) by mutating in place (8.8x speedup at 1000 events). Documented as append-only, not immutable.
+- Sandbox auto-detection: `PlaybookExecutor` now detects Docker via `shutil.which("docker")` and enables sandbox automatically.
+- CostGuard 95% pause: now emits `HumanApprovalRequestedEvent` and `RUN_PAUSED` in interactive mode (was a no-op).
+- All GitHub Actions pinned to commit SHAs (was floating @v4 tags) for supply chain security.
+- `pip-audit` now blocking in CI (was `|| true`).
+- `LiteLLMProvider.__init__` now accepts `**kwargs` (was TypeError when called with api_key).
+- `LiteLLMProvider.complete()`: `getattr(response, "usage", None)` instead of `response.usage` (handles missing usage).
+- Anti-hallucination: hedging detection now skipped in JSON mode (was false-positiving on honest hedging inside JSON values).
+- Ollama provider: `tools` parameter now passed to API, `tool_calls` parsed from response (was hardcoded `[]`).
+- MCP HTTP server: bearer token auth + rate limiting (100/min) + 1MB body cap + localhost-only enforcement.
+- MCP path validation applied to all 3 endpoints (was only `_run_playbook`).
+- HITL fingerprint: `setdefault` instead of `get` (was never persisted).
+- SSRF: IP pinning with Host header + SNI to prevent DNS rebinding.
+- Shell regex: added `python -c`, `eval`, `exec`, `find -delete`, `base64 -d` patterns.
+- Dangling symlink: `is_symlink()` without `exists()` check (catches dangling symlinks).
+- `_clean_json_response()` helper strips markdown fences before JSON parsing.
+- `max_iterations` exceeded now returns clear error (was validating empty response).
+- `peek_cost()` implemented on LiteLLMProvider for pre-flight budget check.
+- README: removed stale claims, updated to match R4 reality, added real terminal output.
+- `setup-and-push.sh` and `PUBLISHING_GUIDE.md`: fixed stale Spanish paths.
+
+### Fixed in Round 4
+- TokenOptimizer cache_key now includes `response_schema` (was cache poisoning across schemas).
+- `aiohttp` added to `mcp` optional dependencies (was ImportError at runtime).
+- Conditional branch executor: Spanish attrs (`branch.accion`, `branch.especialista`) → English (`action`, `specialist`).
+- Parallel-step template resolution: outputs now wrapped in `{"output": ...}` structure.
+- Middleware double-wrapping: replaced broken `hasattr(provider, "_provider")` with `_arnes_wrapped` marker.
+- CostGuard 95% pause was a no-op (`_paused = True` then immediately `False`).
+- HITL fingerprint was computed but never compared against approved set.
+- MCP server path traversal in `_validate_playbook` and `_list_playbooks`.
+- Windows CI: cross-platform PATH, SYSTEMROOT/COMSPEC, asyncio.to_thread for stdin.
+- 133 ruff lint errors → 0. 50 mypy --strict errors → 0.
 
 ## [0.1.0a1] — 2026-07-28
 

@@ -278,7 +278,7 @@ class PlaybookExecutor:
                 total_tokens_in=total_tokens_in,
                 total_tokens_out=total_tokens_out,
                 total_cost_usd=total_cost_usd,
-                outputs=outputs,
+                outputs=_filter_internal_keys(outputs),
                 error=abort_error,
             )
 
@@ -304,7 +304,7 @@ class PlaybookExecutor:
                 total_tokens_in=total_tokens_in,
                 total_tokens_out=total_tokens_out,
                 total_cost_usd=total_cost_usd,
-                outputs=outputs,
+                outputs=_filter_internal_keys(outputs),
                 error=str(e),
             )
 
@@ -899,3 +899,15 @@ class PlaybookExecutor:
                 return f"{{{{ {expr} }}}}"
 
         return current
+
+
+def _filter_internal_keys(outputs: dict[str, Any]) -> dict[str, Any]:
+    """Filter internal sentinel keys from outputs before returning to user.
+
+    These keys are used internally by the executor for control flow
+    (skip-until tracking, approved fingerprints, etc.) and should not
+    be exposed in PlaybookRunResult.outputs.
+    """
+    return {
+        k: v for k, v in outputs.items() if not k.startswith("__") and k != "_approved_fingerprints"
+    }

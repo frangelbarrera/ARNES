@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict
 
 from arnes.llm.base import LLMProvider
 from arnes.llm.factory import get_provider
-from arnes.middleware.cost_guard import CostBudget, CostGuard
+from arnes.middleware.cost_guard import BudgetExceeded, CostBudget, CostGuard
 from arnes.middleware.token_optimizer import TokenOptimizer
 from arnes.middleware.verification import VerificationConfig, VerificationLayer
 from arnes.specialists.base import (
@@ -121,9 +121,24 @@ class Harness:
                 tool_registry=self.tool_registry,
             )
             return result
+        except BudgetExceeded as e:
+            # Budget exceeded is a known, expected exception — return structured result
+            logger.warning("harness_budget_exceeded", specialist=specialist, error=str(e))
+            return {
+                "success": False,
+                "error": f"Budget exceeded: {e}",
+                "specialist": specialist,
+                "budget_exceeded": True,
+            }
         except Exception as e:
+            # Unexpected exceptions — log with full traceback for debugging
             logger.exception("harness_run_failed", specialist=specialist, error=str(e))
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": str(e),
+                "specialist": specialist,
+                "error_type": type(e).__name__,
+            }
 
 
 # Deprecated alias — will be removed in v0.2
