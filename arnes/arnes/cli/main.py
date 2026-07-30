@@ -195,7 +195,7 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     from arnes import Harness, HarnessConfig
 
     if mock or model.startswith("mock/"):
-        provider = _SchemaValidMockLLMProvider()
+        provider: LLMProvider = _SchemaValidMockLLMProvider()
     else:
         provider = get_provider(model)
 
