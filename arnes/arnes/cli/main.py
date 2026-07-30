@@ -231,9 +231,11 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     total_out = 0
     total_cost = 0.0
     chunks_received = 0
+    chunks_list = []  # Store chunks for bitácora (single pass, no double-call)
 
     async for chunk in harness.stream(specialist, {"task": task}):
         chunks_received += 1
+        chunks_list.append(chunk)
         if chunk.content:
             console.print(chunk.content, end="", style="white")
         total_in += chunk.usage.tokens_in
@@ -248,18 +250,12 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     console.print("[dim]---[/dim]")
     console.print(f"[dim]Tokens: {total_in} in, {total_out} out. Cost: ${total_cost:.4f}[/dim]")
 
-    # Save bitácora from the audit trail
+    # Save bitácora from the accumulated chunks (no second LLM call)
     from datetime import datetime
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     bitacora_path = f"bitacora-stream-{specialist.lstrip('@')}-{ts}.md"
-    # Use stream_with_audit to get the thread
-    chunks_list = []
-    async for chunk in harness.stream(specialist, {"task": task}):
-        chunks_list.append(chunk)
 
-    # For audit, we use the _events sink pattern — but for CLI simplicity,
-    # we save the streaming output as a simple markdown log
     audit_content = f"# ARNES Stream Bitácora — {specialist}\n\n"
     audit_content += f"**Timestamp:** {ts}\n"
     audit_content += f"**Task:** {task}\n\n"
