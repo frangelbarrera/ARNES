@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from arnes import Harness, HarnessConfig
-from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
+from arnes.llm.base import LLMProvider, LLMResponse, LLMUsage
 
 
 class StreamingMockProvider(LLMProvider):
