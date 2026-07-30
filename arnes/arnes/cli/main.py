@@ -392,10 +392,10 @@ class _SchemaValidMockLLMProvider(LLMProvider):
     ) -> AsyncIterator[LLMResponse]:
         """Default streaming: yield the full response in a single chunk.
 
-        Matches the ``MockLLMProvider.stream_complete`` contract — real
-        token-by-token streaming lands in v0.2 alongside AG-UI transport
-        support. ``arnes run --mock`` callers that consume the stream get
-        the entire response on the first iteration today.
+        Matches the ``MockLLMProvider.stream_complete`` contract. Real
+        token-by-token streaming is available in ``OllamaProvider`` and
+        ``LiteLLMProvider``; this mock yields the full response on first
+        iteration. AG-UI transport support lands in v0.2.
         """
         response = await self.complete(
             messages,

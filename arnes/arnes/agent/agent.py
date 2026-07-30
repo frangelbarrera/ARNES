@@ -140,6 +140,72 @@ class Harness:
                 "error_type": type(e).__name__,
             }
 
+    async def stream(
+        self,
+        specialist: str,
+        input_data: dict[str, Any],
+    ):
+        """Stream a specialist's response token by token.
+
+        Yields LLMResponse chunks as they arrive from the provider.
+        The final chunk contains the full usage stats.
+
+        Usage:
+            async for chunk in harness.stream("@coder", {"spec": "..."}):
+                print(chunk.content, end="", flush=True)
+        """
+        from collections.abc import AsyncIterator
+
+        if not specialist.startswith("@"):
+            specialist = "@" + specialist
+
+        specialist_obj = self.specialist_registry.get(specialist)
+        if not specialist_obj:
+            available = self.specialist_registry.list()
+            yield {
+                "success": False,
+                "error": f"Specialist '{specialist}' not found. Available: {available}",
+            }
+            return
+
+        # Build messages (same as specialist.run but without tool-use loop)
+        import json
+
+        user_content = json.dumps(input_data, indent=2, default=str)
+        messages = [
+            LLMMessage(role="system", content=specialist_obj.config.system_prompt),
+            LLMMessage(
+                role="user",
+                content=f"Input:\n```json\n{user_content}\n```\n\nReturn JSON matching the schema.",
+            ),
+        ]
+
+        model = specialist_obj.config.default_model or "ollama/llama3.2"
+
+        # Wrap provider with middleware (same as run())
+        wrapped_provider = TokenOptimizer(self.provider, enable_cache=self.config.enable_cache)
+        if self.config.enable_verification:
+            wrapped_provider = VerificationLayer(
+                wrapped_provider,
+                VerificationConfig(structured_outputs=True, refusal_pattern=True),
+            )
+        wrapped_provider = CostGuard(
+            wrapped_provider, budget=CostBudget(task_budget_usd=self.config.budget_usd)
+        )
+
+        # Stream from the provider
+        async for chunk in wrapped_provider.stream_complete(
+            messages,
+            model=model,
+            temperature=specialist_obj.config.temperature,
+            max_tokens=specialist_obj.config.max_tokens,
+            response_format={"type": "json_object"}
+            if specialist_obj.config.output_schema
+            else None,
+            response_schema=specialist_obj.config.output_schema,
+        ):
+            yield chunk
+
 
 # Deprecated alias — will be removed in v0.2
 # Kept for early adopters who used the alpha within hours of release

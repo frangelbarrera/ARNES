@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added in Round 4
-- `LLMProvider.stream_complete()` abstract method for streaming responses (MockLLMProvider yields full response; Ollama/LiteLLM stubs raise NotImplementedError for v0.2).
+- `LLMProvider.stream_complete()` abstract method for streaming responses (MockLLMProvider yields full response; Ollama and LiteLLM now support real token-by-token streaming).
 - `Dockerfile.sandbox` + `scripts/build-sandbox.sh` for Tier 1 Docker sandbox image.
 - CodeQL workflow (`.github/workflows/codeql.yml`) with `security-extended` query suite, weekly schedule.
 - 20 new tests for `LiteLLMProvider.complete()` (0% → 96% coverage).

@@ -455,15 +455,12 @@ known issues that will be fixed in v0.2:
   (pausing execution and resuming on human input via the MCP transport)
   comes in v0.2. Until then, calling a HITL-gated tool without
   `interactive=True` returns a structured rejection rather than blocking.
-- **LLM streaming** is not yet implemented. `LLMProvider` declares
-  `stream_complete()` (returns `AsyncIterator[LLMResponse]`) so callers can
-  write streaming-style code today, but only `MockLLMProvider` yields a
-  single full-response chunk; `OllamaProvider` and `LiteLLMProvider` raise
-  `NotImplementedError("Streaming coming in v0.2")`. Real token-by-token
-  streaming (with per-chunk `CostGuard` accounting, `VerificationLayer`
-  validation on the reassembled final response, and `TokenOptimizer`
-  semantic-cache population from the final chunk) lands in v0.2 along with
-  AG-UI transport support.
+- **LLM streaming** is implemented for all providers. `LLMProvider` declares
+  `stream_complete()` (returns `AsyncIterator[LLMResponse]`). `MockLLMProvider`
+  yields a single full-response chunk; `OllamaProvider` and `LiteLLMProvider`
+  yield real token-by-token chunks. `CostGuard.stream_complete` tracks cost
+  on the final chunk. Full per-chunk verification and semantic-cache
+  population from streaming lands in v0.2.
 - **MCP HTTP transport** is minimal (simple POST endpoint, no SSE). It
   *does* ship with bearer-token auth (`ARNES_MCP_TOKEN`), per-IP rate
   limiting (100 req/min), and a 1 MiB request size cap — but for production
