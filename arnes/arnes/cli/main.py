@@ -4,6 +4,8 @@ ARNES CLI — command-line interface.
 Commands:
     arnes init --manual <name>       Scaffold a new playbook
     arnes run <playbook.yaml>        Execute a playbook
+    arnes run <playbook> --stream    Execute with real-time step streaming
+    arnes stream <specialist>        Stream a specialist's response token-by-token
     arnes list specialists           List available specialists
     arnes list playbooks             List curated playbooks
     arnes lint <playbook.yaml>       Validate a playbook without executing
@@ -245,6 +247,35 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     console.print()
     console.print("[dim]---[/dim]")
     console.print(f"[dim]Tokens: {total_in} in, {total_out} out. Cost: ${total_cost:.4f}[/dim]")
+
+    # Save bitácora from the audit trail
+    from datetime import datetime
+
+    from arnes.thread import Thread
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    bitacora_path = f"bitacora-stream-{specialist.lstrip('@')}-{ts}.md"
+    # Use stream_with_audit to get the thread
+    chunks_list = []
+    async for chunk in harness.stream(specialist, {"task": task}):
+        chunks_list.append(chunk)
+
+    # For audit, we use the _events sink pattern — but for CLI simplicity,
+    # we save the streaming output as a simple markdown log
+    audit_content = f"# ARNES Stream Bitácora — {specialist}\n\n"
+    audit_content += f"**Timestamp:** {ts}\n"
+    audit_content += f"**Task:** {task}\n\n"
+    audit_content += "## Response\n\n"
+    audit_content += "```json\n"
+    audit_content += "".join(c.content for c in chunks_list)
+    audit_content += "\n```\n\n"
+    audit_content += f"## Usage\n\n"
+    audit_content += f"- Tokens in: {total_in}\n"
+    audit_content += f"- Tokens out: {total_out}\n"
+    audit_content += f"- Cost: ${total_cost:.4f}\n"
+
+    Path(bitacora_path).write_text(audit_content, encoding="utf-8")
+    console.print(f"\n[cyan]Bitácora saved to:[/cyan] {bitacora_path}")
 
 
 @cli.command()

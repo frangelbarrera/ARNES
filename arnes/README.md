@@ -485,7 +485,7 @@ known issues that will be fixed in v0.2:
 - ✅ VerificationLayer with structured outputs and refusal pattern
 - ✅ TokenOptimizer with model routing and semantic cache
 - ✅ MCP server (stdio transport + minimal HTTP transport with auth/rate limits)
-- ✅ CLI (init, run, lint, eval, list, mcp serve)
+- ✅ CLI (init, run, run --stream, stream, lint, eval, list, mcp serve)
 - ✅ Docker sandbox auto-detected when `docker` is on PATH (Tier 1 dev-local)
 - ✅ SSRF protection with DNS resolution
 - ✅ Path traversal + symlink escape detection
