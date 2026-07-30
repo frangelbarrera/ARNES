@@ -16,12 +16,13 @@ Hello world:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from arnes.llm.base import LLMProvider
+from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse
 from arnes.llm.factory import get_provider
 from arnes.middleware.cost_guard import BudgetExceeded, CostBudget, CostGuard
 from arnes.middleware.token_optimizer import TokenOptimizer
@@ -144,7 +145,7 @@ class Harness:
         self,
         specialist: str,
         input_data: dict[str, Any],
-    ):
+    ) -> AsyncIterator[LLMResponse]:
         """Stream a specialist's response token by token.
 
         Yields LLMResponse chunks as they arrive from the provider.
@@ -154,18 +155,12 @@ class Harness:
             async for chunk in harness.stream("@coder", {"spec": "..."}):
                 print(chunk.content, end="", flush=True)
         """
-        from collections.abc import AsyncIterator
 
         if not specialist.startswith("@"):
             specialist = "@" + specialist
 
         specialist_obj = self.specialist_registry.get(specialist)
         if not specialist_obj:
-            available = self.specialist_registry.list()
-            yield {
-                "success": False,
-                "error": f"Specialist '{specialist}' not found. Available: {available}",
-            }
             return
 
         # Build messages (same as specialist.run but without tool-use loop)
@@ -183,7 +178,9 @@ class Harness:
         model = specialist_obj.config.default_model or "ollama/llama3.2"
 
         # Wrap provider with middleware (same as run())
-        wrapped_provider = TokenOptimizer(self.provider, enable_cache=self.config.enable_cache)
+        wrapped_provider: LLMProvider = TokenOptimizer(
+            self.provider, enable_cache=self.config.enable_cache
+        )
         if self.config.enable_verification:
             wrapped_provider = VerificationLayer(
                 wrapped_provider,
