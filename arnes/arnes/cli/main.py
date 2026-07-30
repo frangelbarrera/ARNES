@@ -251,8 +251,6 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     # Save bitácora from the audit trail
     from datetime import datetime
 
-    from arnes.thread import Thread
-
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     bitacora_path = f"bitacora-stream-{specialist.lstrip('@')}-{ts}.md"
     # Use stream_with_audit to get the thread
@@ -269,7 +267,7 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     audit_content += "```json\n"
     audit_content += "".join(c.content for c in chunks_list)
     audit_content += "\n```\n\n"
-    audit_content += f"## Usage\n\n"
+    audit_content += "## Usage\n\n"
     audit_content += f"- Tokens in: {total_in}\n"
     audit_content += f"- Tokens out: {total_out}\n"
     audit_content += f"- Cost: ${total_cost:.4f}\n"
