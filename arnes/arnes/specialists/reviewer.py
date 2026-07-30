@@ -37,6 +37,8 @@ Return JSON matching this schema:
   ],
   "summary": "Overall assessment"
 }
+
+You MUST respond with ONLY valid JSON matching the schema. No markdown, no explanation, no code fences. Just the JSON object.
 """
 
 

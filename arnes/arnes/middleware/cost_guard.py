@@ -30,7 +30,7 @@ import structlog
 from pydantic import BaseModel
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse
-from arnes.thread.events import CostThresholdEvent, Event
+from arnes.thread.events import CostThresholdEvent, Event, HumanApprovalRequestedEvent
 
 logger = structlog.get_logger(__name__)
 
@@ -254,16 +254,23 @@ class CostGuard(LLMProvider):
                     )
 
             if self.spent_usd >= effective_budget * self.budget.pause_at_pct:
-                # Emit a pause event — in interactive mode, this would block
-                # and wait for human approval. In non-interactive mode, we log
-                # a warning and continue (the next call will hard-stop at 100%).
-                logger.warning(
-                    "cost_guard_pause_threshold_reached",
-                    spent=self.spent_usd,
-                    budget=effective_budget,
-                    pct=pct_used,
-                    interactive=interactive,
-                )
+                # 95% threshold reached — pause for HITL approval.
+                #
+                # Interactive mode: actually pause. Set ``_paused`` so
+                # subsequent calls also block until a human resumes the
+                # run (via ``reset()`` or a future ``resume()`` API).
+                # Emit a ``HumanApprovalRequestedEvent`` so the executor /
+                # UI can surface the prompt, then raise to abort the
+                # current call chain. The executor catches the
+                # ``BudgetExceeded`` and converts it to a ``RunFailedEvent``
+                # so the run halts cleanly.
+                #
+                # Non-interactive mode: log + emit the threshold event but
+                # do NOT set ``_paused`` (which would block all subsequent
+                # calls). The hard stop at ``abort_at_pct`` (100%) will
+                # catch the run if spend keeps growing. This matches the
+                # documented contract: a non-interactive run never blocks
+                # on human input — it either finishes or hard-stops.
                 self._emit(
                     CostThresholdEvent(
                         thread_id=NIL_THREAD_ID,
@@ -276,7 +283,48 @@ class CostGuard(LLMProvider):
                         },
                     )
                 )
-                # TODO v0.2: emit HumanApprovalRequestedEvent and block
+                if interactive:
+                    self._paused = True
+                    logger.warning(
+                        "cost_guard_paused_interactive",
+                        spent=self.spent_usd,
+                        budget=effective_budget,
+                        pct=pct_used,
+                    )
+                    self._emit(
+                        HumanApprovalRequestedEvent(
+                            thread_id=NIL_THREAD_ID,
+                            data={
+                                "question": (
+                                    f"Budget at {pct_used:.0%} "
+                                    f"(${self.spent_usd:.4f} / "
+                                    f"${effective_budget:.4f}). "
+                                    f"Approve continued spend?"
+                                ),
+                                "options": ["approve", "reject"],
+                                "ttl_s": 86400,
+                                "spent_usd": self.spent_usd,
+                                "budget_usd": effective_budget,
+                                "threshold_level": "pause",
+                            },
+                        )
+                    )
+                    raise BudgetExceeded(
+                        f"Budget paused at 95%: ${self.spent_usd:.4f} / "
+                        f"${effective_budget:.4f} — awaiting human approval",
+                        spent=self.spent_usd,
+                        budget=effective_budget,
+                        level="pause",
+                    )
+                # Non-interactive: log and continue. The hard stop at 100%
+                # (abort_at_pct) will catch the run if spend keeps growing.
+                logger.warning(
+                    "cost_guard_pause_threshold_reached",
+                    spent=self.spent_usd,
+                    budget=effective_budget,
+                    pct=pct_used,
+                    interactive=interactive,
+                )
 
             elif self.spent_usd >= effective_budget * self.budget.warn_at_pct:
                 logger.warning(

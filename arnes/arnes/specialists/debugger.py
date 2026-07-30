@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from pydantic import BaseModel, Field
+
 from arnes.specialists.base import Specialist, SpecialistConfig
 
 _DEBUGGER_SYSTEM_PROMPT = """You are @debugger, a senior debugger who diagnoses root causes and proposes minimal fixes.
@@ -42,7 +44,38 @@ Return JSON matching this schema:
   "verification": "How to verify the fix works",
   "alternative_causes": ["Other possible causes, if any"]
 }
+
+You MUST respond with ONLY valid JSON matching the schema. No markdown, no explanation, no code fences. Just the JSON object.
 """
+
+
+# ============================================================
+# Pydantic output models — strong `pydantic_model` validator.
+# Validates types AND enforces that the nested `fix` object carries
+# all required fields (file, line, original, fixed, explanation) —
+# the weak JSON-schema `output_schema` check only verifies top-level
+# required fields and would let a missing `fix.line` slip through.
+# ============================================================
+
+
+class DebuggerFix(BaseModel):
+    """The minimal fix proposed by the debugger."""
+
+    file: str
+    line: int | None = None
+    original: str
+    fixed: str
+    explanation: str
+
+
+class DebuggerOutput(BaseModel):
+    """Structured output for the @debugger specialist."""
+
+    root_cause: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    fix: DebuggerFix
+    verification: str | None = None
+    alternative_causes: list[str] = Field(default_factory=list)
 
 
 class Debugger(Specialist):
@@ -57,6 +90,12 @@ class Debugger(Specialist):
             "type": "object",
             "required": ["root_cause", "confidence", "fix"],
         },
+        # Strong validation: pydantic validates that `confidence` is a
+        # float in [0.0, 1.0] AND that the nested `fix` object carries
+        # all required fields (file, original, fixed, explanation) —
+        # both of which the weak JSON-schema `required`-fields check
+        # would miss.
+        pydantic_model=DebuggerOutput,
         default_model="ollama/llama3.2",
         temperature=0.0,
     )

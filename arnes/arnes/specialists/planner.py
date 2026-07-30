@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar, Literal
+
+from pydantic import BaseModel, Field
 
 from arnes.specialists.base import Specialist, SpecialistConfig
 
@@ -37,7 +39,36 @@ Return JSON matching this schema:
     }
   ]
 }
+
+You MUST respond with ONLY valid JSON matching the schema. No markdown, no explanation, no code fences. Just the JSON object.
 """
+
+
+# ============================================================
+# Pydantic output models — strong `pydantic_model` validator.
+# Validates types AND enum values (specialist, on_failure), which the
+# weak JSON-schema `output_schema` check cannot do.
+# ============================================================
+
+
+PlannerOnFailure = Literal["retry", "fallback", "abort"]
+
+
+class PlannerStep(BaseModel):
+    """A single atomic step produced by the planner."""
+
+    id: str
+    specialist: str
+    input: dict[str, Any] = Field(default_factory=dict)
+    depends_on: list[str] = Field(default_factory=list)
+    success_criteria: str | None = None
+    on_failure: PlannerOnFailure | None = None
+
+
+class PlannerOutput(BaseModel):
+    """Structured output for the @planner specialist."""
+
+    steps: list[PlannerStep] = Field(default_factory=list)
 
 
 class Planner(Specialist):
@@ -61,6 +92,11 @@ class Planner(Specialist):
                 }
             },
         },
+        # Strong validation: pydantic validates field types AND enum values
+        # (on_failure: retry|fallback|abort) — a malformed value like
+        # `on_failure: "skip"` is rejected here even though it would slip
+        # past the weak JSON-schema `required`-fields check.
+        pydantic_model=PlannerOutput,
         default_model="ollama/llama3.2",
         temperature=0.1,  # Slight creativity for planning
     )

@@ -1,6 +1,24 @@
+<!--
+  Social preview metadata. GitHub uses the repo's social card (set in
+  Settings → Social preview) for link unfurls; this PNG is the asset we
+  upload there. The Open Graph / Twitter tags below are also picked up by
+  some third-party renderers that parse the raw README.
+-->
+<meta property="og:title" content="ARNES — The Open Agent Harness" />
+<meta property="og:description" content="Write the manual. ARNES compiles it into a team of specialists that follows it to the letter." />
+<meta property="og:image" content="https://raw.githubusercontent.com/frangelbarrera/ARNES/main/docs/social-card.png" />
+<meta property="og:url" content="https://github.com/frangelbarrera/ARNES" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="ARNES — The Open Agent Harness" />
+<meta name="twitter:description" content="Write the manual. ARNES compiles it into a team of specialists that follows it to the letter." />
+<meta name="twitter:image" content="https://raw.githubusercontent.com/frangelbarrera/ARNES/main/docs/social-card.png" />
+
 <div align="center">
 
-<img src="docs/logo.svg" alt="ARNES" width="320" />
+<img src="docs/social-card.png" alt="ARNES — The Open Agent Harness" width="640" />
+
+<img src="docs/logo.svg" alt="ARNES logo" width="160" />
 
 ### The Open Agent Harness
 
@@ -59,6 +77,15 @@ manual is the code.**
 
 ## What it looks like
 
+```
+    ___
+   /   |  _________ ___   _______
+  / /| | / ___/ __ `__ \ / ___/ /
+ / ___ |/ /  / / / / / // /__/ /
+/_/  |_/_/  /_/ /_/ /_/ \____/_/
+        The Open Agent Harness
+```
+
 A manual in YAML:
 
 ```yaml
@@ -108,10 +135,10 @@ steps:
       focus: "Synthesize into a final verdict: approve / request_changes / reject"
 ```
 
-You run it:
+You run it (mock LLM, no network, $0 cost):
 
 ```bash
-arnes run manuals/audit-pr.yaml
+$ arnes run manuals/hello-world.yaml --mock
 ```
 
 ARNES compiles the manual into a DAG, wakes the specialists in sequence,
@@ -119,16 +146,65 @@ applies token optimization and verification layer on every LLM call, and
 returns:
 
 ```
-✅ Manual executed in 23.4s
-   3 specialists activated
-   4 steps executed (1 conditional triggered)
-   Tokens: 1,247 (47% savings vs baseline)
-   Cost: $0.0042 USD
-   Bitácora: ./bitacora-audit-pr-20260728-164523.md
+╭────────────────────────────────────────────────────────────────────╮
+│ ARNES — Executing playbook                                         │
+│   Name: hello-world                                                │
+│   Objective: Demonstrate the basic ARNES flow with a simple manual │
+│   Model: ollama/llama3.2                                           │
+│   Budget: $0.50                                                    │
+╰────────────────────────────────────────────────────────────────────╯
+2026-07-30 16:42:44 [info] llm_call_tracked  budget=0.5 cost_usd=0.0 \
+      model=ollama/llama3.2 tokens_in=335 tokens_out=15 total_spent=0.0
+2026-07-30 16:42:44 [info] llm_call_tracked  budget=0.5 cost_usd=0.0 \
+      model=ollama/llama3.2 tokens_in=370 tokens_out=38 total_spent=0.0
+
+✅ Manual executed
+
+Steps executed: 2
+Steps failed: 0
+Duration: 0.01s
+Tokens in/out: 705/53
+Total cost: $0.0000
+
+Bitácora saved to: bitacora-hello-world-20260730-164244.md
 ```
 
 The bitácora is a markdown file with every step, every decision, every prompt
-sent, every response received. You can diff it, version it, share it.
+sent, every response received. You can diff it, version it, share it:
+
+````markdown
+# Bitácora ARNES — Thread 0b6ac82e-2600-42f5-a6ca-62e016df7961
+
+**Total events:** 7
+
+## [2026-07-30T16:42:44] step_started
+**Step:** `plan`  ·  **Specialist:** `@planner`
+
+## [2026-07-30T16:42:44] assistant_message
+**Step:** `plan`  ·  **Specialist:** `@planner`
+```json
+{
+  "model": "ollama/llama3.2",
+  "tokens_in": 335,
+  "tokens_out": 15,
+  "cost_usd": 0.0,
+  "cached": false
+}
+```
+
+## [2026-07-30T16:42:44] step_completed
+...
+````
+
+Want to see the whole flow end-to-end? Run the narrated demo script:
+
+```bash
+./scripts/demo.sh            # print to terminal
+./scripts/demo.sh --record demo.tape && vhs demo.tape   # render a GIF
+```
+
+See [Recording a demo GIF](#recording-a-demo-gif) below for the `vhs` and
+`agg` recipes.
 
 ---
 
@@ -378,16 +454,19 @@ known issues that will be fixed in v0.2:
 - **Parallel branches** execute sequentially in v0.1 (true `asyncio.gather`
   comes in v0.2).
 - **HITL gates** auto-reject in non-interactive mode. Real interactive HITL
-  via MCP comes in v0.2.
+  (pausing execution and resuming on human input via the MCP transport)
+  comes in v0.2. Until then, calling a HITL-gated tool without
+  `interactive=True` returns a structured rejection rather than blocking.
 - **Docker sandbox** is not wired up by default. Local shell execution
   requires `ARNES_DEV_MODE=1`. Full sandbox integration lands in v0.2.
-- **MCP HTTP transport** is a minimal implementation (no auth, no rate
-  limiting). Use stdio transport for production. Full HTTP/SSE in v0.2.
+- **MCP HTTP transport** is minimal (simple POST endpoint, no SSE). It
+  *does* ship with bearer-token auth (`ARNES_MCP_TOKEN`), per-IP rate
+  limiting (100 req/min), and a 1 MiB request size cap — but for production
+  use the stdio transport is still recommended until full HTTP/SSE lands
+  in v0.2.
 - **Retry policy** schema is defined but execution is not yet implemented.
 - **Context compaction** and **few-shot pruning** are not yet implemented.
 - **Confidence gate** and **critic loop** are not yet implemented.
-- **Coverage** is at 66% (target: 80% by v0.2).
-- **mypy --strict** is not yet enforced in CI (46 errors to fix).
 
 **What does work in v0.1:**
 - ✅ Thread + stateless reducer pattern
@@ -396,9 +475,59 @@ known issues that will be fixed in v0.2:
 - ✅ CostGuard with budget enforcement and circuit breaker
 - ✅ VerificationLayer with structured outputs and refusal pattern
 - ✅ TokenOptimizer with model routing and semantic cache
-- ✅ MCP server (stdio transport)
+- ✅ MCP server (stdio transport + minimal HTTP transport with auth/rate limits)
 - ✅ CLI (init, run, lint, eval, list, mcp serve)
 - ✅ SSRF protection with DNS resolution
 - ✅ Path traversal + symlink escape detection
 - ✅ Secret filtering from subprocess env
 - ✅ argsFingerprint for HITL rug-pull detection
+- ✅ `mypy --strict` enforced in CI and passing on all source files
+- ✅ Test coverage above the 65% PR gate (unit + integration + stress)
+
+---
+
+## Recording a demo GIF
+
+The repo ships `scripts/demo.sh`, a narrated, deterministic demo of the
+ARNES flow (run a manual → show the bitácora → list specialists → lint a
+playbook). Two ways to turn it into a GIF for the README or a tweet:
+
+**Option A — [vhs](https://github.com/charmbracelet/vhs) (recommended, deterministic):**
+
+```bash
+# Install once
+brew install vhs          # macOS
+# or:  go install github.com/charmbracelet/vhs@latest
+
+# Record the tape, then render the GIF
+./scripts/demo.sh --record demo.tape
+vhs demo.tape             # produces demo.gif
+```
+
+**Option B — [agg](https://github.com/nathanbabcock/agg) (asciinema → GIF):**
+
+```bash
+# Install once
+cargo install --git https://github.com/nathanbabcock/agg
+# or:  brew install asciinema agg
+
+# Record and convert
+asciinema rec demo.cast -c "./scripts/demo.sh"
+agg demo.cast demo.gif --speed 1.5 --font-family "JetBrains Mono"
+```
+
+Drop the resulting `demo.gif` into `docs/` and reference it from this README:
+
+```markdown
+![ARNES demo](docs/demo.gif)
+```
+
+> Tip: `scripts/demo.sh` uses the **mock LLM**, so the recording is fully
+> offline and reproducible. No API keys, no network, $0 cost.
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=frangelbarrera/ARNES&type=Date)](https://star-history.com/#frangelbarrera/ARNES&Date)
+

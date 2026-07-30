@@ -403,6 +403,80 @@ class TestConcurrentStress:
 
 
 # ============================================================
+# STRESS-2: verify _execute_parallel runs sub-steps TRULY concurrently
+# (not sequentially as in the pre-fix for-loop implementation).
+# ============================================================
+
+
+class TestParallelBranchConcurrent:
+    """STRESS-2: parallel branch sub-steps must run concurrently.
+
+    Before FIX-R3-AI, ``_execute_parallel`` ran sub-steps in a sequential
+    for-loop — correct but not concurrent. This test verifies the
+    ``asyncio.gather`` rewrite actually overlaps sub-step execution by
+    checking the shared mock provider's ``max_concurrent_calls`` watermark.
+    """
+
+    @pytest.mark.asyncio
+    async def test_parallel_substeps_run_concurrently(self) -> None:
+        provider = SchemaValidMockProvider()
+        executor = PlaybookExecutor(
+            provider=provider,
+            cost_budget=CostBudget(task_budget_usd=10.0),
+        )
+
+        yaml_str = """
+name: parallel_concurrent
+objective: Verify true parallelism in _execute_parallel
+steps:
+  - id: parallel
+    parallel:
+      - id: sub1
+        specialist: "@planner"
+        input: {task: "Subtask 1"}
+      - id: sub2
+        specialist: "@coder"
+        input: {spec: "Subtask 2"}
+      - id: sub3
+        specialist: "@reviewer"
+        input: {code: "Subtask 3"}
+"""
+        playbook = PlaybookCompiler.from_string(yaml_str)
+        result = await executor.run(playbook)
+
+        assert result.success is True, f"Failed: {result.error}"
+        # The outer parallel step counts as 1 executed step; the 3
+        # sub-steps do NOT increment steps_executed (they run inside
+        # _execute_parallel, not the main run() loop).
+        assert result.steps_executed == 1
+        # All 3 sub-steps must have made an LLM call.
+        assert provider.call_count == 3, (
+            f"Expected 3 LLM calls (one per sub-step), got {provider.call_count}"
+        )
+        # CRITICAL: at least 2 sub-steps must have been in-flight at the
+        # same time. If _execute_parallel is sequential,
+        # max_concurrent_calls == 1. The SchemaValidMockProvider does
+        # `await asyncio.sleep(0)` inside complete() to force interleaving,
+        # so a truly concurrent gather will see active_calls > 1.
+        assert provider.max_concurrent_calls >= 2, (
+            f"Parallel sub-steps did NOT run concurrently: "
+            f"max_concurrent_calls={provider.max_concurrent_calls} (expected >= 2). "
+            f"This means _execute_parallel is still sequential."
+        )
+
+        # All 3 sub-step outputs must be present in the outputs map.
+        parallel_output = result.outputs.get("parallel", {})
+        assert isinstance(parallel_output, dict)
+        for sub_id in ("sub1", "sub2", "sub3"):
+            assert sub_id in parallel_output, (
+                f"Missing sub-step output '{sub_id}' in parallel branch result"
+            )
+            assert parallel_output[sub_id]["success"] is True, (
+                f"Sub-step '{sub_id}' did not succeed"
+            )
+
+
+# ============================================================
 # Standalone runner (python tests/stress/test_concurrent.py)
 # ============================================================
 
@@ -412,6 +486,16 @@ async def _run_standalone() -> int:
     instance = TestConcurrentStress()
     try:
         await instance.test_50_concurrent_playbooks()
+    except AssertionError as e:
+        print(f"\nFAIL: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"\nERROR: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+
+    instance2 = TestParallelBranchConcurrent()
+    try:
+        await instance2.test_parallel_substeps_run_concurrently()
     except AssertionError as e:
         print(f"\nFAIL: {e}", file=sys.stderr)
         return 1

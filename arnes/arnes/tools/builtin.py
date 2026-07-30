@@ -366,8 +366,18 @@ class FilesystemWriteTool(Tool):
         if not safe_path:
             return ToolResult.fail("fs_write", f"Path outside working_dir: {validated.path}")
 
-        # Symlink protection for write
-        if safe_path.exists() and safe_path.is_symlink():
+        # Symlink protection for write.
+        #
+        # SECURITY (FIX-R3-SEC): use ``is_symlink()`` ALONE, NOT
+        # ``exists() and is_symlink()``. ``Path.exists()`` follows the
+        # link and returns False for a DANGLING symlink (target missing),
+        # which previously caused this guard to be skipped — letting a
+        # write through a dangling symlink that points outside
+        # ``working_dir`` (e.g. ``link -> /etc/cron.d/evil`` with the
+        # target not yet created). ``is_symlink()`` checks the link
+        # entry itself, so it catches both dangling and non-dangling
+        # symlinks.
+        if safe_path.is_symlink():
             target = safe_path.resolve()
             base = Path(ctx.working_dir).resolve()
             if base not in target.parents and target != base:

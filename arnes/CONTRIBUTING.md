@@ -32,9 +32,8 @@ uv run pytest
 arnes/
 ├── arnes/
 │   ├── agent/           # Harness class (high-level wrapper)
-│   ├── thread/          # Thread + Event[] stateless reducer
+│   ├── thread/          # Thread + Event[] stateless reducer (events live in thread/events.py)
 │   ├── tools/           # Tool registry + BaseTool + 5 built-in tools
-│   ├── events/          # Event types (Pydantic)
 │   ├── llm/             # LLM provider abstraction (Ollama, LiteLLM, Mock)
 │   ├── middleware/      # Token Optimizer, Verification, Cost Guard
 │   ├── mcp/             # MCP server (stdio + HTTP)
@@ -173,6 +172,35 @@ class MySpecialist(Specialist):
 1. Create `manuals/my-playbook.yaml` (follow the spec in `docs/playbook-dsl.md`)
 2. Add test in `tests/integration/test_my_playbook.py`
 3. Validate with `arnes lint manuals/my-playbook.yaml`
+
+## Social card (PNG)
+
+The repo's social preview image is `docs/social-card.png` (1280×640, PNG).
+GitHub requires PNG (not SVG) for social previews, so we keep both formats:
+
+- `docs/social-card.svg` — the **source of truth**, hand-edited.
+- `docs/social-card.png` — generated from the SVG, committed to the repo.
+
+If you change the SVG, regenerate the PNG before committing:
+
+```bash
+# Option A: rsvg-convert (librsvg, fastest)
+rsvg-convert -w 1280 -h 640 docs/social-card.svg -o docs/social-card.png
+
+# Option B: cairosvg (Python)
+uv run --with cairosvg python -c \
+  "import cairosvg; cairosvg.svg2png(url='docs/social-card.svg', \
+   write_to='docs/social-card.png', output_width=1280, output_height=640)"
+
+# Option C: ImageMagick
+magick -density 144 -background none docs/social-card.svg -resize 1280x640 \
+  docs/social-card.png
+
+# Option D: Inkscape
+inkscape docs/social-card.svg --export-type=png \
+  --export-filename=docs/social-card.png \
+  --export-width=1280 --export-height=640
+```
 
 ## Reporting Bugs
 

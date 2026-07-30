@@ -61,7 +61,7 @@ pattern (`API_KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `CREDENTIAL`,
 
 All tools accept inputs validated by pydantic schemas. The `fs_read` /
 `fs_write` tools validate paths against the working directory allow-list
-and reject symlinks that escape it.
+and reject symlinks (both dangling and non-dangling) that escape it.
 
 ### SSRF Protection (http tool)
 
@@ -81,7 +81,13 @@ The `http` tool validates URLs against an SSRF block-list:
 
 The `shell` tool:
 
-- Requires `ARNES_DEV_MODE=1` to execute locally (default: disabled).
+- Is wired into the Docker sandbox by default when the `docker` CLI is on
+  `PATH`. The `PlaybookExecutor` auto-detects Docker at construction time
+  and sets `sandbox_enabled=True` + `sandbox_container="arnes-sandbox:latest"`
+  on every `ToolContext` it creates. When Docker is NOT available, the
+  executor falls back to `sandbox_enabled=False` and logs a warning — in
+  that mode the shell tool requires `ARNES_DEV_MODE=1` to execute locally
+  (double-gate safety measure).
 - Filters secret-named env vars from the subprocess environment.
 - Strips `PATH` / `LD_PRELOAD` / `LD_LIBRARY_PATH` / `PYTHONPATH` from
   user-provided env (PATH is re-injected from the parent process for
@@ -113,8 +119,24 @@ The `shell` tool:
 
 ### Cost Guard
 
-Each run has a declared USD budget. At 100% spend, ARNES aborts the run.
-A temporal circuit breaker aborts if per-call spend is implausibly high.
+Each run has a declared USD budget. ARNES enforces it at three thresholds:
+
+- **75%** (`warn_at_pct`): emits a `CostThresholdEvent(level="warn")` and
+  logs a warning. Execution continues.
+- **95%** (`pause_at_pct`): emits a `CostThresholdEvent(level="pause")`.
+  In interactive runs (`interactive=True` passed to `complete()`), the
+  guard also sets `_paused=True`, emits a `HumanApprovalRequestedEvent`
+  via the events sink, and raises `BudgetExceeded(level="pause")` so the
+  executor halts the run for human approval. In non-interactive runs, the
+  guard logs a warning and continues — the hard stop at 100% will catch
+  the run if spend keeps growing.
+- **100%** (`abort_at_pct`): hard stop. Sets `_aborted=True`, raises
+  `BudgetExceeded(level="hard_stop")`.
+
+A temporal circuit breaker also aborts if per-minute spend exceeds
+`max_usd_per_minute` (denial-of-wallet defense), and a pre-flight check
+rejects calls whose projected cost would push spend over the budget
+before the provider is even invoked.
 
 ### Human-in-the-Loop (HITL)
 
@@ -135,24 +157,20 @@ the markdown bitácora. The bitácora is auditable and re-executable.
 The following are **explicitly not** security guarantees of v0.1.x. They
 are planned for v0.2 and tracked in the security audits:
 
-### 1. No Default Sandbox (Tier 1 Docker sandbox is NOT wired up by default)
+### 1. Sandbox auto-detection is CLI-presence only
 
-Although the `shell` tool has the *code path* for a Docker-hardened
-container (`--security-opt=no-new-privileges`, `--cap-drop=ALL`,
-`--network=none`, `--read-only`, tmpfs `/workspace`), **the sandbox is not
-configured by default** in v0.1.x. Local shell execution requires the
-`ARNES_DEV_MODE=1` environment variable as a double-gate safety measure.
-Full Docker sandbox integration (auto-spawn, image pinning, network
-egress policy) lands in v0.2. **Do not enable `ARNES_DEV_MODE=1` on
-untrusted inputs in v0.1.x.**
+The `PlaybookExecutor` enables the Docker sandbox when the `docker` CLI is
+on `PATH` (see `_is_docker_available()`). It does **not** verify the
+daemon is running, that the `arnes-sandbox:latest` image exists, or that
+the container has network egress filtering. If the daemon is down or the
+image is missing, `ShellTool._execute_in_sandbox` returns a
+`ToolResult.fail(...)` at execution time — it does NOT silently fall
+through to local execution. Operators must build and pin the
+`arnes-sandbox:latest` image themselves. When Docker is entirely absent,
+the executor falls back to `sandbox_enabled=False` and the shell tool
+requires `ARNES_DEV_MODE=1` as a double-gate.
 
-### 2. CostGuard does not pause at 95%
-
-The v0.1.x CostGuard aborts at 100% budget exhaustion. The "pause at 95%
-and ask for human approval" behavior is **planned for v0.2**, not
-implemented today. There is also no temporal circuit breaker in v0.1.x.
-
-### 3. SSRF check is best-effort, not bulletproof
+### 2. SSRF check is best-effort, not bulletproof
 
 - The DNS-rebinding TOCTOU is mitigated by rewriting the request URL to
   the resolved IP and preserving the Host header. This works for the
@@ -165,7 +183,7 @@ implemented today. There is also no temporal circuit breaker in v0.1.x.
 - The block-list is a static allow/deny list; it does not consume threat
   feeds.
 
-### 4. Shell regex is defense-in-depth, not a sandbox
+### 3. Shell regex is defense-in-depth, not a sandbox
 
 The dangerous-command regex catches the common payloads (`rm -rf /`,
 `mkfs`, `curl|sh`, `python -c`, `eval()`, `base64 -d`, etc.) but is
@@ -175,7 +193,7 @@ reliable mitigation is to run shell commands inside a real sandbox
 (Docker / nsjail / gVisor). The regex exists to catch careless prompts,
 not adversarial ones.
 
-### 5. MCP HTTP transport is single-process
+### 4. MCP HTTP transport is single-process
 
 The rate limiter is in-process and per-instance. A multi-worker
 deployment (e.g. behind gunicorn with N workers) gets N× the configured
@@ -184,13 +202,13 @@ limiting for production deployments. CSRF protection is also not
 implemented at the protocol layer — rely on the bearer token + the
 same-origin policy of the consuming client.
 
-### 6. No mTLS / HMAC request signing
+### 5. No mTLS / HMAC request signing
 
 Authentication is a single bearer token. There is no mutual TLS, no
 per-request HMAC signature, and no token rotation protocol. Treat the
 HTTP transport as suitable for trusted local networks only.
 
-### 7. Playbook path validation is prefix-based
+### 6. Playbook path validation is prefix-based
 
 The MCP playbook path check rejects a fixed list of system prefixes
 (`/etc`, `/root`, `/var`, `/proc`, `/sys`, `/dev`). It does **not**

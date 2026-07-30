@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
 from arnes.middleware.cost_guard import CostBudget
 from arnes.playbooks.compiler import PlaybookCompiler
-from arnes.playbooks.executor import PlaybookExecutor
+from arnes.playbooks.executor import (
+    DEFAULT_SANDBOX_CONTAINER,
+    PlaybookExecutor,
+    _is_docker_available,
+)
 
 
 class SchemaValidMockProvider(LLMProvider):
@@ -67,11 +73,12 @@ class SchemaValidMockProvider(LLMProvider):
         return ["mock"]
 
 
-class TestPlaybookExecutor:
-    @pytest.fixture
-    def mock_provider(self):
-        return SchemaValidMockProvider()
+@pytest.fixture
+def mock_provider():
+    return SchemaValidMockProvider()
 
+
+class TestPlaybookExecutor:
     @pytest.fixture
     def executor(self, mock_provider):
         return PlaybookExecutor(
@@ -316,3 +323,53 @@ steps:
         playbook = PlaybookCompiler.from_string(yaml_str)
         result = await executor.run(playbook)
         assert result.success is True
+
+
+class TestSandboxAutoDetection:
+    """Tests for the Docker sandbox auto-wiring (FIX-R3-SEC Issue 1)."""
+
+    def test_is_docker_available_returns_bool(self):
+        """The helper must return a bool (True/False) — never None."""
+        result = _is_docker_available()
+        assert isinstance(result, bool)
+
+    def test_executor_enables_sandbox_when_docker_present(self, mock_provider):
+        """When ``_is_docker_available()`` returns True, the executor must
+        default to ``sandbox_enabled=True`` and pin the default container."""
+        with patch("arnes.playbooks.executor._is_docker_available", return_value=True):
+            executor = PlaybookExecutor(provider=mock_provider)
+
+        assert executor._sandbox_enabled is True
+        assert executor._sandbox_container == DEFAULT_SANDBOX_CONTAINER
+
+    def test_executor_disables_sandbox_when_docker_absent(self, mock_provider):
+        """When ``_is_docker_available()`` returns False, the executor must
+        fall back to ``sandbox_enabled=False`` (the shell tool then requires
+        ``ARNES_DEV_MODE=1`` as a double-gate)."""
+        with patch("arnes.playbooks.executor._is_docker_available", return_value=False):
+            executor = PlaybookExecutor(provider=mock_provider)
+
+        assert executor._sandbox_enabled is False
+        assert executor._sandbox_container is None
+
+    def test_executor_explicit_sandbox_enabled_overrides_autodetect(self, mock_provider):
+        """An explicit ``sandbox_enabled=False`` must override auto-detection
+        even when Docker IS available (callers know best — e.g. tests)."""
+        with patch("arnes.playbooks.executor._is_docker_available", return_value=True):
+            executor = PlaybookExecutor(provider=mock_provider, sandbox_enabled=False)
+
+        assert executor._sandbox_enabled is False
+        assert executor._sandbox_container is None
+
+    def test_executor_explicit_sandbox_container_honoured(self, mock_provider):
+        """An explicit ``sandbox_container`` must be honoured when
+        ``sandbox_enabled=True`` is also passed."""
+        with patch("arnes.playbooks.executor._is_docker_available", return_value=False):
+            executor = PlaybookExecutor(
+                provider=mock_provider,
+                sandbox_enabled=True,
+                sandbox_container="custom-sandbox:v1.2",
+            )
+
+        assert executor._sandbox_enabled is True
+        assert executor._sandbox_container == "custom-sandbox:v1.2"

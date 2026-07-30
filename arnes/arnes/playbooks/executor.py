@@ -17,7 +17,9 @@ The executor is async and supports both fire-and-forget and streaming modes.
 
 from __future__ import annotations
 
+import asyncio
 import re
+import shutil
 import time
 from typing import Any
 
@@ -32,6 +34,7 @@ from arnes.specialists.base import SpecialistRegistry, get_default_specialist_re
 from arnes.thread import Thread
 from arnes.thread.events import (
     ConditionalBranchEvent,
+    Event,
     RunCompletedEvent,
     RunFailedEvent,
     StepCompletedEvent,
@@ -42,6 +45,36 @@ from arnes.tools.base import ToolContext, ToolRegistry
 from arnes.tools.registry import get_default_registry
 
 logger = structlog.get_logger(__name__)
+
+# Default Docker image used by the ShellTool sandbox. The image is expected
+# to be present locally (built via `docker build -t arnes-sandbox:latest .`
+# from the project's Dockerfile.sandbox). The ShellTool falls back to a
+# clear error message if the daemon or image is missing at execution time.
+DEFAULT_SANDBOX_CONTAINER = "arnes-sandbox:latest"
+
+
+def _is_docker_available() -> bool:
+    """Return True if the ``docker`` CLI is on PATH.
+
+    Used by the executor to decide whether to wire the Docker sandbox into
+    the default ``ToolContext``. This is a presence check only — it does NOT
+    verify the daemon is running or that ``arnes-sandbox:latest`` exists.
+    The ``ShellTool`` surfaces a clear error if either is missing at
+    execution time (``FileNotFoundError`` on ``docker run``).
+
+    We deliberately avoid probing the daemon (``docker info`` / ``docker
+    version``) here because:
+
+    1. It spawns a subprocess on every ``PlaybookExecutor`` construction,
+       which is wasteful for tests and high-throughput runs.
+    2. The daemon may be temporarily down even if the CLI is installed —
+       failing fast at construction time would prevent the user from
+       running non-shell playbooks that don't need Docker at all.
+    3. The ``ShellTool._execute_in_sandbox`` already handles the
+       ``FileNotFoundError`` case (docker binary missing) and returns a
+       actionable error message.
+    """
+    return shutil.which("docker") is not None
 
 
 class PlaybookRunResult(BaseModel):
@@ -83,12 +116,49 @@ class PlaybookExecutor:
         tool_registry: ToolRegistry | None = None,
         cost_budget: CostBudget | None = None,
         interactive: bool = False,
+        sandbox_enabled: bool | None = None,
+        sandbox_container: str | None = None,
     ) -> None:
         self.provider = provider or get_provider()
         self.specialist_registry = specialist_registry or get_default_specialist_registry()
         self.tool_registry = tool_registry or get_default_registry()
         self.cost_budget = cost_budget or CostBudget()
         self.interactive = interactive
+
+        # Sandbox wiring (Issue 1 / FIX-R3-SEC).
+        #
+        # Default behaviour:
+        #   - If ``sandbox_enabled`` is explicitly passed, honour it (caller
+        #     knows best — e.g. tests, Harness, MCP server).
+        #   - Otherwise, auto-detect: enable the Docker sandbox when the
+        #     ``docker`` CLI is on PATH, fall back to non-sandboxed mode
+        #     when it isn't.
+        #
+        # In non-sandboxed mode the ShellTool requires ``ARNES_DEV_MODE=1``
+        # as a double-gate before it will execute commands locally. We log
+        # a warning so operators know shell calls will be gated rather than
+        # sandboxed.
+        if sandbox_enabled is not None:
+            self._sandbox_enabled = sandbox_enabled
+            self._sandbox_container = sandbox_container or (
+                DEFAULT_SANDBOX_CONTAINER if sandbox_enabled else None
+            )
+        elif _is_docker_available():
+            self._sandbox_enabled = True
+            self._sandbox_container = sandbox_container or DEFAULT_SANDBOX_CONTAINER
+            logger.info(
+                "sandbox_docker_detected",
+                container=self._sandbox_container,
+                mode="docker-tier1",
+            )
+        else:
+            self._sandbox_enabled = False
+            self._sandbox_container = None
+            logger.warning(
+                "sandbox_docker_unavailable",
+                fallback="ARNES_DEV_MODE=1 required for local shell execution",
+                hint="Install Docker or build arnes-sandbox:latest to enable the sandbox",
+            )
 
     async def run(
         self,
@@ -381,13 +451,17 @@ class PlaybookExecutor:
         # Resolve input (may contain Jinja2-style template refs)
         input_data = self._resolve_input(step.input, outputs)
 
-        # Build tool context
+        # Build tool context — sandbox state is detected once at executor
+        # construction time (see __init__) and propagated to every
+        # specialist invocation so the ShellTool can pick the right
+        # execution path (Docker sandbox vs. gated local execution).
         ctx = ToolContext(
             thread_id=thread_holder[0].id,
             step_id=step.id,
             specialist=step.specialist,
             working_dir=".",
-            sandbox_enabled=False,  # Disabled for MVP; enable in v0.2
+            sandbox_enabled=self._sandbox_enabled,
+            sandbox_container=self._sandbox_container,
             budget_remaining_usd=(
                 (cost_guard.budget.effective_budget() or 0) - cost_guard.spent_usd
             ),
@@ -464,38 +538,107 @@ class PlaybookExecutor:
         cost_guard: CostGuard,
         playbook: Playbook,
     ) -> dict[str, Any]:
-        """Execute parallel sub-steps concurrently.
+        """Execute parallel sub-steps concurrently with ``asyncio.gather``.
 
-        Note: parallel sub-steps share the same thread_holder, but since each
-        appends to the immutable Thread, we need to merge results back.
-        For MVP, parallel steps are executed sequentially (true parallelism
-        requires a different state model — coming in v0.2).
+        Each sub-step gets its OWN thread_holder (a copy of the parent thread
+        at this point) so appends are isolated — no race on the shared
+        ``thread_holder[0]`` reference. After all sub-steps complete, their
+        event deltas are merged back into the parent thread_holder in
+        timestamp order. This preserves the immutable Thread pattern while
+        enabling true parallelism (the previous implementation ran sub-steps
+        sequentially in a for-loop, which was correct but not concurrent).
+
+        The shared ``cost_guard._events`` sink is drained by each sub-step's
+        own ``_execute_step`` call; because ``_drain_middleware_events`` is
+        synchronous, drains run atomically in the single-threaded asyncio
+        loop. An event emitted by sub-step B's specialist may end up drained
+        into sub-step A's thread_holder, but each event carries its own
+        ``step_id`` (set by ``_emit_assistant_message`` from the
+        ``ToolContext``) so the merged audit log is still correctly
+        attributed — the delta is just a container for the merge, not an
+        authoritative attribution.
         """
         if not step.parallel:
             return {"success": False, "error": "No parallel steps defined"}
 
-        outputs_map = {}
-        all_success = True
+        # Snapshot the parent thread so each sub-step's delta is exactly
+        # the events it appends beyond this point. The parent thread already
+        # has the outer StepStartedEvent(parallel) appended by _execute_step.
+        parent_snapshot = thread_holder[0]
+        parent_event_count = len(parent_snapshot.events)
 
-        # For MVP: sequential execution of "parallel" steps (correctness > parallelism)
-        # In v0.2 we'll use asyncio.gather with proper thread merging
-        for sub_step in step.parallel:
-            result = await self._execute_step(
-                sub_step, thread_holder, outputs, cost_guard, playbook
+        # Each sub-step gets its OWN thread_holder starting from the snapshot.
+        # Appends to sub_holders[i][0] create new Thread objects (immutability),
+        # so sub-steps never share mutable state.
+        sub_holders: list[list[Thread]] = [[parent_snapshot] for _ in step.parallel]
+
+        # Run all sub-steps concurrently. return_exceptions=True so a single
+        # failure doesn't cancel the others — every sub-step runs to
+        # completion (or to its own failure) and we merge everything.
+        coros = [
+            self._execute_step(
+                sub_step,
+                sub_holders[i],
+                outputs,
+                cost_guard,
+                playbook,
             )
-            # Wrap output in {"output": ...} structure so templates like
-            # {{ steps.parallel.sub_step_id.output }} resolve correctly
-            outputs_map[sub_step.id] = {
-                "output": result.get("output"),
-                "success": result.get("success", False),
-            }
-            if not result.get("success", False):
-                all_success = False
+            for i, sub_step in enumerate(step.parallel)
+        ]
+        raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
-        return {
+        # Merge sub-step deltas back into the parent thread_holder in
+        # timestamp order. Each delta is the events the sub-step appended
+        # beyond the shared snapshot (StepStarted, AssistantMessage(s),
+        # StepCompleted/Failed for the sub-step, plus any middleware events
+        # it drained from the shared cost_guard sink).
+        merged_events: list[Event] = []
+        for holder in sub_holders:
+            merged_events.extend(holder[0].events[parent_event_count:])
+        # Stable sort by timestamp preserves intra-sub-step order for events
+        # with identical timestamps (the natural audit order within a single
+        # sub-step's lifecycle: Started → AssistantMessage → Completed).
+        merged_events.sort(key=lambda e: e.timestamp)
+
+        thread_holder[0] = thread_holder[0].extend(merged_events)
+
+        # Collect outputs and success status from each sub-step.
+        # Wrap output in {"output": ...} structure so templates like
+        # {{ steps.parallel.sub_step_id.output }} resolve correctly.
+        outputs_map: dict[str, dict[str, Any]] = {}
+        all_success = True
+        first_error: str | None = None
+
+        for sub_step, raw in zip(step.parallel, raw_results, strict=True):
+            if isinstance(raw, BaseException):
+                # A sub-step coroutine raised (shouldn't happen — _execute_step
+                # catches exceptions — but defend against executor bugs).
+                outputs_map[sub_step.id] = {
+                    "output": None,
+                    "success": False,
+                    "error": str(raw),
+                }
+                all_success = False
+                if first_error is None:
+                    first_error = str(raw)
+            else:
+                outputs_map[sub_step.id] = {
+                    "output": raw.get("output"),
+                    "success": raw.get("success", False),
+                    "error": raw.get("error"),
+                }
+                if not raw.get("success", False):
+                    all_success = False
+                    if first_error is None:
+                        first_error = raw.get("error")
+
+        result: dict[str, Any] = {
             "success": all_success,
             "output": outputs_map,
         }
+        if first_error is not None:
+            result["error"] = first_error
+        return result
 
     async def _handle_conditional_branch(
         self,

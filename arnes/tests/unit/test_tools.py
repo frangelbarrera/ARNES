@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -234,6 +235,92 @@ class TestFilesystemTools:
         result = await read_tool.execute({"path": "nonexistent.txt"}, ctx_with_tmp)
         assert result.success is False
         assert "not found" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_fs_write_dangling_symlink_escape_blocked(self, ctx_with_tmp, tmp_path):
+        """SECURITY (FIX-R3-SEC): a DANGLING symlink that points outside
+        working_dir must be rejected.
+
+        ``Path.exists()`` follows the link and returns False for a dangling
+        symlink (target missing). The old guard ``exists() and is_symlink()``
+        was therefore skipped for dangling links, letting a write through a
+        link like ``evil -> /tmp/arnes-escape.txt`` (target not yet created)
+        succeed and write OUTSIDE working_dir. The fix uses
+        ``is_symlink()`` alone, which catches both dangling and
+        non-dangling links.
+        """
+        import os
+
+        working_dir = Path(ctx_with_tmp.working_dir)
+        # Create a dangling symlink inside working_dir that points OUTSIDE.
+        # Target path does NOT exist yet (dangling).
+        escape_target = tmp_path.parent / "arnes_dangling_escape.txt"
+        escape_target.unlink(missing_ok=True)  # ensure target absent
+        link_path = working_dir / "evil_link"
+        if link_path.exists() or link_path.is_symlink():
+            link_path.unlink()
+        os.symlink(escape_target, link_path)
+
+        # Sanity: the link is dangling (target does not exist).
+        assert not escape_target.exists()
+        assert link_path.is_symlink()
+
+        write_tool = FilesystemWriteTool()
+        result = await write_tool.execute(
+            {"path": "evil_link", "content": "payload"},
+            ctx_with_tmp,
+        )
+
+        # The write MUST be blocked — the symlink escapes working_dir.
+        # The block can come from either:
+        #   - ``_validate_path`` (path traversal check via resolve()),
+        #     which returns "Path outside working_dir"
+        #   - the symlink guard in ``execute``, which returns
+        #     "Symlink escapes working_dir"
+        # Both are correct security outcomes. The FIX-R3-SEC change
+        # ensures the symlink guard ALSO catches dangling links (the
+        # ``_validate_path`` check already catches most escapes via
+        # resolve(), but the symlink guard is defense-in-depth).
+        assert result.success is False
+        err_lower = result.error.lower()
+        assert "symlink" in err_lower or "outside" in err_lower or "escapes" in err_lower, (
+            f"Expected a path/symlink escape error, got: {result.error}"
+        )
+
+        # And the escape target must NOT have been created.
+        assert not escape_target.exists(), (
+            "Dangling symlink write must not create the out-of-jail target"
+        )
+
+        # Cleanup
+        link_path.unlink(missing_ok=True)
+        escape_target.unlink(missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_fs_write_symlink_inside_working_dir_allowed(self, ctx_with_tmp):
+        """A symlink that resolves INSIDE working_dir is allowed (regression
+        check — the FIX-R3-SEC change tightens the dangling check but must
+        not break legitimate in-jail symlinks)."""
+        import os
+
+        working_dir = Path(ctx_with_tmp.working_dir)
+        target = working_dir / "real_target.txt"
+        link_path = working_dir / "good_link"
+        if link_path.exists() or link_path.is_symlink():
+            link_path.unlink()
+        os.symlink(target, link_path)
+
+        write_tool = FilesystemWriteTool()
+        result = await write_tool.execute(
+            {"path": "good_link", "content": "in-jail payload"},
+            ctx_with_tmp,
+        )
+        assert result.success is True, f"In-jail symlink write failed: {result.error}"
+        assert target.read_text() == "in-jail payload"
+
+        # Cleanup
+        link_path.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
 
 
 class TestToolFingerprint:

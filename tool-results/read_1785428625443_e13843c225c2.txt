@@ -1,0 +1,689 @@
+     1→     1→"""
+     2→     2→ARNES built-in tools: shell, http, fs_read, fs_write, human_approval.
+     3→     3→
+     4→     4→SECURITY NOTES (post-audit fixes):
+     5→     5→- Shell tool defaults to sandboxed execution. Local execution requires explicit
+     6→     6→  ARNES_DEV_MODE=1 env var AND ctx.sandbox_enabled=False. The dangerous-command
+     7→     7→  regex is DEFENSE-IN-DEPTH ONLY — it is not a substitute for sandboxing.
+     8→     8→- HTTP tool performs full DNS resolution + IP validation to prevent SSRF.
+     9→     9→  The resolved IP is PINNED for the actual httpx request (URL rewritten to
+    10→    10→  use the IP, Host header set to original hostname, SNI preserved for HTTPS)
+    11→    11→  to defeat DNS-rebinding TOCTOU. Redirects are NOT followed automatically.
+    12→    12→- Filesystem tools validate against symlinks (path traversal protection).
+    13→    13→- Tool args fingerprinting is enforced for tools with requires_approval=True.
+    14→    14→"""
+    15→    15→
+    16→    16→from __future__ import annotations
+    17→    17→
+    18→    18→import asyncio
+    19→    19→import ipaddress
+    20→    20→import os
+    21→    21→import re
+    22→    22→import socket
+    23→    23→import sys
+    24→    24→import time
+    25→    25→import urllib.parse
+    26→    26→from pathlib import Path
+    27→    27→from typing import Any, ClassVar
+    28→    28→
+    29→    29→import httpx
+    30→    30→from pydantic import BaseModel, Field
+    31→    31→
+    32→    32→from arnes.tools.base import Tool, ToolContext, ToolResult
+    33→    33→
+    34→    34→# ============================================================
+    35→    35→# Shell tool — executes commands in sandbox by default
+    36→    36→# ============================================================
+    37→    37→
+    38→    38→
+    39→    39→class ShellTool(Tool):
+    40→    40→    """Execute a shell command. Sandboxed by default (Docker Tier 1).
+    41→    41→
+    42→    42→    SECURITY: Local execution (no sandbox) requires BOTH:
+    43→    43→    - ctx.sandbox_enabled = False
+    44→    44→    - ARNES_DEV_MODE environment variable set to "1"
+    45→    45→
+    46→    46→    This double-gate prevents accidental RCE in production.
+    47→    47→
+    48→    48→    .. warning::
+    49→    49→        The dangerous-command regex checked by ``_is_dangerous_command`` is
+    50→    50→        **defense-in-depth only** and is trivially bypassable by an
+    51→    51→        adversarial prompt (obfuscation, env-var expansion, heredocs,
+    52→    52→        aliasing, etc.). It exists to catch careless commands, not to
+    53→    53→        substitute for a real sandbox (Docker / nsjail / gVisor). For
+    54→    54→        untrusted input, ALWAYS run inside ``ctx.sandbox_container``.
+    55→    55→    """
+    56→    56→
+    57→    57→    name: ClassVar[str] = "shell"
+    58→    58→    description: ClassVar[str] = (
+    59→    59→        "Execute a shell command. Returns stdout, stderr, and exit code. "
+    60→    60→        "Use for: build, test, run scripts, inspect files. "
+    61→    61→        "Sandboxed by default — local execution requires ARNES_DEV_MODE=1."
+    62→    62→    )
+    63→    63→    requires_approval: ClassVar[bool] = True  # Destructive by default
+    64→    64→    sandbox_tier: ClassVar[int | None] = 1
+    65→    65→
+    66→    66→    class Args(BaseModel):
+    67→    67→        command: str = Field(..., description="Shell command to execute")
+    68→    68→        cwd: str = Field(default=".", description="Working directory inside sandbox")
+    69→    69→        timeout_s: int = Field(default=30, ge=1, le=300)
+    70→    70→        env: dict[str, str] = Field(default_factory=dict)
+    71→    71→
+    72→    72→    async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    73→    73→        start = time.monotonic()
+    74→    74→        try:
+    75→    75→            validated = self.Args.model_validate(args)
+    76→    76→        except Exception as e:
+    77→    77→            return ToolResult.fail("shell", f"Invalid args: {e}")
+    78→    78→
+    79→    79→        cmd = validated.command
+    80→    80→        if _is_dangerous_command(cmd):
+    81→    81→            return ToolResult.fail(
+    82→    82→                "shell",
+    83→    83→                "Blocked: command matches dangerous pattern. Use a more specific tool.",
+    84→    84→                duration_s=time.monotonic() - start,
+    85→    85→            )
+    86→    86→
+    87→    87→        if ctx.sandbox_enabled and ctx.sandbox_container:
+    88→    88→            result = await self._execute_in_sandbox(validated, ctx)
+    89→    89→        else:
+    90→    90→            # SECURITY: Require explicit dev mode override
+    91→    91→            if os.getenv("ARNES_DEV_MODE", "0") != "1":
+    92→    92→                return ToolResult.fail(
+    93→    93→                    "shell",
+    94→    94→                    "Local shell execution disabled by default. Set ARNES_DEV_MODE=1 or "
+    95→    95→                    "configure a sandbox container in ToolContext.",
+    96→    96→                    duration_s=time.monotonic() - start,
+    97→    97→                )
+    98→    98→            result = await self._execute_local(validated, ctx)
+    99→    99→
+   100→   100→        result.duration_s = time.monotonic() - start
+   101→   101→        return result
+   102→   102→
+   103→   103→    async def _execute_local(self, args: ShellTool.Args, ctx: ToolContext) -> ToolResult:
+   104→   104→        """Local execution (dev mode only). NEVER inherits os.environ — only
+   105→   105→        explicit env vars from args.env are passed (and secrets are filtered)."""
+   106→   106→        env: dict[str, str] = {}
+   107→   107→
+   108→   108→        for key, value in args.env.items():
+   109→   109→            if _looks_like_secret(key):
+   110→   110→                continue
+   111→   111→            if key in ("PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH"):
+   112→   112→                continue
+   113→   113→            env[key] = value
+   114→   114→
+   115→   115→        # Cross-platform PATH: inherit from os.environ if available
+   116→   116→        # (needed for basic commands like 'python', 'echo', etc.)
+   117→   117→        if "PATH" not in env:
+   118→   118→            env["PATH"] = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+   119→   119→        # On Windows, also preserve SystemRoot and COMSPEC (needed for subprocess)
+   120→   120→        if sys.platform == "win32":
+   121→   121→            if "SYSTEMROOT" not in env:
+   122→   122→                env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
+   123→   123→            if "COMSPEC" not in env:
+   124→   124→                env["COMSPEC"] = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
+   125→   125→
+   126→   126→        try:
+   127→   127→            proc = await asyncio.create_subprocess_shell(
+   128→   128→                args.command,
+   129→   129→                stdout=asyncio.subprocess.PIPE,
+   130→   130→                stderr=asyncio.subprocess.PIPE,
+   131→   131→                cwd=args.cwd,
+   132→   132→                env=env,
+   133→   133→            )
+   134→   134→            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=args.timeout_s)
+   135→   135→            return ToolResult(
+   136→   136→                tool="shell",
+   137→   137→                success=proc.returncode == 0,
+   138→   138→                output={
+   139→   139→                    "stdout": stdout.decode("utf-8", errors="replace"),
+   140→   140→                    "stderr": stderr.decode("utf-8", errors="replace"),
+   141→   141→                    "exit_code": proc.returncode,
+   142→   142→                    "mode": "local-dev",
+   143→   143→                },
+   144→   144→                error=None if proc.returncode == 0 else f"Exit code: {proc.returncode}",
+   145→   145→            )
+   146→   146→        except TimeoutError:
+   147→   147→            return ToolResult.fail("shell", f"Timeout after {args.timeout_s}s")
+   148→   148→        except Exception as e:
+   149→   149→            return ToolResult.fail("shell", str(e))
+   150→   150→
+   151→   151→    async def _execute_in_sandbox(self, args: ShellTool.Args, ctx: ToolContext) -> ToolResult:
+   152→   152→        """Docker-hardened execution (Tier 1 sandbox)."""
+   153→   153→        docker_cmd = [
+   154→   154→            "docker",
+   155→   155→            "run",
+   156→   156→            "--rm",
+   157→   157→            "--security-opt=no-new-privileges",
+   158→   158→            "--cap-drop=ALL",
+   159→   159→            "--network=none",
+   160→   160→            "--read-only",
+   161→   161→            "--tmpfs",
+   162→   162→            "/workspace:size=100M",
+   163→   163→            "-w",
+   164→   164→            "/workspace",
+   165→   165→        ]
+   166→   166→        for key, value in args.env.items():
+   167→   167→            if _looks_like_secret(key):
+   168→   168→                continue
+   169→   169→            if key in ("PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH"):
+   170→   170→                continue
+   171→   171→            docker_cmd.extend(["-e", f"{key}={value}"])
+   172→   172→
+   173→   173→        docker_cmd.extend(
+   174→   174→            [ctx.sandbox_container or "arnes-sandbox:latest", "sh", "-c", args.command]
+   175→   175→        )
+   176→   176→
+   177→   177→        try:
+   178→   178→            proc = await asyncio.create_subprocess_exec(
+   179→   179→                *docker_cmd,
+   180→   180→                stdout=asyncio.subprocess.PIPE,
+   181→   181→                stderr=asyncio.subprocess.PIPE,
+   182→   182→            )
+   183→   183→            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=args.timeout_s)
+   184→   184→            return ToolResult(
+   185→   185→                tool="shell",
+   186→   186→                success=proc.returncode == 0,
+   187→   187→                output={
+   188→   188→                    "stdout": stdout.decode("utf-8", errors="replace"),
+   189→   189→                    "stderr": stderr.decode("utf-8", errors="replace"),
+   190→   190→                    "exit_code": proc.returncode,
+   191→   191→                    "sandbox": "docker-tier1",
+   192→   192→                },
+   193→   193→                error=None if proc.returncode == 0 else f"Exit code: {proc.returncode}",
+   194→   194→            )
+   195→   195→        except FileNotFoundError:
+   196→   196→            return ToolResult.fail(
+   197→   197→                "shell", "Docker not available. Set ARNES_DEV_MODE=1 for local execution."
+   198→   198→            )
+   199→   199→        except TimeoutError:
+   200→   200→            return ToolResult.fail("shell", f"Sandbox timeout after {args.timeout_s}s")
+   201→   201→
+   202→   202→
+   203→   203→# ============================================================
+   204→   204→# HTTP tool — calls external APIs with full SSRF protection
+   205→   205→# ============================================================
+   206→   206→
+   207→   207→
+   208→   208→class HttpTool(Tool):
+   209→   209→    """Make HTTP requests with full SSRF protection.
+   210→   210→
+   211→   211→    Security measures:
+   212→   212→    - Blocks localhost, private IPs, link-local, multicast by default
+   213→   213→    - Performs DNS resolution and validates ALL resolved IPs
+   214→   214→    - Blocks cloud metadata endpoints (AWS, GCP, Azure)
+   215→   215→    - **DNS-rebinding mitigation**: the resolved IP is pinned for the actual
+   216→   216→      httpx request by rewriting the URL to use the IP directly, setting the
+   217→   217→      ``Host`` header to the original hostname, and (for HTTPS) setting
+   218→   218→      ``sni_hostname`` in the request extensions. Redirects are NOT followed
+   219→   219→      by default — a ``Location`` header could point to a brand-new hostname
+   220→   220→      and re-trigger DNS resolution.
+   221→   221→    """
+   222→   222→
+   223→   223→    name: ClassVar[str] = "http"
+   224→   224→    description: ClassVar[str] = (
+   225→   225→        "Make an HTTP request. Returns status, headers, body. "
+   226→   226→        "SSRF-protected: blocks localhost, private IPs, cloud metadata endpoints."
+   227→   227→    )
+   228→   228→
+   229→   229→    class Args(BaseModel):
+   230→   230→        url: str
+   231→   231→        method: str = Field(default="GET", pattern="^(GET|POST|PUT|DELETE|PATCH|HEAD)$")
+   232→   232→        headers: dict[str, str] = Field(default_factory=dict)
+   233→   233→        body: str | None = None
+   234→   234→        timeout_s: float = Field(default=30.0, ge=1.0, le=120.0)
+   235→   235→
+   236→   236→    async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+   237→   237→        start = time.monotonic()
+   238→   238→        try:
+   239→   239→            validated = self.Args.model_validate(args)
+   240→   240→        except Exception as e:
+   241→   241→            return ToolResult.fail("http", f"Invalid args: {e}")
+   242→   242→
+   243→   243→        # Full SSRF check with DNS resolution. Returns the resolved IP so we
+   244→   244→        # can pin it for the request (DNS-rebinding TOCTOU mitigation).
+   245→   245→        ssrf_error, resolved_ip = await _check_ssrf_async(validated.url)
+   246→   246→        if ssrf_error:
+   247→   247→            return ToolResult.fail("http", ssrf_error, duration_s=time.monotonic() - start)
+   248→   248→
+   249→   249→        # If secret broker is set, inject secrets JIT (never in LLM context)
+   250→   250→        headers = dict(validated.headers)
+   251→   251→        if ctx.secret_broker:
+   252→   252→            headers = ctx.secret_broker.inject_secrets(headers, ctx)
+   253→   253→
+   254→   254→        # Rewrite the URL to use the resolved IP directly. This prevents
+   255→   255→        # httpx from re-resolving DNS (which would re-open the DNS-rebinding
+   256→   256→        # TOCTOU window that _check_ssrf_async just closed). The original
+   257→   257→        # hostname is preserved as the Host header (HTTP) and as SNI (HTTPS).
+   258→   258→        try:
+   259→   259→            pinned_url, original_host, scheme = _build_ip_pinned_url(validated.url, resolved_ip)
+   260→   260→        except ValueError as e:
+   261→   261→            return ToolResult.fail("http", str(e), duration_s=time.monotonic() - start)
+   262→   262→
+   263→   263→        # The Host header must match the original hostname for virtual-host
+   264→   264→        # routing to work. httpx lets us override it explicitly.
+   265→   265→        headers.setdefault("Host", original_host)
+   266→   266→
+   267→   267→        try:
+   268→   268→            async with httpx.AsyncClient(
+   269→   269→                timeout=validated.timeout_s,
+   270→   270→                follow_redirects=False,  # redirects would re-trigger DNS
+   271→   271→            ) as client:
+   272→   272→                request = client.build_request(
+   273→   273→                    method=validated.method,
+   274→   274→                    url=pinned_url,
+   275→   275→                    headers=headers,
+   276→   276→                    content=validated.body,
+   277→   277→                )
+   278→   278→                # For HTTPS, set SNI to the original hostname so the TLS
+   279→   279→                # handshake presents the correct cert and validates against
+   280→   280→                # the original hostname (not the IP). The httpcore backend
+   281→   281→                # expects ``sni_hostname`` to be a ``str``.
+   282→   282→                if scheme == "https":
+   283→   283→                    request.extensions["sni_hostname"] = original_host
+   284→   284→                response = await client.send(request)
+   285→   285→            return ToolResult.ok(
+   286→   286→                "http",
+   287→   287→                {
+   288→   288→                    "status_code": response.status_code,
+   289→   289→                    "headers": dict(response.headers),
+   290→   290→                    "body": response.text[:10000],  # Truncate to prevent context bloat
+   291→   291→                },
+   292→   292→                duration_s=time.monotonic() - start,
+   293→   293→                url=validated.url,
+   294→   294→            )
+   295→   295→        except httpx.HTTPError as e:
+   296→   296→            return ToolResult.fail("http", str(e), duration_s=time.monotonic() - start)
+   297→   297→
+   298→   298→
+   299→   299→# ============================================================
+   300→   300→# Filesystem tools — path-validated with symlink protection
+   301→   301→# ============================================================
+   302→   302→
+   303→   303→
+   304→   304→class FilesystemReadTool(Tool):
+   305→   305→    """Read a file with path traversal AND symlink protection."""
+   306→   306→
+   307→   307→    name: ClassVar[str] = "fs_read"
+   308→   308→    description: ClassVar[str] = "Read a file. Path must be inside working_dir."
+   309→   309→
+   310→   310→    class Args(BaseModel):
+   311→   311→        path: str
+   312→   312→        max_bytes: int = Field(default=65536, ge=1, le=1048576)
+   313→   313→
+   314→   314→    async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+   315→   315→        try:
+   316→   316→            validated = self.Args.model_validate(args)
+   317→   317→        except Exception as e:
+   318→   318→            return ToolResult.fail("fs_read", f"Invalid args: {e}")
+   319→   319→
+   320→   320→        safe_path = _validate_path(validated.path, ctx.working_dir)
+   321→   321→        if not safe_path:
+   322→   322→            return ToolResult.fail("fs_read", f"Path outside working_dir: {validated.path}")
+   323→   323→
+   324→   324→        # Symlink protection: don't follow symlinks outside working_dir
+   325→   325→        if safe_path.is_symlink():
+   326→   326→            target = safe_path.resolve()
+   327→   327→            base = Path(ctx.working_dir).resolve()
+   328→   328→            if base not in target.parents and target != base:
+   329→   329→                return ToolResult.fail("fs_read", f"Symlink escapes working_dir: {validated.path}")
+   330→   330→
+   331→   331→        try:
+   332→   332→            content = safe_path.read_bytes()[: validated.max_bytes]
+   333→   333→            return ToolResult.ok(
+   334→   334→                "fs_read",
+   335→   335→                {
+   336→   336→                    "path": str(safe_path),
+   337→   337→                    "content": content.decode("utf-8", errors="replace"),
+   338→   338→                    "size_bytes": len(content),
+   339→   339→                },
+   340→   340→            )
+   341→   341→        except FileNotFoundError:
+   342→   342→            return ToolResult.fail("fs_read", f"File not found: {validated.path}")
+   343→   343→        except PermissionError:
+   344→   344→            return ToolResult.fail("fs_read", f"Permission denied: {validated.path}")
+   345→   345→
+   346→   346→
+   347→   347→class FilesystemWriteTool(Tool):
+   348→   348→    """Write a file with path traversal protection. Requires approval."""
+   349→   349→
+   350→   350→    name: ClassVar[str] = "fs_write"
+   351→   351→    description: ClassVar[str] = "Write a file. Path must be inside working_dir. Requires approval."
+   352→   352→    requires_approval: ClassVar[bool] = True
+   353→   353→
+   354→   354→    class Args(BaseModel):
+   355→   355→        path: str
+   356→   356→        content: str
+   357→   357→        mode: str = Field(default="w", pattern="^(w|a)$")
+   358→   358→
+   359→   359→    async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+   360→   360→        try:
+   361→   361→            validated = self.Args.model_validate(args)
+   362→   362→        except Exception as e:
+   363→   363→            return ToolResult.fail("fs_write", f"Invalid args: {e}")
+   364→   364→
+   365→   365→        safe_path = _validate_path(validated.path, ctx.working_dir)
+   366→   366→        if not safe_path:
+   367→   367→            return ToolResult.fail("fs_write", f"Path outside working_dir: {validated.path}")
+   368→   368→
+   369→   369→        # Symlink protection for write
+   370→   370→        if safe_path.exists() and safe_path.is_symlink():
+   371→   371→            target = safe_path.resolve()
+   372→   372→            base = Path(ctx.working_dir).resolve()
+   373→   373→            if base not in target.parents and target != base:
+   374→   374→                return ToolResult.fail("fs_write", f"Symlink escapes working_dir: {validated.path}")
+   375→   375→
+   376→   376→        try:
+   377→   377→            safe_path.parent.mkdir(parents=True, exist_ok=True)
+   378→   378→            with safe_path.open(validated.mode) as f:
+   379→   379→                f.write(validated.content)
+   380→   380→            return ToolResult.ok(
+   381→   381→                "fs_write",
+   382→   382→                {"path": str(safe_path), "bytes_written": len(validated.content)},
+   383→   383→            )
+   384→   384→        except PermissionError:
+   385→   385→            return ToolResult.fail("fs_write", f"Permission denied: {validated.path}")
+   386→   386→
+   387→   387→
+   388→   388→# ============================================================
+   389→   389→# Human approval tool — HITL as a typed tool call
+   390→   390→# ============================================================
+   391→   391→
+   392→   392→
+   393→   393→class HumanApprovalTool(Tool):
+   394→   394→    """Pause execution and ask a human for approval. HITL as a tool."""
+   395→   395→
+   396→   396→    name: ClassVar[str] = "human_approval"
+   397→   397→    description: ClassVar[str] = (
+   398→   398→        "Ask a human for approval before proceeding. "
+   399→   399→        "Use for destructive actions, irreversible changes, or high-cost operations."
+   400→   400→    )
+   401→   401→
+   402→   402→    class Args(BaseModel):
+   403→   403→        question: str = Field(..., description="What you're asking approval for")
+   404→   404→        options: list[str] = Field(default_factory=lambda: ["approve", "reject"])
+   405→   405→        default: str | None = None
+   406→   406→        ttl_s: int = Field(default=86400, ge=60, le=604800)  # 1min - 7days
+   407→   407→
+   408→   408→    async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+   409→   409→        try:
+   410→   410→            validated = self.Args.model_validate(args)
+   411→   411→        except Exception as e:
+   412→   412→            return ToolResult.fail("human_approval", f"Invalid args: {e}")
+   413→   413→
+   414→   414→        # For non-interactive runs, default to reject (fail-safe)
+   415→   415→        if not ctx.metadata.get("interactive", False):
+   416→   416→            return ToolResult(
+   417→   417→                tool="human_approval",
+   418→   418→                success=False,
+   419→   419→                output={"decision": "auto_rejected", "reason": "non_interactive"},
+   420→   420→                error="No human available in non-interactive mode. Set ctx.metadata['interactive']=True.",
+   421→   421→            )
+   422→   422→
+   423→   423→        # Interactive prompt via rich (CLI mode)
+   424→   424→        try:
+   425→   425→            from rich.console import Console
+   426→   426→            from rich.prompt import Confirm
+   427→   427→
+   428→   428→            console = Console()
+   429→   429→            console.print(f"\n[yellow]Human approval required:[/yellow] {validated.question}")
+   430→   430→            approved = Confirm.ask("Approve?", default=False)
+   431→   431→            return ToolResult.ok(
+   432→   432→                "human_approval",
+   433→   433→                {"decision": "approved" if approved else "rejected"},
+   434→   434→            )
+   435→   435→        except ImportError:
+   436→   436→            return ToolResult.fail("human_approval", "rich not installed for interactive prompt")
+   437→   437→
+   438→   438→
+   439→   439→# ============================================================
+   440→   440→# Helpers
+   441→   441→# ============================================================
+   442→   442→
+   443→   443→
+   444→   444→_DANGEROUS_PATTERNS = [
+   445→   445→    r"\brm\s+-rf\s+/",
+   446→   446→    r"\bmkfs\b",
+   447→   447→    r"\bdd\s+if=",
+   448→   448→    r":\(\)\s*\{",  # fork bomb
+   449→   449→    r"\b>\s*/dev/sd[a-z]",
+   450→   450→    r"\bchmod\s+-R\s+777\s+/",
+   451→   451→    r"\bcurl\s+.*\|\s*sh",
+   452→   452→    r"\bwget\s+.*\|\s*sh",
+   453→   453→    r"\bnc\s+-l",  # reverse shell
+   454→   454→    r"\b/dev/tcp/",  # bash reverse shell
+   455→   455→    r"\bnohup\s+.*&\s*$",  # daemon escape
+   456→   456→    # --- Added in v0.1.x security hardening (defense-in-depth) ---
+   457→   457→    r"\bpython\s+-c\b",  # arbitrary code execution via -c
+   458→   458→    r"\bpython3\s+-c\b",  # arbitrary code execution via -c
+   459→   459→    r"\beval\s*\(",  # JS/Python eval() invocation
+   460→   460→    r"\bexec\s*\(",  # Python exec() invocation
+   461→   461→    r"\bfind\s+.*-delete\b",  # find ... -delete
+   462→   462→    r"\bbase64\s+-d\b",  # base64 decode (payload decoding)
+   463→   463→    r"\bbase64\s+--decode\b",  # base64 decode long form
+   464→   464→    r"\b\s{2,}.*&&",  # suspiciously-indented chained commands
+   465→   465→]
+   466→   466→
+   467→   467→
+   468→   468→def _is_dangerous_command(cmd: str) -> bool:
+   469→   469→    """Basic dangerous command detection.
+   470→   470→
+   471→   471→    .. warning::
+   472→   472→        This regex is **defense-in-depth only**. It catches common careless
+   473→   473→        payloads but is trivially bypassable by an adversarial prompt
+   474→   474→        (obfuscation, env-var expansion, heredocs, aliasing, etc.). It is
+   475→   475→        NOT a substitute for running shell commands inside a real sandbox
+   476→   476→        (Docker / nsjail / gVisor). For untrusted input, ALWAYS configure
+   477→   477→        ``ctx.sandbox_container``.
+   478→   478→    """
+   479→   479→    return any(re.search(p, cmd, re.IGNORECASE) for p in _DANGEROUS_PATTERNS)
+   480→   480→
+   481→   481→
+   482→   482→def _looks_like_secret(key: str) -> bool:
+   483→   483→    """Heuristic: does this env var name suggest it's a secret?"""
+   484→   484→    secret_patterns = [
+   485→   485→        "API_KEY",
+   486→   486→        "SECRET",
+   487→   487→        "TOKEN",
+   488→   488→        "PASSWORD",
+   489→   489→        "PASSWD",
+   490→   490→        "CREDENTIAL",
+   491→   491→        "PRIVATE_KEY",
+   492→   492→    ]
+   493→   493→    return any(p in key.upper() for p in secret_patterns)
+   494→   494→
+   495→   495→
+   496→   496→def _validate_path(path: str, working_dir: str) -> Path | None:
+   497→   497→    """Validate that path is inside working_dir (path traversal protection).
+   498→   498→
+   499→   499→    Uses Path.resolve() to canonicalize the path, then checks containment.
+   500→   500→    """
+   501→   501→    try:
+   502→   502→        base = Path(working_dir).resolve(strict=False)
+   503→   503→        target = (base / path).resolve(strict=False)
+   504→   504→        # Ensure target is inside base
+   505→   505→        try:
+   506→   506→            target.relative_to(base)
+   507→   507→        except ValueError:
+   508→   508→            return None
+   509→   509→        return target
+   510→   510→    except (ValueError, OSError):
+   511→   511→        return None
+   512→   512→
+   513→   513→
+   514→   514→# SSRF protection — full DNS resolution
+   515→   515→_BLOCKED_HOSTS = {
+   516→   516→    "localhost",
+   517→   517→    "ip6-localhost",
+   518→   518→    "ip6-loopback",
+   519→   519→    "metadata.google.internal",  # GCP metadata
+   520→   520→    "metadata.aws.internal",  # AWS metadata (alias)
+   521→   521→}
+   522→   522→
+   523→   523→# Cloud metadata IPs
+   524→   524→_BLOCKED_IPS = {
+   525→   525→    "169.254.169.254",  # AWS/Azure/GCP metadata
+   526→   526→    "100.100.100.200",  # Alibaba Cloud metadata
+   527→   527→    "fd00:ec2::254",  # AWS IPv6 metadata
+   528→   528→}
+   529→   529→
+   530→   530→
+   531→   531→async def _check_ssrf_async(url: str) -> tuple[str | None, str | None]:
+   532→   532→    """Full SSRF check with DNS resolution.
+   533→   533→
+   534→   534→    Returns ``(error_message, resolved_ip)``:
+   535→   535→    - On success: ``(None, ip_str)`` — ``ip_str`` is the resolved IP that
+   536→   536→      the caller should pin into the actual HTTP request to defeat
+   537→   537→      DNS-rebinding TOCTOU attacks.
+   538→   538→    - On failure: ``(error_message, None)``.
+   539→   539→
+   540→   540→    The caller is responsible for using ``resolved_ip`` when issuing the
+   541→   541→    request (see ``_build_ip_pinned_url``). Returning the IP here means
+   542→   542→    the SSRF check and the request share the same DNS resolution result.
+   543→   543→    """
+   544→   544→    try:
+   545→   545→        parsed = urllib.parse.urlparse(url)
+   546→   546→    except ValueError:
+   547→   547→        return f"Invalid URL: {url}", None
+   548→   548→
+   549→   549→    if parsed.scheme not in ("http", "https"):
+   550→   550→        return f"Blocked scheme: {parsed.scheme}", None
+   551→   551→
+   552→   552→    if not parsed.hostname:
+   553→   553→        return "No hostname in URL", None
+   554→   554→
+   555→   555→    hostname = parsed.hostname.lower()
+   556→   556→
+   557→   557→    # Block obvious internal hostnames
+   558→   558→    if hostname in _BLOCKED_HOSTS:
+   559→   559→        return f"Blocked internal host: {hostname}", None
+   560→   560→
+   561→   561→    # Try to parse as IP first — if the URL already contains an IP, we
+   562→   562→    # validate it but don't need to resolve DNS. The IP itself is the
+   563→   563→    # pinned IP.
+   564→   564→    try:
+   565→   565→        ip = ipaddress.ip_address(hostname)
+   566→   566→        if _is_blocked_ip(ip):
+   567→   567→            return f"Blocked private/loopback IP: {hostname}", None
+   568→   568→        return None, str(ip)
+   569→   569→    except ValueError:
+   570→   570→        pass
+   571→   571→
+   572→   572→    # It's a hostname — resolve DNS and validate ALL resolved IPs.
+   573→   573→    # We also pick the FIRST safe IP to pin for the request.
+   574→   574→    try:
+   575→   575→        infos = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
+   576→   576→    except socket.gaierror:
+   577→   577→        return f"DNS resolution failed for: {hostname}", None
+   578→   578→
+   579→   579→    safe_ip: str | None = None
+   580→   580→    for _, _, _, _, sockaddr in infos:
+   581→   581→        ip_str = sockaddr[0]
+   582→   582→        try:
+   583→   583→            ip = ipaddress.ip_address(ip_str)
+   584→   584→        except ValueError:
+   585→   585→            continue
+   586→   586→        if _is_blocked_ip(ip):
+   587→   587→            return f"Blocked: {hostname} resolves to private IP {ip_str}", None
+   588→   588→        if safe_ip is None:
+   589→   589→            safe_ip = str(ip_str)
+   590→   590→
+   591→   591→    if safe_ip is None:
+   592→   592→        return f"No usable IPs resolved for: {hostname}", None
+   593→   593→    return None, safe_ip
+   594→   594→
+   595→   595→
+   596→   596→def _build_ip_pinned_url(url: str, resolved_ip: str | None) -> tuple[str, str, str]:
+   597→   597→    """Rewrite ``url`` to use ``resolved_ip`` as the host.
+   598→   598→
+   599→   599→    Returns ``(pinned_url, original_hostname, scheme)``.
+   600→   600→
+   601→   601→    - The path / query / fragment / port / scheme are preserved.
+   602→   602→    - The hostname is replaced by the resolved IP (IPv6 is bracketed per
+   603→   603→      RFC 3986 so httpx parses it correctly).
+   604→   604→    - The original hostname is returned separately so the caller can set
+   605→   605→      the ``Host`` header (HTTP) and ``sni_hostname`` extension (HTTPS)
+   606→   606→      for TLS cert validation + virtual-host routing.
+   607→   607→
+   608→   608→    Raises ``ValueError`` if the URL cannot be parsed or no IP is given.
+   609→   609→    """
+   610→   610→    if resolved_ip is None:
+   611→   611→        raise ValueError("No resolved IP available to pin")
+   612→   612→    parsed = urllib.parse.urlparse(url)
+   613→   613→    if not parsed.hostname:
+   614→   614→        raise ValueError("URL has no hostname")
+   615→   615→    scheme = parsed.scheme.lower()
+   616→   616→    hostname = parsed.hostname.lower()
+   617→   617→
+   618→   618→    # Bracket IPv6 literals per RFC 3986.
+   619→   619→    ip_for_url = resolved_ip
+   620→   620→    if ":" in resolved_ip and not resolved_ip.startswith("["):
+   621→   621→        ip_for_url = f"[{resolved_ip}]"
+   622→   622→
+   623→   623→    # Reconstruct netloc: [user[:pass]@]host[:port]
+   624→   624→    netloc = ip_for_url
+   625→   625→    if parsed.port is not None:
+   626→   626→        netloc = f"{ip_for_url}:{parsed.port}"
+   627→   627→    if parsed.username:
+   628→   628→        userinfo = parsed.username
+   629→   629→        if parsed.password:
+   630→   630→            userinfo = f"{userinfo}:{parsed.password}"
+   631→   631→        netloc = f"{userinfo}@{netloc}"
+   632→   632→
+   633→   633→    pinned = urllib.parse.urlunparse(
+   634→   634→        (
+   635→   635→            parsed.scheme,
+   636→   636→            netloc,
+   637→   637→            parsed.path or "/",
+   638→   638→            parsed.params,
+   639→   639→            parsed.query,
+   640→   640→            parsed.fragment,
+   641→   641→        )
+   642→   642→    )
+   643→   643→    return pinned, hostname, scheme
+   644→   644→
+   645→   645→
+   646→   646→def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+   647→   647→    """Check if an IP should be blocked for SSRF protection."""
+   648→   648→    if str(ip) in _BLOCKED_IPS:
+   649→   649→        return True
+   650→   650→    return (
+   651→   651→        ip.is_private
+   652→   652→        or ip.is_loopback
+   653→   653→        or ip.is_link_local
+   654→   654→        or ip.is_multicast
+   655→   655→        or ip.is_reserved
+   656→   656→        or ip.is_unspecified
+   657→   657→    )
+   658→   658→
+   659→   659→
+   660→   660→# Keep sync version for backwards compat / tests
+   661→   661→def _check_ssrf(url: str) -> str | None:
+   662→   662→    """Sync SSRF check (basic, no DNS resolution). Use _check_ssrf_async for full protection."""
+   663→   663→    try:
+   664→   664→        parsed = urllib.parse.urlparse(url)
+   665→   665→    except ValueError:
+   666→   666→        return f"Invalid URL: {url}"
+   667→   667→
+   668→   668→    if parsed.scheme not in ("http", "https"):
+   669→   669→        return f"Blocked scheme: {parsed.scheme}"
+   670→   670→
+   671→   671→    if not parsed.hostname:
+   672→   672→        return "No hostname in URL"
+   673→   673→
+   674→   674→    hostname = parsed.hostname.lower()
+   675→   675→    if hostname in _BLOCKED_HOSTS:
+   676→   676→        return f"Blocked internal host: {hostname}"
+   677→   677→
+   678→   678→    if hostname in _BLOCKED_IPS:
+   679→   679→        return f"Blocked metadata endpoint: {hostname}"
+   680→   680→
+   681→   681→    try:
+   682→   682→        ip = ipaddress.ip_address(hostname)
+   683→   683→        if _is_blocked_ip(ip):
+   684→   684→            return f"Blocked private/loopback IP: {hostname}"
+   685→   685→    except ValueError:
+   686→   686→        pass
+   687→   687→
+   688→   688→    return None
+   689→   689→

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Literal
+
+from pydantic import BaseModel, Field
 
 from arnes.specialists.base import Specialist, SpecialistConfig
 
@@ -36,7 +38,37 @@ Return JSON matching this schema:
   "assumptions": ["List of assumptions made"],
   "warnings": ["List of warnings, if any"]
 }
+
+You MUST respond with ONLY valid JSON matching the schema. No markdown, no explanation, no code fences. Just the JSON object.
 """
+
+
+# ============================================================
+# Pydantic output models — strong `pydantic_model` validator.
+# Validates types AND enum values (action: create|modify), which the
+# weak JSON-schema `output_schema` check cannot do.
+# ============================================================
+
+
+CoderAction = Literal["create", "modify"]
+
+
+class CoderFile(BaseModel):
+    """A single file produced or modified by the coder."""
+
+    path: str
+    language: str
+    content: str
+    action: CoderAction = "create"
+
+
+class CoderOutput(BaseModel):
+    """Structured output for the @coder specialist."""
+
+    files: list[CoderFile] = Field(default_factory=list)
+    summary: str
+    assumptions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class Coder(Specialist):
@@ -55,6 +87,11 @@ class Coder(Specialist):
                 "summary": {"type": "string"},
             },
         },
+        # Strong validation: pydantic validates field types AND enum values
+        # (action: create|modify) — a malformed value like `action: "delete"`
+        # is rejected here even though it would slip past the weak
+        # JSON-schema `required`-fields check.
+        pydantic_model=CoderOutput,
         default_model="ollama/llama3.2",
         temperature=0.0,  # Code should be deterministic
     )

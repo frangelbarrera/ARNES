@@ -46,9 +46,17 @@ class LiteLLMProvider(LLMProvider):
 
     Reads API keys from environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.).
     NEVER stores or logs the keys.
+
+    Accepts arbitrary ``**kwargs`` at construction time (e.g. ``api_key``,
+    ``base_url``, ``timeout``) and forwards them to every ``litellm.acompletion``
+    call. Caller-supplied kwargs at ``complete()`` time take precedence over
+    construction-time kwargs — this lets a test/dev override (e.g. an explicit
+    ``api_key="sk-test"``) reach litellm without being silently dropped, while
+    still allowing the default env-var-based resolution when no kwargs are
+    given.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         # Validate that LiteLLM is available
         try:
             import litellm  # noqa: F401
@@ -56,6 +64,12 @@ class LiteLLMProvider(LLMProvider):
             raise ImportError(
                 "LiteLLM is required for paid providers. Install with: pip install litellm"
             ) from e
+
+        # Store construction-time kwargs (api_key, base_url, etc.) so they can
+        # be merged into every litellm.acompletion call. We intentionally do
+        # NOT introspect or persist anything that looks like a secret —
+        # litellm handles env-var resolution and key rotation itself.
+        self._init_kwargs: dict[str, Any] = dict(kwargs)
 
     async def complete(
         self,
@@ -75,21 +89,24 @@ class LiteLLMProvider(LLMProvider):
         litellm_messages = [m.model_dump(exclude_none=True) for m in messages]
 
         # Build the call kwargs WITHOUT clobbering caller-supplied **kwargs.
-        # Previously this code reassigned `kwargs` to a local dict, silently
-        # dropping any caller-supplied kwargs (e.g. `top_p`, `seed`, `user`).
-        call_kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": litellm_messages,
-            "temperature": temperature,
-        }
+        # Order of precedence (lowest → highest):
+        #   1. construction-time kwargs (self._init_kwargs)
+        #   2. per-call kwargs (passed to complete())
+        #   3. explicit named params (model, temperature, max_tokens, ...)
+        # Step 3 wins because it's applied LAST via call_kwargs.update below.
+        call_kwargs: dict[str, Any] = {**self._init_kwargs}
+        call_kwargs.update(kwargs)
+        call_kwargs["model"] = model
+        call_kwargs["messages"] = litellm_messages
+        call_kwargs["temperature"] = temperature
         if max_tokens:
             call_kwargs["max_tokens"] = max_tokens
         if tools:
             call_kwargs["tools"] = tools
         if response_format and response_format.get("type") == "json_object":
             call_kwargs["response_format"] = {"type": "json_object"}
-        # Pass through any remaining caller-supplied kwargs (top_p, seed, etc.).
-        call_kwargs.update(kwargs)
+        # Note: per-call kwargs were already merged above (step 2), so any
+        # caller-supplied `top_p`, `seed`, `user`, etc. reach litellm.
 
         # LiteLLM async call
         response = await litellm.acompletion(**call_kwargs)
