@@ -1,0 +1,772 @@
+     1→"""
+     2→ARNES CLI — command-line interface.
+     3→
+     4→Commands:
+     5→    arnes init --manual <name>       Scaffold a new playbook
+     6→    arnes run <playbook.yaml>        Execute a playbook
+     7→    arnes run <playbook> --stream    Execute with real-time step streaming
+     8→    arnes stream <specialist>        Stream a specialist's response token-by-token
+     9→    arnes list specialists           List available specialists
+    10→    arnes list playbooks             List curated playbooks
+    11→    arnes lint <playbook.yaml>       Validate a playbook without executing
+    12→    arnes eval <playbook.yaml>       Run playbook with mock LLM for testing
+    13→    arnes benchmark [--seeds N]      Run benchmark suite with mock LLM
+    14→    arnes mcp serve                  Start MCP server (stdio or http)
+    15→    arnes --version                  Print version
+    16→"""
+    17→
+    18→from __future__ import annotations
+    19→
+    20→import asyncio
+    21→import sys
+    22→from collections.abc import AsyncIterator
+    23→from datetime import datetime
+    24→from pathlib import Path
+    25→from typing import Any
+    26→
+    27→import click
+    28→import structlog
+    29→from rich.console import Console
+    30→from rich.panel import Panel
+    31→from rich.table import Table
+    32→
+    33→from arnes import __version__
+    34→from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
+    35→from arnes.llm.factory import get_provider
+    36→from arnes.middleware.cost_guard import CostBudget
+    37→from arnes.playbooks.compiler import PlaybookCompileError, PlaybookCompiler
+    38→from arnes.playbooks.executor import PlaybookExecutor, PlaybookRunResult
+    39→from arnes.playbooks.schema import Playbook
+    40→from arnes.specialists.base import get_default_specialist_registry
+    41→
+    42→console = Console()
+    43→logger = structlog.get_logger(__name__)
+    44→
+    45→
+    46→@click.group()
+    47→@click.version_option(__version__, prog_name="arnes")
+    48→def cli() -> None:
+    49→    """ARNES — The Open Agent Harness. Write the manual, ARNES runs it."""
+    50→    pass
+    51→
+    52→
+    53→@cli.command()
+    54→@click.option("--manual", help="Name of the playbook to scaffold")
+    55→@click.option(
+    56→    "--lang",
+    57→    type=click.Choice(["en", "es"]),
+    58→    default="en",
+    59→    help="Language for the scaffolded playbook",
+    60→)
+    61→def init(manual: str | None, lang: str) -> None:
+    62→    """Scaffold a new playbook or initialize an ARNES project."""
+    63→    if manual:
+    64→        _scaffold_manual(manual, lang)
+    65→    else:
+    66→        _init_project()
+    67→
+    68→
+    69→@cli.command()
+    70→@click.argument("playbook_path", type=click.Path(exists=True))
+    71→@click.option("--model", default="ollama/llama3.2", help="LLM model to use")
+    72→@click.option("--budget", type=float, default=0.50, help="Max USD budget for this run")
+    73→@click.option("--mock", is_flag=True, help="Use mock LLM (no network, $0 cost)")
+    74→@click.option("--interactive", is_flag=True, help="Enable interactive HITL prompts")
+    75→@click.option("--output", "-o", type=click.Path(), help="Save bitácora to file")
+    76→@click.option(
+    77→    "--stream",
+    78→    is_flag=True,
+    79→    help="Stream step events as they complete (best-effort: parallel branches stream in completion order)",
+    80→)
+    81→def run(
+    82→    playbook_path: str,
+    83→    model: str,
+    84→    budget: float,
+    85→    mock: bool,
+    86→    interactive: bool,
+    87→    output: str | None,
+    88→    stream: bool,
+    89→) -> None:
+    90→    """Execute a playbook YAML."""
+    91→    asyncio.run(_run_playbook(playbook_path, model, budget, mock, interactive, output, stream))
+    92→
+    93→
+    94→# Spanish alias for backwards compat (will be deprecated in v0.2)
+    95→cli.add_command(run, name="ejecutar")
+    96→
+    97→
+    98→@cli.group()
+    99→def list_cmd() -> None:
+   100→    """List available specialists, playbooks, or tools."""
+   101→    pass
+   102→
+   103→
+   104→# Register ``list`` as an alias so the CLI command (``arnes list specialists``)
+   105→# keeps working — the Python function is renamed to ``list_cmd`` because a
+   106→# function named ``list`` shadows the builtin and breaks mypy type resolution
+   107→# for any sibling annotations using ``list[...]``.
+   108→cli.add_command(list_cmd, name="list")
+   109→
+   110→
+   111→@list_cmd.command("specialists")
+   112→def list_specialists() -> None:
+   113→    """List available specialists."""
+   114→    registry = get_default_specialist_registry()
+   115→    table = Table(title="ARNES Specialists")
+   116→    table.add_column("Name", style="cyan")
+   117→    table.add_column("Description")
+   118→    table.add_column("Default Model", style="dim")
+   119→
+   120→    for config in registry.configs():
+   121→        table.add_row(
+   122→            config.name,
+   123→            config.description,
+   124→            config.default_model or "ollama/llama3.2",
+   125→        )
+   126→
+   127→    console.print(table)
+   128→
+   129→
+   130→@list_cmd.command("playbooks")
+   131→@click.option(
+   132→    "--dir",
+   133→    "playbooks_dir",
+   134→    type=click.Path(),
+   135→    default="manuals",
+   136→    help="Directory to scan for playbooks",
+   137→)
+   138→def list_playbooks(playbooks_dir: str) -> None:
+   139→    """List curated playbooks in a directory."""
+   140→    path = Path(playbooks_dir)
+   141→    if not path.exists():
+   142→        console.print(f"[yellow]Directory not found: {path}[/yellow]")
+   143→        return
+   144→
+   145→    table = Table(title=f"Playbooks in {path}/")
+   146→    table.add_column("File", style="cyan")
+   147→    table.add_column("Name")
+   148→    table.add_column("Objective")
+   149→    table.add_column("Budget", justify="right")
+   150→
+   151→    for yaml_file in sorted(list(path.glob("*.yaml")) + list(path.glob("*.yml"))):
+   152→        try:
+   153→            playbook = PlaybookCompiler.from_file(yaml_file)
+   154→            # The schema validator guarantees metadata is non-None after compile.
+   155→            assert playbook.metadata is not None
+   156→            obj = playbook.metadata.objective
+   157→            table.add_row(
+   158→                yaml_file.name,
+   159→                playbook.metadata.name,
+   160→                obj[:60] + "..." if len(obj) > 60 else obj,
+   161→                f"${playbook.metadata.budget_usd:.2f}",
+   162→            )
+   163→        except PlaybookCompileError as e:
+   164→            table.add_row(yaml_file.name, "[red]ERROR[/red]", str(e)[:60], "-")
+   165→
+   166→    console.print(table)
+   167→
+   168→
+   169→@cli.command()
+   170→@click.argument("playbook_path", type=click.Path(exists=True))
+   171→def lint(playbook_path: str) -> None:
+   172→    """Validate a playbook without executing it."""
+   173→    try:
+   174→        playbook = PlaybookCompiler.from_file(playbook_path)
+   175→        assert playbook.metadata is not None
+   176→        console.print(f"[green]✓[/green] Playbook valid: [cyan]{playbook.metadata.name}[/cyan]")
+   177→        console.print(f"  Objective: {playbook.metadata.objective}")
+   178→        console.print(f"  Steps: {len(playbook.steps)}")
+   179→        console.print(f"  Budget: ${playbook.metadata.budget_usd:.2f}")
+   180→
+   181→        for i, step in enumerate(playbook.steps, 1):
+   182→            action = step.specialist or step.tool or "parallel"
+   183→            console.print(f"  {i}. [cyan]{step.id}[/cyan] → {action}")
+   184→    except PlaybookCompileError as e:
+   185→        console.print(f"[red]✗[/red] Playbook invalid:\n{e}")
+   186→        sys.exit(1)
+   187→
+   188→
+   189→@cli.command()
+   190→@click.argument("specialist")
+   191→@click.option("--task", required=True, help="Task description for the specialist")
+   192→@click.option("--model", default="ollama/llama3.2", help="LLM model to use")
+   193→@click.option("--mock", is_flag=True, help="Use mock LLM (no network, $0 cost)")
+   194→def stream(specialist: str, task: str, model: str, mock: bool) -> None:
+   195→    """Stream a specialist's response token by token.
+   196→
+   197→    Example:
+   198→        arnes stream @planner --task "Plan a blog post"
+   199→        arnes stream @planner --task "Plan a blog post" --mock
+   200→    """
+   201→    asyncio.run(_stream_specialist(specialist, task, model, mock))
+   202→
+   203→
+   204→async def _stream_specialist(specialist: str, task: str, model: str, mock: bool) -> None:
+   205→    """Stream a specialist's response."""
+   206→    from arnes import Harness, HarnessConfig
+   207→
+   208→    if mock or model.startswith("mock/"):
+   209→        provider: LLMProvider = _SchemaValidMockLLMProvider()
+   210→    else:
+   211→        provider = get_provider(model)
+   212→
+   213→    harness = Harness(
+   214→        config=HarnessConfig(model=model, budget_usd=0.50),
+   215→        provider=provider,
+   216→    )
+   217→
+   218→    # Normalize specialist name
+   219→    if not specialist.startswith("@"):
+   220→        specialist = "@" + specialist
+   221→
+   222→    # Check specialist exists before streaming
+   223→    specialist_obj = harness.specialist_registry.get(specialist)
+   224→    if not specialist_obj:
+   225→        available = harness.specialist_registry.list_names()
+   226→        console.print(f"[red]✗[/red] Specialist '{specialist}' not found. Available: {available}")
+   227→        sys.exit(1)
+   228→
+   229→    console.print(f"[cyan]Streaming[/cyan] {specialist}...")
+   230→    console.print("[dim]---[/dim]")
+   231→
+   232→    total_in = 0
+   233→    total_out = 0
+   234→    total_cost = 0.0
+   235→    chunks_received = 0
+   236→    chunks_list = []  # Store chunks for bitácora (single pass, no double-call)
+   237→
+   238→    async for chunk in harness.stream(specialist, {"task": task}):
+   239→        chunks_received += 1
+   240→        chunks_list.append(chunk)
+   241→        if chunk.content:
+   242→            console.print(chunk.content, end="", style="white")
+   243→        total_in += chunk.usage.tokens_in
+   244→        total_out += chunk.usage.tokens_out
+   245→        total_cost += chunk.usage.cost_usd
+   246→
+   247→    if chunks_received == 0:
+   248→        console.print("[yellow]No response received.[/yellow]")
+   249→        sys.exit(1)
+   250→
+   251→    console.print()
+   252→    console.print("[dim]---[/dim]")
+   253→    console.print(f"[dim]Tokens: {total_in} in, {total_out} out. Cost: ${total_cost:.4f}[/dim]")
+   254→
+   255→    # Save bitácora from the accumulated chunks (no second LLM call)
+   256→    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+   257→    bitacora_path = f"bitacora-stream-{specialist.lstrip('@')}-{ts}.md"
+   258→
+   259→    audit_content = f"# ARNES Stream Bitácora — {specialist}\n\n"
+   260→    audit_content += f"**Timestamp:** {ts}\n"
+   261→    audit_content += f"**Task:** {task}\n\n"
+   262→    audit_content += "## Response\n\n"
+   263→    audit_content += "```json\n"
+   264→    audit_content += "".join(c.content for c in chunks_list)
+   265→    audit_content += "\n```\n\n"
+   266→    audit_content += "## Usage\n\n"
+   267→    audit_content += f"- Tokens in: {total_in}\n"
+   268→    audit_content += f"- Tokens out: {total_out}\n"
+   269→    audit_content += f"- Cost: ${total_cost:.4f}\n"
+   270→
+   271→    Path(bitacora_path).write_text(audit_content, encoding="utf-8")
+   272→    console.print(f"\n[cyan]Bitácora saved to:[/cyan] {bitacora_path}")
+   273→
+   274→
+   275→@cli.command()
+   276→@click.argument("playbook_path", type=click.Path(exists=True))
+   277→def eval(playbook_path: str) -> None:
+   278→    """Run playbook with mock LLM for testing (no network, $0 cost)."""
+   279→    asyncio.run(
+   280→        _run_playbook(playbook_path, "mock/test", 0.0, mock=True, interactive=False, output=None)
+   281→    )
+   282→
+   283→
+   284→@cli.command()
+   285→@click.option(
+   286→    "--seeds",
+   287→    default=1,
+   288→    type=click.IntRange(min=1, max=20),
+   289→    help="Number of seeds to run each playbook with (statistical significance)",
+   290→)
+   291→@click.option(
+   292→    "--concurrent",
+   293→    default=1,
+   294→    type=click.IntRange(min=1, max=16),
+   295→    help="Number of playbooks to run concurrently",
+   296→)
+   297→@click.option(
+   298→    "--manuals-dir",
+   299→    "manuals_dir",
+   300→    type=click.Path(),
+   301→    default=None,
+   302→    help="Directory to scan for playbooks (default: repo manuals/)",
+   303→)
+   304→@click.option(
+   305→    "--output",
+   306→    "-o",
+   307→    "output",
+   308→    type=click.Path(),
+   309→    default="benchmark-results.json",
+   310→    help="Path to save JSON results (default: benchmark-results.json)",
+   311→)
+   312→def benchmark(seeds: int, concurrent: int, manuals_dir: str | None, output: str) -> None:
+   313→    """Run the basic benchmark suite against the mock LLM.
+   314→
+   315→    Runs every playbook in ``manuals/`` ``--seeds`` times with a
+   316→    deterministic seeded mock LLM (no network, no API spend). Reports
+   317→    per-playbook success rate, avg/p95 duration, tokens, and cost.
+   318→
+   319→    Examples:
+   320→
+   321→        arnes benchmark                          # 1 seed, 1 concurrent
+   322→        arnes benchmark --seeds 3                # 3 seeds per playbook
+   323→        arnes benchmark --concurrent 4           # 4 playbooks at once
+   324→        arnes benchmark --seeds 5 --concurrent 4 # 5 seeds, 4-way parallel
+   325→    """
+   326→    asyncio.run(_run_benchmark(seeds, concurrent, manuals_dir, output))
+   327→
+   328→
+   329→async def _run_benchmark(seeds: int, concurrent: int, manuals_dir: str | None, output: str) -> None:
+   330→    """Run the basic benchmark suite and print/save results.
+   331→
+   332→    Pulls in :class:`arnes.benchmarks.BenchmarkRunner` lazily so the
+   333→    CLI startup cost stays low — ``arnes --version`` doesn't pay for
+   334→    importing the benchmark harness.
+   335→    """
+   336→    from pathlib import Path
+   337→
+   338→    from arnes.benchmarks import BenchmarkRunner
+   339→    from arnes.benchmarks.suites.basic import BasicBenchmarkSuite
+   340→
+   341→    suite_manuals = Path(manuals_dir) if manuals_dir else None
+   342→    suite = BasicBenchmarkSuite(manuals_dir=suite_manuals)
+   343→
+   344→    playbooks = suite.playbooks()
+   345→    if not playbooks:
+   346→        manuals_display = manuals_dir or "<repo>/manuals"
+   347→        console.print(f"[red]✗[/red] No playbooks found in {manuals_display}")
+   348→        sys.exit(1)
+   349→
+   350→    console.print(
+   351→        Panel.fit(
+   352→            f"[bold cyan]ARNES[/bold cyan] — Benchmark suite: {suite.name}\n"
+   353→            f"  [dim]Playbooks:[/dim] {len(playbooks)}\n"
+   354→            f"  [dim]Seeds:[/dim] {seeds}\n"
+   355→            f"  [dim]Concurrent:[/dim] {concurrent}\n"
+   356→            f"  [dim]Total runs:[/dim] {len(playbooks) * seeds}",
+   357→            border_style="cyan",
+   358→        )
+   359→    )
+   360→
+   361→    runner = BenchmarkRunner()
+   362→    seed_values = list(range(seeds))
+   363→    with console.status("[cyan]Running benchmarks...[/cyan]"):
+   364→        results = await runner.run_suite(suite, seeds=seed_values, concurrent=concurrent)
+   365→
+   366→    # Print results as a rich table.
+   367→    table = Table(title=f"Benchmark Results — {suite.name} suite")
+   368→    table.add_column("Playbook", style="cyan")
+   369→    table.add_column("Runs", justify="right")
+   370→    table.add_column("Success", justify="right")
+   371→    table.add_column("Avg dur (s)", justify="right")
+   372→    table.add_column("P95 dur (s)", justify="right")
+   373→    table.add_column("Avg tokens", justify="right")
+   374→    table.add_column("Avg cost", justify="right")
+   375→
+   376→    for m in results.per_playbook:
+   377→        avg_tokens = m.avg_tokens_in + m.avg_tokens_out
+   378→        table.add_row(
+   379→            m.playbook_name,
+   380→            str(m.runs),
+   381→            f"{m.success_rate:.0%}",
+   382→            f"{m.avg_duration_s:.4f}",
+   383→            f"{m.p95_duration_s:.4f}",
+   384→            str(avg_tokens),
+   385→            f"${m.avg_cost_usd:.6f}",
+   386→        )
+   387→
+   388→    console.print(table)
+   389→    console.print(
+   390→        f"\n[bold]Overall:[/bold] success={results.overall_success_rate:.0%}, "
+   391→        f"avg_dur={results.overall_avg_duration_s:.4f}s, "
+   392→        f"avg_tokens={results.overall_avg_tokens_in + results.overall_avg_tokens_out}, "
+   393→        f"avg_cost=${results.overall_avg_cost_usd:.6f}"
+   394→    )
+   395→
+   396→    # Save JSON results.
+   397→    Path(output).write_text(results.to_json(), encoding="utf-8")
+   398→    console.print(f"\n[cyan]Results saved to:[/cyan] {output}")
+   399→
+   400→
+   401→@cli.group()
+   402→def mcp() -> None:
+   403→    """MCP server commands."""
+   404→    pass
+   405→
+   406→
+   407→@mcp.command("serve")
+   408→@click.option(
+   409→    "--transport",
+   410→    type=click.Choice(["stdio", "http"]),
+   411→    default="stdio",
+   412→    help="Transport mechanism (stdio for Claude Desktop, http for remote)",
+   413→)
+   414→@click.option("--host", default="127.0.0.1", help="HTTP host (only with --transport=http)")
+   415→@click.option("--port", default=8765, help="HTTP port (only with --transport=http)")
+   416→def mcp_serve(transport: str, host: str, port: int) -> None:
+   417→    """Start the ARNES MCP server.
+   418→
+   419→    Use this to expose ARNES as an MCP server for Claude Desktop, Cursor,
+   420→    Cline, Zed, or any MCP-compatible client.
+   421→
+   422→    For Claude Desktop, add to your config:
+   423→    {
+   424→      "mcpServers": {
+   425→        "arnes": {
+   426→          "command": "arnes",
+   427→          "args": ["mcp", "serve"]
+   428→        }
+   429→      }
+   430→    }
+   431→    """
+   432→    asyncio.run(_serve_mcp(transport, host, port))
+   433→
+   434→
+   435→async def _serve_mcp(transport: str, host: str, port: int) -> None:
+   436→    """Run the MCP server."""
+   437→    try:
+   438→        from arnes.mcp.server import ArnesMCPServer
+   439→    except ImportError as e:
+   440→        console.print(f"[red]MCP server dependencies not installed:[/red] {e}")
+   441→        console.print("Install with: [cyan]pip install arnes[mcp][/cyan]")
+   442→        sys.exit(1)
+   443→
+   444→    server = ArnesMCPServer()
+   445→
+   446→    if transport == "stdio":
+   447→        sys.stderr.write("ARNES MCP server running on stdio\n")
+   448→        sys.stderr.flush()
+   449→        # serve_stdio is attached at runtime by ArnesMCPServer._attach_serve_methods.
+   450→        await server.serve_stdio()  # type: ignore[attr-defined]
+   451→    else:
+   452→        console.print(f"[cyan]ARNES MCP server[/cyan] running on http://{host}:{port}")
+   453→        await server.serve_http(host, port)  # type: ignore[attr-defined]
+   454→
+   455→
+   456→# ============================================================
+   457→# Helpers
+   458→# ============================================================
+   459→
+   460→
+   461→async def _run_playbook(
+   462→    playbook_path: str,
+   463→    model: str,
+   464→    budget: float,
+   465→    mock: bool,
+   466→    interactive: bool,
+   467→    output: str | None,
+   468→    stream: bool = False,
+   469→) -> None:
+   470→    """Execute a playbook and print results.
+   471→
+   472→    When ``stream=True``, uses :meth:`PlaybookExecutor.stream` to yield
+   473→    step-level events as each step completes (instead of buffering the
+   474→    whole run behind a spinner). The final ``PlaybookRunResult`` is
+   475→    captured from the last yield for stats + bitácora persistence.
+   476→    """
+   477→    # Compile
+   478→    try:
+   479→        playbook = PlaybookCompiler.from_file(playbook_path)
+   480→    except PlaybookCompileError as e:
+   481→        console.print(f"[red]✗ Compile error:[/red]\n{e}")
+   482→        sys.exit(1)
+   483→
+   484→    # The schema validator guarantees metadata is non-None after compile.
+   485→    assert playbook.metadata is not None
+   486→
+   487→    console.print(
+   488→        Panel.fit(
+   489→            f"[bold cyan]ARNES[/bold cyan] — Executing playbook\n"
+   490→            f"  [dim]Name:[/dim] {playbook.metadata.name}\n"
+   491→            f"  [dim]Objective:[/dim] {playbook.metadata.objective}\n"
+   492→            f"  [dim]Model:[/dim] {model}\n"
+   493→            f"  [dim]Budget:[/dim] ${budget:.2f}",
+   494→            border_style="cyan",
+   495→        )
+   496→    )
+   497→
+   498→    # Setup provider
+   499→    if mock or model.startswith("mock/"):
+   500→        provider: LLMProvider = _SchemaValidMockLLMProvider()
+   501→    else:
+   502→        provider = get_provider(model)
+   503→
+   504→    # Execute
+   505→    executor = PlaybookExecutor(
+   506→        provider=provider,
+   507→        cost_budget=CostBudget(task_budget_usd=budget),
+   508→        interactive=interactive,
+   509→    )
+   510→
+   511→    if stream:
+   512→        result = await _run_playbook_streaming(executor, playbook)
+   513→    else:
+   514→        with console.status("[cyan]Executing...[/cyan]"):
+   515→            result = await executor.run(playbook)
+   516→
+   517→    # Print results
+   518→    if result.success:
+   519→        console.print("\n[green]✅ Manual executed[/green]")
+   520→    else:
+   521→        console.print("\n[red]❌ Execution failed[/red]")
+   522→        if result.error:
+   523→            console.print(f"  [red]Error:[/red] {result.error}")
+   524→
+   525→    # Stats
+   526→    console.print(f"\n[dim]Steps executed:[/dim] {result.steps_executed}")
+   527→    console.print(f"[dim]Steps failed:[/dim] {result.steps_failed}")
+   528→    console.print(f"[dim]Duration:[/dim] {result.duration_s:.2f}s")
+   529→    console.print(f"[dim]Tokens in/out:[/dim] {result.total_tokens_in}/{result.total_tokens_out}")
+   530→    console.print(f"[dim]Total cost:[/dim] ${result.total_cost_usd:.4f}")
+   531→
+   532→    # Save bitácora
+   533→    if output:
+   534→        Path(output).write_text(result.to_markdown(), encoding="utf-8")
+   535→        console.print(f"\n[cyan]Bitácora saved to:[/cyan] {output}")
+   536→    else:
+   537→        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+   538→        default_path = f"bitacora-{playbook.metadata.name}-{ts}.md"
+   539→        Path(default_path).write_text(result.to_markdown(), encoding="utf-8")
+   540→        console.print(f"\n[cyan]Bitácora saved to:[/cyan] {default_path}")
+   541→
+   542→
+   543→async def _run_playbook_streaming(
+   544→    executor: PlaybookExecutor,
+   545→    playbook: Playbook,
+   546→) -> PlaybookRunResult:
+   547→    """Run a playbook in streaming mode, printing step events as they arrive.
+   548→
+   549→    Uses :meth:`PlaybookExecutor.stream` to yield ``Event`` objects as each
+   550→    step completes, then captures the final ``PlaybookRunResult`` from the
+   551→    last yield. Best-effort: parallel branches stream in completion order,
+   552→    not definition order.
+   553→    """
+   554→    from arnes.thread.events import (
+   555→        RunCompletedEvent,
+   556→        RunFailedEvent,
+   557→        StepCompletedEvent,
+   558→        StepFailedEvent,
+   559→    )
+   560→
+   561→    final_result: PlaybookRunResult | None = None
+   562→    console.print("[cyan]Streaming...[/cyan]\n[dim]---[/dim]")
+   563→
+   564→    async for item in executor.stream(playbook):
+   565→        if isinstance(item, PlaybookRunResult):
+   566→            final_result = item
+   567→            break
+   568→        # Print step-level transitions as they happen
+   569→        if isinstance(item, StepCompletedEvent):
+   570→            console.print(f"  [green]✓[/green] step_completed: {item.step_id}")
+   571→        elif isinstance(item, StepFailedEvent):
+   572→            console.print(
+   573→                f"  [red]✗[/red] step_failed: {item.step_id} — {item.data.get('error', '')}"
+   574→            )
+   575→        elif isinstance(item, RunCompletedEvent):
+   576→            console.print("  [green]✓[/green] run_completed")
+   577→        elif isinstance(item, RunFailedEvent):
+   578→            console.print(f"  [red]✗[/red] run_failed — {item.data.get('error', '')}")
+   579→        else:
+   580→            # Other event types (StepStarted, AssistantMessage, CostThreshold, etc.)
+   581→            # are not printed to keep the streaming output focused on step transitions.
+   582→            console.print(f"  [dim]·[/dim] {item.type.value}")
+   583→
+   584→    console.print("[dim]---[/dim]")
+   585→    assert final_result is not None, "stream() must yield a final PlaybookRunResult"
+   586→    return final_result
+   587→
+   588→
+   589→class _SchemaValidMockLLMProvider(LLMProvider):
+   590→    """Mock LLM provider that returns schema-valid JSON for each specialist.
+   591→
+   592→    Used by `arnes run --mock` for testing without network calls.
+   593→    Detects which specialist is being invoked based on system prompt content.
+   594→    """
+   595→
+   596→    def __init__(self) -> None:
+   597→        self.call_count = 0
+   598→
+   599→    async def complete(
+   600→        self,
+   601→        messages: list[LLMMessage],
+   602→        *,
+   603→        model: str = "mock",
+   604→        tools: list[dict[str, Any]] | None = None,
+   605→        temperature: float = 0.0,
+   606→        max_tokens: int | None = None,
+   607→        response_format: dict[str, Any] | None = None,
+   608→        response_schema: dict[str, Any] | None = None,
+   609→        **kwargs: Any,
+   610→    ) -> LLMResponse:
+   611→        self.call_count += 1
+   612→
+   613→        # Detect specialist from system prompt
+   614→        sys_msg = next((m for m in messages if m.role == "system"), None)
+   615→        sys_content = sys_msg.content if sys_msg else ""
+   616→
+   617→        if "@planner" in sys_content:
+   618→            content = '{"steps": [{"id": "s1", "specialist": "@coder", "input": {}}]}'
+   619→        elif "@coder" in sys_content:
+   620→            content = '{"files": [{"path": "out.py", "language": "python", "content": "# Mock code\\npass"}], "summary": "Mock implementation", "assumptions": [], "warnings": []}'
+   621→        elif "@reviewer" in sys_content:
+   622→            content = '{"verdict": "approve", "issues": [], "summary": "Mock review: looks good"}'
+   623→        elif "@tester" in sys_content:
+   624→            content = '{"test_files": [{"path": "test_mock.py", "content": "def test_mock():\\n    pass"}], "test_results": {"passed": 1, "failed": 0, "skipped": 0, "failures": []}, "summary": "Mock tests pass", "coverage_pct": 100.0}'
+   625→        elif "@debugger" in sys_content:
+   626→            content = '{"root_cause": "Mock root cause identified", "confidence": 0.95, "fix": {"file": "src/app.py", "line": 42, "original": "broken()", "fixed": "fixed()", "explanation": "Mock fix applied"}, "verification": "Run tests to verify", "alternative_causes": []}'
+   627→        else:
+   628→            content = '{"result": "mock output"}'
+   629→
+   630→        tokens_in = sum(len(m.content) // 4 for m in messages)
+   631→        tokens_out = len(content) // 4
+   632→
+   633→        return LLMResponse(
+   634→            content=content,
+   635→            tool_calls=[],
+   636→            usage=LLMUsage(
+   637→                tokens_in=tokens_in,
+   638→                tokens_out=tokens_out,
+   639→                cost_usd=0.0,
+   640→                model=model,
+   641→                cached=False,
+   642→            ),
+   643→            model=model,
+   644→        )
+   645→
+   646→    def list_models(self) -> list[str]:
+   647→        return ["mock"]
+   648→
+   649→    async def stream_complete(
+   650→        self,
+   651→        messages: list[LLMMessage],
+   652→        *,
+   653→        model: str = "mock",
+   654→        tools: list[dict[str, Any]] | None = None,
+   655→        temperature: float = 0.0,
+   656→        max_tokens: int | None = None,
+   657→        response_format: dict[str, Any] | None = None,
+   658→        response_schema: dict[str, Any] | None = None,
+   659→        **kwargs: Any,
+   660→    ) -> AsyncIterator[LLMResponse]:
+   661→        """Default streaming: yield the full response in a single chunk.
+   662→
+   663→        Matches the ``MockLLMProvider.stream_complete`` contract. Real
+   664→        token-by-token streaming is available in ``OllamaProvider`` and
+   665→        ``LiteLLMProvider``; this mock yields the full response on first
+   666→        iteration. AG-UI transport support lands in v0.2.
+   667→        """
+   668→        response = await self.complete(
+   669→            messages,
+   670→            model=model,
+   671→            tools=tools,
+   672→            temperature=temperature,
+   673→            max_tokens=max_tokens,
+   674→            response_format=response_format,
+   675→            response_schema=response_schema,
+   676→            **kwargs,
+   677→        )
+   678→        yield response
+   679→
+   680→
+   681→def _scaffold_manual(name: str, lang: str) -> None:
+   682→    """Create a new playbook file from template."""
+   683→    path = Path("manuals") / f"{name}.yaml"
+   684→    path.parent.mkdir(parents=True, exist_ok=True)
+   685→
+   686→    if path.exists():
+   687→        console.print(f"[yellow]File already exists: {path}[/yellow]")
+   688→        sys.exit(1)
+   689→
+   690→    template = _MANUAL_TEMPLATE_EN if lang == "en" else _MANUAL_TEMPLATE_ES
+   691→    path.write_text(template.format(name=name), encoding="utf-8")
+   692→    console.print(f"[green]✓[/green] Created: [cyan]{path}[/cyan]")
+   693→    console.print("\nEdit it and run with:")
+   694→    console.print(f"  [dim]arnes run {path}[/dim]")
+   695→
+   696→
+   697→def _init_project() -> None:
+   698→    """Initialize a new ARNES project structure."""
+   699→    console.print("[bold cyan]ARNES — Initializing project[/bold cyan]\n")
+   700→
+   701→    dirs = ["manuals", "bitacoras"]
+   702→    for d in dirs:
+   703→        Path(d).mkdir(exist_ok=True)
+   704→        console.print(f"  [green]✓[/green] Created: {d}/")
+   705→
+   706→    # Create example playbook
+   707→    example = Path("manuals") / "hello-world.yaml"
+   708→    if not example.exists():
+   709→        example.write_text(_MANUAL_TEMPLATE_EN.format(name="hello-world"), encoding="utf-8")
+   710→        console.print(f"  [green]✓[/green] Created: {example}")
+   711→
+   712→    console.print("\n[bold]Next steps:[/bold]")
+   713→    console.print("  1. Edit manuals/hello-world.yaml")
+   714→    console.print("  2. Run: [cyan]arnes run manuals/hello-world.yaml[/cyan]")
+   715→    console.print("  3. List specialists: [cyan]arnes list specialists[/cyan]")
+   716→
+   717→
+   718→_MANUAL_TEMPLATE_EN = """\
+   719→# {name}.yaml — ARNES playbook
+   720→# Documentation: https://github.com/frangelbarrera/ARNES#readme
+   721→
+   722→name: {name}
+   723→objective: Describe what this playbook does
+   724→budget_usd: 0.50
+   725→
+   726→steps:
+   727→  - id: step_1
+   728→    specialist: "@planner"
+   729→    input:
+   730→      task: "Describe the task to plan"
+   731→
+   732→  - id: step_2
+   733→    specialist: "@coder"
+   734→    input: "{{{{ steps.step_1.output }}}}"
+   735→    requires: [step_1]
+   736→
+   737→  - id: step_3
+   738→    specialist: "@reviewer"
+   739→    input:
+   740→      code: "{{{{ steps.step_2.output }}}}"
+   741→"""
+   742→
+   743→
+   744→_MANUAL_TEMPLATE_ES = """\
+   745→# {name}.yaml — Manual de ARNES
+   746→# Documentación: https://github.com/frangelbarrera/ARNES#readme
+   747→
+   748→name: {name}
+   749→objective: Describe qué hace este manual
+   750→budget_usd: 0.50
+   751→
+   752→steps:
+   753→  - id: paso_1
+   754→    specialist: "@planner"
+   755→    input:
+   756→      task: "Describe la tarea a planificar"
+   757→
+   758→  - id: paso_2
+   759→    specialist: "@coder"
+   760→    input: "{{{{ steps.paso_1.output }}}}"
+   761→    requires: [paso_1]
+   762→
+   763→  - id: paso_3
+   764→    specialist: "@reviewer"
+   765→    input:
+   766→      code: "{{{{ steps.paso_2.output }}}}"
+   767→"""
+   768→
+   769→
+   770→if __name__ == "__main__":
+   771→    cli()
+   772→

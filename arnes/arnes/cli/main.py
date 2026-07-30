@@ -202,7 +202,16 @@ def stream(specialist: str, task: str, model: str, mock: bool) -> None:
 
 
 async def _stream_specialist(specialist: str, task: str, model: str, mock: bool) -> None:
-    """Stream a specialist's response."""
+    """Stream a specialist's response token-by-token and save a bitácora.
+
+    Uses :meth:`Harness.stream_with_audit` so the audit trail is recorded in
+    a real ``Thread`` (mutated in place as the stream is consumed) and the
+    bitácora is rendered via :meth:`Thread.to_markdown`. This keeps the
+    streaming CLI output consistent with the markdown produced by
+    ``arnes run`` / ``PlaybookRunResult.to_markdown`` — previously the
+    streaming path emitted a bespoke markdown format that diverged from
+    the rest of the bitácora system.
+    """
     from arnes import Harness, HarnessConfig
 
     if mock or model.startswith("mock/"):
@@ -229,15 +238,20 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     console.print(f"[cyan]Streaming[/cyan] {specialist}...")
     console.print("[dim]---[/dim]")
 
+    # stream_with_audit returns (chunks, thread) where the thread is
+    # mutated in place as the chunks are consumed. After the stream ends,
+    # the thread carries a single AssistantMessageEvent with the full
+    # accumulated content + final usage — exactly what the rest of the
+    # bitácora system records for non-streaming runs.
+    chunks_iter, thread = harness.stream_with_audit(specialist, {"task": task})
+
     total_in = 0
     total_out = 0
     total_cost = 0.0
     chunks_received = 0
-    chunks_list = []  # Store chunks for bitácora (single pass, no double-call)
 
-    async for chunk in harness.stream(specialist, {"task": task}):
+    async for chunk in chunks_iter:
         chunks_received += 1
-        chunks_list.append(chunk)
         if chunk.content:
             console.print(chunk.content, end="", style="white")
         total_in += chunk.usage.tokens_in
@@ -252,23 +266,12 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     console.print("[dim]---[/dim]")
     console.print(f"[dim]Tokens: {total_in} in, {total_out} out. Cost: ${total_cost:.4f}[/dim]")
 
-    # Save bitácora from the accumulated chunks (no second LLM call)
+    # Save bitácora — same format as ``arnes run`` (Thread.to_markdown)
+    # so streaming runs can be diffed against non-streaming runs.
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     bitacora_path = f"bitacora-stream-{specialist.lstrip('@')}-{ts}.md"
 
-    audit_content = f"# ARNES Stream Bitácora — {specialist}\n\n"
-    audit_content += f"**Timestamp:** {ts}\n"
-    audit_content += f"**Task:** {task}\n\n"
-    audit_content += "## Response\n\n"
-    audit_content += "```json\n"
-    audit_content += "".join(c.content for c in chunks_list)
-    audit_content += "\n```\n\n"
-    audit_content += "## Usage\n\n"
-    audit_content += f"- Tokens in: {total_in}\n"
-    audit_content += f"- Tokens out: {total_out}\n"
-    audit_content += f"- Cost: ${total_cost:.4f}\n"
-
-    Path(bitacora_path).write_text(audit_content, encoding="utf-8")
+    Path(bitacora_path).write_text(thread.to_markdown(), encoding="utf-8")
     console.print(f"\n[cyan]Bitácora saved to:[/cyan] {bitacora_path}")
 
 

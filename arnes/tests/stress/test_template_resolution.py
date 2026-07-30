@@ -1,8 +1,8 @@
 """Stress test for ARNES Playbook template resolution.
 
-STRESS-4 — verifies that ``PlaybookExecutor._resolve_template`` and the
-end-to-end playbook runtime handle pathological / adversarial template
-inputs gracefully.
+STRESS-4 — verifies that the standalone ``_resolve_template`` in
+``arnes.playbooks.template`` and the end-to-end playbook runtime handle
+pathological / adversarial template inputs gracefully.
 
 The 7 stress cases exercised here:
 
@@ -16,6 +16,11 @@ The 7 stress cases exercised here:
 
 Both unit-level (``_resolve_template`` direct calls) and end-to-end
 (full playbook execution) paths are exercised.
+
+R13 cleanup: the unit-level tests now call the standalone
+``_resolve_template`` from ``arnes.playbooks.template`` directly (the
+``PlaybookExecutor._resolve_template`` backwards-compat wrapper was
+removed in R13).
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
 from arnes.middleware.cost_guard import CostBudget
 from arnes.playbooks.compiler import PlaybookCompiler
 from arnes.playbooks.executor import PlaybookExecutor
+from arnes.playbooks.template import _resolve_template
 
 # ============================================================
 # A deterministic mock provider whose responses carry structured
@@ -150,7 +156,13 @@ def executor() -> PlaybookExecutor:
 
 @pytest.fixture
 def bare_executor() -> PlaybookExecutor:
-    """Executor with a no-op provider — used only for direct _resolve_template tests."""
+    """Executor with a no-op provider — used only for direct _resolve_template tests.
+
+    R13: the ``_resolve_template`` standalone function lives in
+    ``arnes.playbooks.template``; the fixture is kept for symmetry with
+    the e2e fixture, but the unit tests below call ``_resolve_template``
+    as a free function rather than via ``executor._resolve_template``.
+    """
     return PlaybookExecutor(provider=StructuredMockProvider())
 
 
@@ -160,7 +172,7 @@ def bare_executor() -> PlaybookExecutor:
 
 
 class TestResolveTemplateDirect:
-    """Drive ``PlaybookExecutor._resolve_template`` directly with crafted outputs."""
+    """Drive the standalone ``_resolve_template`` directly with crafted outputs."""
 
     def test_case1_many_template_refs_one_string(self, bare_executor: PlaybookExecutor) -> None:
         """20+ template refs in one string all resolve correctly."""
@@ -170,7 +182,7 @@ class TestResolveTemplateDirect:
         template = " ".join(f"{{{{ variables.{k} }}}}" for k in keys)
         expected = " ".join(k.upper() for k in keys)
 
-        result = bare_executor._resolve_template(template, outputs)
+        result = _resolve_template(template, outputs)
 
         assert result == expected, f"20-template resolution failed: {result!r}"
         # Sanity: every letter appears
@@ -184,7 +196,7 @@ class TestResolveTemplateDirect:
         template = " ".join(f"{{{{ variables.{k} }}}}" for k in keys)
         expected = " ".join(f"<{k}>" for k in keys)
 
-        result = bare_executor._resolve_template(template, outputs)
+        result = _resolve_template(template, outputs)
         assert result == expected
 
     def test_case2_deep_nesting(self, bare_executor: PlaybookExecutor) -> None:
@@ -210,7 +222,7 @@ class TestResolveTemplateDirect:
         }
         template = "{{ steps.s1.output.steps.s2.output.steps.s3.output }}"
 
-        result = bare_executor._resolve_template(template, outputs)
+        result = _resolve_template(template, outputs)
 
         assert result == "deep_value", f"Deep nesting failed: {result!r}"
 
@@ -223,7 +235,7 @@ class TestResolveTemplateDirect:
         }
         template = "{{ variables.pr }} + {{ steps.review.output.verdict }}"
 
-        result = bare_executor._resolve_template(template, outputs)
+        result = _resolve_template(template, outputs)
 
         assert result == "1234 + approve", f"Mixed resolution failed: {result!r}"
 
@@ -242,11 +254,11 @@ class TestResolveTemplateDirect:
         }
 
         # Top-level (whole string is one template) — preserves type
-        result = bare_executor._resolve_template("{{ steps.parallel.lint.output }}", outputs)
+        result = _resolve_template("{{ steps.parallel.lint.output }}", outputs)
         assert result == "lint_passed", f"Parallel template failed: {result!r}"
 
         # Embedded inside a larger string — exercises str() coercion path
-        result_embedded = bare_executor._resolve_template(
+        result_embedded = _resolve_template(
             "lint: {{ steps.parallel.lint.output }} | test: {{ steps.parallel.test.output }}",
             outputs,
         )
@@ -255,9 +267,7 @@ class TestResolveTemplateDirect:
         )
 
         # Success flag is also reachable
-        result_success = bare_executor._resolve_template(
-            "{{ steps.parallel.lint.success }}", outputs
-        )
+        result_success = _resolve_template("{{ steps.parallel.lint.success }}", outputs)
         assert result_success is True, f"Parallel success flag failed: {result_success!r}"
 
     def test_case5_template_not_found_returns_literal(
@@ -268,7 +278,7 @@ class TestResolveTemplateDirect:
         outputs: dict[str, Any] = {}
         template = "{{ steps.nonexistent.output }}"
 
-        result = bare_executor._resolve_template(template, outputs)
+        result = _resolve_template(template, outputs)
 
         assert result == "{{ steps.nonexistent.output }}", (
             f"Missing template should return literal, got: {result!r}"
@@ -282,7 +292,7 @@ class TestResolveTemplateDirect:
         outputs = {"s1": {"output": "ok"}}  # no nested 'steps.s2'
         template = "{{ steps.s1.output.steps.s2.output }}"
 
-        result = bare_executor._resolve_template(template, outputs)
+        result = _resolve_template(template, outputs)
 
         assert result == "{{ steps.s1.output.steps.s2.output }}", (
             f"Partial-path miss should return literal, got: {result!r}"
@@ -294,13 +304,11 @@ class TestResolveTemplateDirect:
         outputs: dict[str, Any] = {"a": 1}
 
         # Whole string is one empty template
-        result = bare_executor._resolve_template("{{ }}", outputs)
+        result = _resolve_template("{{ }}", outputs)
         assert result == "{{ }}", f"Empty template should round-trip, got: {result!r}"
 
         # Empty template embedded among valid ones
-        result_embedded = bare_executor._resolve_template(
-            "before {{ }} after {{ variables.a }}", outputs
-        )
+        result_embedded = _resolve_template("before {{ }} after {{ variables.a }}", outputs)
         # The valid template still resolves; the empty one stays literal.
         assert "{{ }}" in result_embedded, (
             f"Empty template should remain literal in mix, got: {result_embedded!r}"
@@ -310,7 +318,7 @@ class TestResolveTemplateDirect:
     def test_case6b_no_space_empty_template(self, bare_executor: PlaybookExecutor) -> None:
         """``{{}}`` (no whitespace at all) must also be safe."""
         outputs: dict[str, Any] = {}
-        result = bare_executor._resolve_template("{{}}", outputs)
+        result = _resolve_template("{{}}", outputs)
         # The regex requires [^}]+ between the braces, so {{}} is NOT matched
         # and should be returned verbatim.
         assert result == "{{}}", f"{{{{}}}} should round-trip, got: {result!r}"
@@ -321,7 +329,7 @@ class TestResolveTemplateDirect:
         outputs = {"path_with_underscores": "/usr/local/bin/arnes"}
         template = "{{ variables.path_with_underscores }}"
 
-        result = bare_executor._resolve_template(template, outputs)
+        result = _resolve_template(template, outputs)
 
         assert result == "/usr/local/bin/arnes", f"Underscore variable failed: {result!r}"
 
@@ -331,13 +339,13 @@ class TestResolveTemplateDirect:
         """Variable values containing special chars (dots, dashes) are passed
         through verbatim — only the variable NAME is parsed, not the value."""
         outputs = {"commit_sha": "abc-1234.deadbeef"}
-        result = bare_executor._resolve_template("{{ variables.commit_sha }}", outputs)
+        result = _resolve_template("{{ variables.commit_sha }}", outputs)
         assert result == "abc-1234.deadbeef"
 
     def test_case7c_legacy_es_pasos_salida(self, bare_executor: PlaybookExecutor) -> None:
         """Legacy Spanish keys ``pasos.X.salida`` still resolve (backwards compat)."""
         outputs = {"leer_diff": {"output": "diff-content"}}
-        result = bare_executor._resolve_template("{{ pasos.leer_diff.salida }}", outputs)
+        result = _resolve_template("{{ pasos.leer_diff.salida }}", outputs)
         assert result == "diff-content", f"Legacy ES template failed: {result!r}"
 
     def test_case8_variables_strict_key_lookup(self, bare_executor: PlaybookExecutor) -> None:
@@ -346,14 +354,14 @@ class TestResolveTemplateDirect:
         ``steps.*`` refs, not ``variables.*`` refs. Variables are
         user-defined; a missing key is a real error."""
         outputs = {"config": {"foo": "bar"}}  # no 'output' key
-        result = bare_executor._resolve_template("{{ variables.config.output }}", outputs)
+        result = _resolve_template("{{ variables.config.output }}", outputs)
         assert result == "{{ variables.config.output }}", (
             f"variables.* should use strict lookup, got: {result!r}"
         )
 
         # But a variable that DOES have an 'output' key should dereference it
         outputs2 = {"config": {"output": "wrapped"}}
-        result2 = bare_executor._resolve_template("{{ variables.config.output }}", outputs2)
+        result2 = _resolve_template("{{ variables.config.output }}", outputs2)
         assert result2 == "wrapped", (
             f"variables.* with real 'output' key should dereference, got: {result2!r}"
         )
@@ -367,12 +375,12 @@ class TestResolveTemplateDirect:
         # outputs[step_id] = raw_output_dict  (NOT wrapped in {"output": ...})
         outputs = {"review": {"verdict": "approve", "issues": []}}
         # Top-level: returns the raw output dict (preserves type)
-        result = bare_executor._resolve_template("{{ steps.review.output }}", outputs)
+        result = _resolve_template("{{ steps.review.output }}", outputs)
         assert result == {"verdict": "approve", "issues": []}, (
             f"Virtual accessor (whole-string) failed: {result!r}"
         )
         # Deep access: skips 'output', then dereferences 'verdict'
-        result_deep = bare_executor._resolve_template("{{ steps.review.output.verdict }}", outputs)
+        result_deep = _resolve_template("{{ steps.review.output.verdict }}", outputs)
         assert result_deep == "approve", f"Virtual accessor (deep) failed: {result_deep!r}"
 
 

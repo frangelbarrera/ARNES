@@ -1,0 +1,681 @@
+     1→"""
+     2→ARNES Specialist — a pre-built, role-based agent with tool-use loop.
+     3→
+     4→A Specialist is a (system_prompt + tools + output_schema) bundle. The default
+     5→`run()` implementation executes a ReAct-style tool-use loop:
+     6→
+     7→1. Format input as user message.
+     8→2. Call LLM with tools registered.
+     9→3. If LLM returns tool_calls, execute each tool and append results.
+    10→4. Repeat until LLM returns final response (no tool_calls) or max_iterations.
+    11→5. Validate response against output_schema (pydantic).
+    12→6. Return structured result.
+    13→
+    14→Specialists are stateless. State lives in the Thread, not in the specialist.
+    15→"""
+    16→
+    17→from __future__ import annotations
+    18→
+    19→import json
+    20→from abc import ABC
+    21→from collections.abc import AsyncIterator
+    22→from typing import Any, ClassVar
+    23→
+    24→import structlog
+    25→from pydantic import BaseModel, ConfigDict, Field, ValidationError
+    26→
+    27→from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
+    28→from arnes.middleware.cost_guard import BudgetExceeded
+    29→from arnes.thread.events import AssistantMessageEvent
+    30→from arnes.tools.base import Tool, ToolContext, ToolRegistry
+    31→
+    32→logger = structlog.get_logger(__name__)
+    33→
+    34→
+    35→class SpecialistConfig(BaseModel):
+    36→    """Configuration for a specialist."""
+    37→
+    38→    model_config = ConfigDict(arbitrary_types_allowed=True)
+    39→
+    40→    name: str  # e.g. "@planner"
+    41→    description: str
+    42→    system_prompt: str
+    43→    tools: list[str] = Field(default_factory=list)  # tool names
+    44→    output_schema: dict[str, Any] | None = None  # JSON schema for structured output
+    45→    pydantic_model: type[BaseModel] | None = None  # Stronger than output_schema
+    46→    default_model: str | None = None  # If set, overrides the global default
+    47→    temperature: float = 0.0
+    48→    max_tokens: int | None = None
+    49→    max_iterations: int = 5  # ReAct loop limit
+    50→
+    51→
+    52→class Specialist(ABC):
+    53→    """Base class for all ARNES specialists.
+    54→
+    55→    To add a specialist:
+    56→        class MySpecialist(Specialist):
+    57→            config = SpecialistConfig(
+    58→                name="@my-specialist",
+    59→                description="Does X",
+    60→                system_prompt="You are an expert in X...",
+    61→                tools=["fs_read", "shell"],
+    62→                output_schema={"type": "object", "required": ["result"]},
+    63→            )
+    64→    """
+    65→
+    66→    config: ClassVar[SpecialistConfig]
+    67→
+    68→    # Auto-registry
+    69→    _registry: ClassVar[dict[str, type[Specialist]]] = {}
+    70→
+    71→    def __init_subclass__(cls, **kwargs: Any) -> None:
+    72→        super().__init_subclass__(**kwargs)
+    73→        if hasattr(cls, "config") and cls.config.name:
+    74→            Specialist._registry[cls.config.name] = cls
+    75→
+    76→    async def run(
+    77→        self,
+    78→        input_data: dict[str, Any],
+    79→        ctx: ToolContext,
+    80→        *,
+    81→        provider: LLMProvider,
+    82→        tool_registry: ToolRegistry | None = None,
+    83→    ) -> dict[str, Any]:
+    84→        """Default specialist run: ReAct tool-use loop + schema validation.
+    85→
+    86→        Override this for custom logic if needed, but most specialists should
+    87→        use the default implementation.
+    88→        """
+    89→        # Build initial messages
+    90→        user_content = self._format_input(input_data)
+    91→        messages: list[LLMMessage] = [
+    92→            LLMMessage(role="system", content=self.config.system_prompt),
+    93→            LLMMessage(role="user", content=user_content),
+    94→        ]
+    95→
+    96→        # Get available tools (intersect config.tools with registry)
+    97→        available_tools: list[Tool] = []
+    98→        tool_schemas: list[dict[str, Any]] = []
+    99→        if tool_registry and self.config.tools:
+   100→            for tool_name in self.config.tools:
+   101→                tool = tool_registry.get(tool_name)
+   102→                if tool:
+   103→                    available_tools.append(tool)
+   104→                    tool_schemas.append(self._tool_to_schema(tool))
+   105→
+   106→        # Build middleware-wrapped provider
+   107→        # The caller (Harness or PlaybookExecutor) is responsible for wrapping
+   108→        # the provider with the full middleware stack (CostGuard → Verification →
+   109→        # TokenOptimizer → provider). The specialist should NOT re-wrap.
+   110→        #
+   111→        # We detect already-wrapped providers by checking for the _arnes_wrapped
+   112→        # marker attribute that all our middleware classes set.
+   113→        wrapped_provider: LLMProvider = provider
+   114→
+   115→        # If the provider is not already wrapped, wrap it with the full stack.
+   116→        # This is a safety net — in normal usage, the caller always wraps first.
+   117→        if not getattr(provider, "_arnes_wrapped", False):
+   118→            from arnes.middleware import build_middleware_stack
+   119→
+   120→            wrapped_provider = build_middleware_stack(
+   121→                provider,
+   122→                enable_cache=True,
+   123→                enable_verification=True,
+   124→                budget_usd=1.0,
+   125→                output_schema=self.config.output_schema,
+   126→                pydantic_model=self.config.pydantic_model,
+   127→            )
+   128→
+   129→        # ReAct tool-use loop
+   130→        total_usage = LLMUsage()
+   131→        all_tool_results: list[dict[str, Any]] = []
+   132→        model = self.config.default_model or "ollama/llama3.2"
+   133→
+   134→        # Derive the response_schema sent to middleware: prefer the explicit
+   135→        # output_schema, but fall back to a pydantic_model's JSON schema so that
+   136→        # specialists that only declare a `pydantic_model` still get JSON-mode
+   137→        # forcing AND schema validation in the VerificationLayer. Without this,
+   138→        # `response_schema=None` would silently disable both.
+   139→        effective_response_schema = self.config.output_schema
+   140→        if effective_response_schema is None and self.config.pydantic_model is not None:
+   141→            effective_response_schema = self.config.pydantic_model.model_json_schema()
+   142→
+   143→        wants_json = bool(self.config.output_schema or self.config.pydantic_model)
+   144→
+   145→        # Track whether the loop produced a *final* response (no tool_calls).
+   146→        # If the LLM keeps calling tools until max_iterations is hit, the last
+   147→        # `response` will still have tool_calls and we must NOT validate it as
+   148→        # if it were the final answer — that would surface an empty/intermediate
+   149→        # tool-call payload as a malformed "final" response.
+   150→        final_response: LLMResponse | None = None
+   151→        response: LLMResponse | None = None
+   152→
+   153→        for iteration in range(self.config.max_iterations):
+   154→            try:
+   155→                response = await wrapped_provider.complete(
+   156→                    messages,
+   157→                    model=model,
+   158→                    tools=tool_schemas if tool_schemas else None,
+   159→                    temperature=self.config.temperature,
+   160→                    max_tokens=self.config.max_tokens,
+   161→                    response_format={"type": "json_object"} if wants_json else None,
+   162→                    response_schema=effective_response_schema,
+   163→                    interactive=ctx.metadata.get("interactive", False),
+   164→                )
+   165→            except BudgetExceeded as e:
+   166→                logger.error(
+   167→                    "specialist_budget_exceeded", specialist=self.config.name, error=str(e)
+   168→                )
+   169→                return {
+   170→                    "specialist": self.config.name,
+   171→                    "success": False,
+   172→                    "error": f"Budget exceeded: {e}",
+   173→                    "budget_exceeded": True,
+   174→                }
+   175→
+   176→            total_usage = total_usage + response.usage
+   177→
+   178→            # Emit an AssistantMessageEvent for every LLM call so the
+   179→            # conversation history and per-call token/cost are observable
+   180→            # in the thread bitácora. The specialist has direct access to
+   181→            # ctx.thread_id and ctx.step_id, so we can construct the event
+   182→            # with the correct ids (no nil-UUID patching needed). The
+   183→            # event is appended to the wrapped provider's shared event sink
+   184→            # (CostGuard._events), which the PlaybookExecutor drains after
+   185→            # the step completes.
+   186→            self._emit_assistant_message(wrapped_provider, ctx, response, model)
+   187→
+   188→            # If no tool calls, we have the final response
+   189→            if not response.tool_calls:
+   190→                final_response = response
+   191→                break
+   192→
+   193→            # Execute each tool call
+   194→            messages.append(
+   195→                LLMMessage(
+   196→                    role="assistant",
+   197→                    content=response.content,
+   198→                    tool_calls=response.tool_calls,
+   199→                )
+   200→            )
+   201→
+   202→            for tc in response.tool_calls:
+   203→                tool_result = await self._execute_tool_call(tc, available_tools, ctx)
+   204→                all_tool_results.append(tool_result)
+   205→                messages.append(
+   206→                    LLMMessage(
+   207→                        role="tool",
+   208→                        content=json.dumps(tool_result, default=str),
+   209→                        tool_call_id=tc.get("id"),
+   210→                        name=tc.get("function", {}).get("name"),
+   211→                    )
+   212→                )
+   213→
+   214→            # Continue loop for next iteration
+   215→
+   216→        # If we exited the loop without a final (tool-call-free) response,
+   217→        # the LLM kept calling tools past max_iterations. Return a clear error
+   218→        # instead of trying to validate an empty / intermediate tool-call payload.
+   219→        if final_response is None:
+   220→            max_iter = self.config.max_iterations
+   221→            logger.error(
+   222→                "specialist_max_iterations_exceeded",
+   223→                specialist=self.config.name,
+   224→                max_iterations=max_iter,
+   225→            )
+   226→            return {
+   227→                "specialist": self.config.name,
+   228→                "success": False,
+   229→                "error": (
+   230→                    f"Specialist exceeded max_iterations ({max_iter}) "
+   231→                    "without producing a final response"
+   232→                ),
+   233→                "raw": response.content if response is not None else None,
+   234→                "usage": total_usage.model_dump(),
+   235→                "tool_results": all_tool_results,
+   236→            }
+   237→
+   238→        # Validate output against schema
+   239→        result = self._parse_and_validate_output(final_response, total_usage, all_tool_results)
+   240→        return result
+   241→
+   242→    async def stream(
+   243→        self,
+   244→        input_data: dict[str, Any],
+   245→        ctx: ToolContext,
+   246→        *,
+   247→        provider: LLMProvider,
+   248→        tool_registry: ToolRegistry | None = None,
+   249→    ) -> AsyncIterator[LLMResponse]:
+   250→        """Stream a specialist's response token by token.
+   251→
+   252→        Mirrors :meth:`run` but uses ``provider.stream_complete()`` instead
+   253→        of ``provider.complete()``. Yields ``LLMResponse`` chunks as they
+   254→        arrive from the provider. The final chunk carries the full
+   255→        ``LLMUsage`` (``tokens_in``, ``tokens_out``, ``cost_usd``).
+   256→
+   257→        Streaming specialists do NOT execute the ReAct tool-use loop — if
+   258→        the specialist needs tools, callers should use :meth:`run` instead.
+   259→        This is a best-effort streaming path for read-only / generation
+   260→        tasks (planning, summarising, drafting code without shell access).
+   261→
+   262→        Audit trail: after the stream completes, a single
+   263→        :class:`AssistantMessageEvent` is appended to the wrapped
+   264→        provider's ``_events`` sink (same pattern as :meth:`run`). The
+   265→        event carries the full accumulated content and the final usage,
+   266→        so the bitácora records streaming runs the same way it records
+   267→        non-streaming runs. Streaming produces ONE event per call (not
+   268→        per-chunk events) — per-chunk events would balloon the audit log
+   269→        without adding forensic value, and the chunks themselves are not
+   270→        durable (they're a transport optimisation, not a semantic unit).
+   271→
+   272→        Usage::
+   273→
+   274→            async for chunk in specialist.stream(input_data, ctx, provider=p):
+   275→                print(chunk.content, end="", flush=True)
+   276→        """
+   277→        # Build messages (same as run(), minus the tool-use loop)
+   278→        user_content = self._format_input(input_data)
+   279→        messages: list[LLMMessage] = [
+   280→            LLMMessage(role="system", content=self.config.system_prompt),
+   281→            LLMMessage(role="user", content=user_content),
+   282→        ]
+   283→
+   284→        # Wrap provider with the full middleware stack if not already wrapped
+   285→        # (mirrors run()).
+   286→        wrapped_provider: LLMProvider = provider
+   287→        if not getattr(provider, "_arnes_wrapped", False):
+   288→            from arnes.middleware import build_middleware_stack
+   289→
+   290→            wrapped_provider = build_middleware_stack(
+   291→                provider,
+   292→                enable_cache=True,
+   293→                enable_verification=True,
+   294→                budget_usd=1.0,
+   295→                output_schema=self.config.output_schema,
+   296→                pydantic_model=self.config.pydantic_model,
+   297→            )
+   298→
+   299→        model = self.config.default_model or "ollama/llama3.2"
+   300→        effective_response_schema = self.config.output_schema
+   301→        if effective_response_schema is None and self.config.pydantic_model is not None:
+   302→            effective_response_schema = self.config.pydantic_model.model_json_schema()
+   303→        wants_json = bool(self.config.output_schema or self.config.pydantic_model)
+   304→
+   305→        # Accumulate content + usage so we can emit a single
+   306→        # AssistantMessageEvent after the stream ends. Per-chunk usage is
+   307→        # zero on intermediate chunks (see LLMProvider.stream_complete
+   308→        # contract); the final chunk carries the full usage.
+   309→        accumulated_content: list[str] = []
+   310→        total_usage = LLMUsage()
+   311→
+   312→        async for chunk in wrapped_provider.stream_complete(
+   313→            messages,
+   314→            model=model,
+   315→            temperature=self.config.temperature,
+   316→            max_tokens=self.config.max_tokens,
+   317→            response_format={"type": "json_object"} if wants_json else None,
+   318→            response_schema=effective_response_schema,
+   319→        ):
+   320→            if chunk.content:
+   321→                accumulated_content.append(chunk.content)
+   322→            # The last non-zero usage wins (providers send the full count
+   323→            # on the final chunk, not a running delta).
+   324→            if chunk.usage.tokens_in > 0 or chunk.usage.tokens_out > 0 or chunk.usage.cost_usd > 0:
+   325→                total_usage = chunk.usage
+   326→            yield chunk
+   327→
+   328→        # Emit a single AssistantMessageEvent for the bitácora. We
+   329→        # construct a synthetic LLMResponse carrying the accumulated
+   330→        # content + final usage so we can reuse the same _emit_assistant_message
+   331→        # helper that run() uses (DRY: same event shape, same sink).
+   332→        synthetic_response = LLMResponse(
+   333→            content="".join(accumulated_content),
+   334→            tool_calls=[],
+   335→            usage=total_usage,
+   336→            model=model,
+   337→        )
+   338→        self._emit_assistant_message(wrapped_provider, ctx, synthetic_response, model)
+   339→
+   340→    # ============================================================
+   341→    # Tool execution
+   342→    # ============================================================
+   343→
+   344→    async def _execute_tool_call(
+   345→        self,
+   346→        tool_call: dict[str, Any],
+   347→        available_tools: list[Tool],
+   348→        ctx: ToolContext,
+   349→    ) -> dict[str, Any]:
+   350→        """Execute a single tool call from the LLM."""
+   351→        function = tool_call.get("function", {})
+   352→        tool_name = function.get("name", "")
+   353→        args_str = function.get("arguments", "{}")
+   354→
+   355→        try:
+   356→            args = json.loads(args_str) if isinstance(args_str, str) else args_str
+   357→        except json.JSONDecodeError:
+   358→            return {
+   359→                "tool": tool_name,
+   360→                "success": False,
+   361→                "error": f"Invalid JSON arguments: {args_str}",
+   362→            }
+   363→
+   364→        # Find the tool
+   365→        tool = next((t for t in available_tools if t.name == tool_name), None)
+   366→        if not tool:
+   367→            return {
+   368→                "tool": tool_name,
+   369→                "success": False,
+   370→                "error": f"Tool '{tool_name}' not available",
+   371→            }
+   372→
+   373→        # HITL check: if tool requires approval, fingerprint args and
+   374→        # compare against any pre-approved fingerprint (rug-pull defense).
+   375→        # NOTE: use setdefault (not .get) so the SAME dict object is stored
+   376→        # back into ctx.metadata — otherwise approvals are never persisted
+   377→        # and the rug-pull detector is defeated.
+   378→        if tool.requires_approval:
+   379→            fingerprint = Tool.fingerprint(args)
+   380→            approved_fingerprints = ctx.metadata.setdefault("_approved_fingerprints", {})
+   381→
+   382→            if fingerprint in approved_fingerprints:
+   383→                # Pre-approved: execute
+   384→                logger.info(
+   385→                    "tool_approved_fingerprint_match",
+   386→                    tool=tool_name,
+   387→                    fingerprint=fingerprint,
+   388→                )
+   389→            elif not ctx.metadata.get("interactive", False):
+   390→                # Non-interactive and not pre-approved: auto-reject
+   391→                return {
+   392→                    "tool": tool_name,
+   393→                    "success": False,
+   394→                    "error": f"Tool '{tool_name}' requires human approval. Set interactive=True.",
+   395→                    "fingerprint": fingerprint,
+   396→                }
+   397→            else:
+   398→                # Interactive: prompt for approval
+   399→                approval = await self._request_human_approval(tool_name, args, fingerprint, ctx)
+   400→                if not approval:
+   401→                    return {
+   402→                        "tool": tool_name,
+   403→                        "success": False,
+   404→                        "error": f"Human rejected tool call for '{tool_name}'.",
+   405→                        "fingerprint": fingerprint,
+   406→                    }
+   407→                # Record the approved fingerprint so we can detect rug-pull
+   408→                # if the LLM tries to call the same tool with different args
+   409→                approved_fingerprints[fingerprint] = tool_name
+   410→
+   411→        try:
+   412→            result = await tool.execute(args, ctx)
+   413→            return {
+   414→                "tool": tool_name,
+   415→                "success": result.success,
+   416→                "output": result.output,
+   417→                "error": result.error,
+   418→            }
+   419→        except Exception as e:
+   420→            logger.exception("tool_execution_failed", tool=tool_name, error=str(e))
+   421→            return {
+   422→                "tool": tool_name,
+   423→                "success": False,
+   424→                "error": str(e),
+   425→            }
+   426→
+   427→    async def _request_human_approval(
+   428→        self,
+   429→        tool_name: str,
+   430→        args: dict[str, Any],
+   431→        fingerprint: str,
+   432→        ctx: ToolContext,
+   433→    ) -> bool:
+   434→        """Request human approval for a tool call. Returns True if approved."""
+   435→        try:
+   436→            from rich.console import Console
+   437→            from rich.prompt import Confirm
+   438→
+   439→            console = Console()
+   440→            console.print(f"\n[yellow]⚠ Approval required for tool:[/yellow] {tool_name}")
+   441→            console.print(f"  [dim]Args fingerprint:[/dim] {fingerprint}")
+   442→            console.print(f"  [dim]Args:[/dim] {json.dumps(args, indent=2, default=str)}")
+   443→            return Confirm.ask("  Approve this tool call?", default=False)
+   444→        except ImportError:
+   445→            logger.warning("rich not available — auto-rejecting tool call")
+   446→            return False
+   447→
+   448→    # ============================================================
+   449→    # Event emission
+   450→    # ============================================================
+   451→
+   452→    def _emit_assistant_message(
+   453→        self,
+   454→        wrapped_provider: Any,
+   455→        ctx: ToolContext,
+   456→        response: LLMResponse,
+   457→        model: str,
+   458→    ) -> None:
+   459→        """Emit an ``AssistantMessageEvent`` for a single LLM call.
+   460→
+   461→        The event carries the response content, the model used, and the
+   462→        per-call token usage and cost so that the conversation history is
+   463→        fully observable in the thread bitácora. The event is appended to
+   464→        the wrapped provider's shared ``_events`` sink (set up by
+   465→        ``CostGuard``); the ``PlaybookExecutor`` drains that sink after each
+   466→        step and appends the events to the ``Thread``.
+   467→
+   468→        If ``wrapped_provider`` has no ``_events`` attribute (e.g. a raw
+   469→        third-party provider), the emission is a no-op — the executor will
+   470→        still record step-level tokens/cost on the ``StepCompletedEvent``.
+   471→        """
+   472→        events_list = getattr(wrapped_provider, "_events", None)
+   473→        if not isinstance(events_list, list):
+   474→            return
+   475→
+   476→        event = AssistantMessageEvent(
+   477→            thread_id=ctx.thread_id,
+   478→            step_id=ctx.step_id,
+   479→            specialist=self.config.name,
+   480→            data={
+   481→                "content": response.content,
+   482→                "model": response.usage.model or model,
+   483→                "tokens_in": response.usage.tokens_in,
+   484→                "tokens_out": response.usage.tokens_out,
+   485→                "cost_usd": response.usage.cost_usd,
+   486→                "cached": response.usage.cached,
+   487→            },
+   488→        )
+   489→        events_list.append(event)
+   490→
+   491→    # ============================================================
+   492→    # Schema validation
+   493→    # ============================================================
+   494→
+   495→    def _parse_and_validate_output(
+   496→        self,
+   497→        response: LLMResponse,
+   498→        total_usage: LLMUsage,
+   499→        tool_results: list[dict[str, Any]],
+   500→    ) -> dict[str, Any]:
+   501→        """Parse LLM response and validate against pydantic_model or output_schema."""
+   502→        if not response.content:
+   503→            return {
+   504→                "specialist": self.config.name,
+   505→                "success": False,
+   506→                "error": "Empty response from LLM",
+   507→                "raw": None,
+   508→                "usage": total_usage.model_dump(),
+   509→                "tool_results": tool_results,
+   510→            }
+   511→
+   512→        # Strip ```json ... ``` / ``` ... ``` fences that some models (notably
+   513→        # Llama 3.2) wrap around a JSON payload despite being asked for raw JSON.
+   514→        cleaned = self._clean_json_response(response.content)
+   515→
+   516→        # Try JSON parse
+   517→        try:
+   518→            parsed = json.loads(cleaned)
+   519→        except json.JSONDecodeError:
+   520→            # If we expected JSON, this is a failure
+   521→            if self.config.output_schema or self.config.pydantic_model:
+   522→                return {
+   523→                    "specialist": self.config.name,
+   524→                    "success": False,
+   525→                    "error": f"LLM did not return valid JSON. Got: {response.content[:200]}",
+   526→                    "raw": response.content,
+   527→                    "usage": total_usage.model_dump(),
+   528→                    "tool_results": tool_results,
+   529→                }
+   530→            # If no schema expected, return raw content
+   531→            parsed = {"raw": response.content}
+   532→
+   533→        # Strong validation with pydantic model if defined (preferred over
+   534→        # the weak JSON-schema `required`-fields check below — pydantic gives
+   535→        # us type coercion + full validation).
+   536→        if self.config.pydantic_model:
+   537→            try:
+   538→                validated = self.config.pydantic_model.model_validate(parsed)
+   539→                return {
+   540→                    "specialist": self.config.name,
+   541→                    "success": True,
+   542→                    "output": validated.model_dump(),
+   543→                    "usage": total_usage.model_dump(),
+   544→                    "tool_results": tool_results,
+   545→                }
+   546→            except ValidationError as e:
+   547→                return {
+   548→                    "specialist": self.config.name,
+   549→                    "success": False,
+   550→                    "error": f"Output schema validation failed: {e}",
+   551→                    "raw": parsed,
+   552→                    "usage": total_usage.model_dump(),
+   553→                    "tool_results": tool_results,
+   554→                }
+   555→
+   556→        # Weak validation with JSON schema (required fields only)
+   557→        if self.config.output_schema:
+   558→            required = self.config.output_schema.get("required", [])
+   559→            missing = [f for f in required if f not in parsed]
+   560→            if missing:
+   561→                return {
+   562→                    "specialist": self.config.name,
+   563→                    "success": False,
+   564→                    "error": f"Missing required fields: {missing}",
+   565→                    "raw": parsed,
+   566→                    "usage": total_usage.model_dump(),
+   567→                    "tool_results": tool_results,
+   568→                }
+   569→
+   570→        return {
+   571→            "specialist": self.config.name,
+   572→            "success": True,
+   573→            "output": parsed,
+   574→            "usage": total_usage.model_dump(),
+   575→            "tool_results": tool_results,
+   576→        }
+   577→
+   578→    # ============================================================
+   579→    # Helpers
+   580→    # ============================================================
+   581→
+   582→    def _format_input(self, input_data: dict[str, Any]) -> str:
+   583→        """Format input dict as a user message."""
+   584→        return (
+   585→            f"Input:\n```json\n{json.dumps(input_data, indent=2, default=str)}\n```\n\n"
+   586→            f"Process this input according to your role. "
+   587→            f"Return JSON matching the schema. Use tools if needed."
+   588→        )
+   589→
+   590→    @staticmethod
+   591→    def _clean_json_response(content: str) -> str:
+   592→        """Strip markdown code-fences wrappers from an LLM JSON response.
+   593→
+   594→        Many local models (Llama 3.2 in particular) ignore a ``response_format``
+   595→        hint and wrap their JSON in ```` ```json ... ``` ```` or plain ```` ``` ... ``` ````.
+   596→        ``json.loads`` can't parse that, so peel the fences off before parsing.
+   597→
+   598→        Only strips the *outer* fence — JSON string values that legitimately
+   599→        contain ``` are left untouched because we only trim a leading fence
+   600→        and a trailing fence, never interior backticks.
+   601→        """
+   602→        # ``content`` is typed as ``str``; the isinstance guard below is a
+   603→        # defensive runtime check for callers that bypass the type system
+   604→        # (e.g. third-party providers returning bytes). It is unreachable per
+   605→        # mypy but kept as defense-in-depth.
+   606→        if not isinstance(content, str):
+   607→            return content  # type: ignore[unreachable]
+   608→        text = content.strip()
+   609→        # Match an opening fence ```` ```json ```` / ```` ```jsonYAML ```` / ```` ``` ````
+   610→        # followed by content and a closing ```` ``` ````. Non-greedy so we grab
+   611→        # the smallest outer fence.
+   612→        if text.startswith("```"):
+   613→            # Drop the opening fence line (and any language tag after it).
+   614→            first_newline = text.find("\n")
+   615→            # Single-line fence like ```{} ``` (no newline) → strip 3 backticks
+   616→            # either side; otherwise slice off the whole opening fence line.
+   617→            text = text[first_newline + 1 :] if first_newline != -1 else text[3:]
+   618→            # Strip a trailing ``` if present.
+   619→            if text.endswith("```"):
+   620→                text = text[:-3]
+   621→        return text.strip()
+   622→
+   623→    def _tool_to_schema(self, tool: Tool) -> dict[str, Any]:
+   624→        """Convert an ARNES Tool to OpenAI tool schema for LLM."""
+   625→        args_schema = getattr(tool, "Args", None)
+   626→        return {
+   627→            "type": "function",
+   628→            "function": {
+   629→                "name": tool.name,
+   630→                "description": tool.description,
+   631→                "parameters": args_schema.model_json_schema()
+   632→                if args_schema
+   633→                else {"type": "object", "properties": {}},
+   634→            },
+   635→        }
+   636→
+   637→
+   638→class SpecialistRegistry:
+   639→    """Registry of available specialists."""
+   640→
+   641→    def __init__(self) -> None:
+   642→        self._specialists: dict[str, Specialist] = {}
+   643→
+   644→    def register(self, specialist: Specialist) -> None:
+   645→        if not specialist.config.name:
+   646→            raise ValueError("Specialist must have a name in its config")
+   647→        self._specialists[specialist.config.name] = specialist
+   648→
+   649→    def register_class(self, specialist_class: type[Specialist]) -> None:
+   650→        instance = specialist_class()
+   651→        self.register(instance)
+   652→
+   653→    def get(self, name: str) -> Specialist | None:
+   654→        if not name.startswith("@"):
+   655→            name = "@" + name
+   656→        return self._specialists.get(name)
+   657→
+   658→    def list_names(self) -> list[str]:
+   659→        """Return a sorted list of registered specialist names."""
+   660→        return sorted(self._specialists.keys())
+   661→
+   662→    def has(self, name: str) -> bool:
+   663→        return self.get(name) is not None
+   664→
+   665→    def configs(self) -> list[SpecialistConfig]:
+   666→        return [s.config for s in self._specialists.values()]
+   667→
+   668→
+   669→def get_default_specialist_registry() -> SpecialistRegistry:
+   670→    """Return a registry with all built-in specialists registered."""
+   671→    registry = SpecialistRegistry()
+   672→    from arnes.specialists.coder import Coder
+   673→    from arnes.specialists.debugger import Debugger
+   674→    from arnes.specialists.planner import Planner
+   675→    from arnes.specialists.reviewer import Reviewer
+   676→    from arnes.specialists.tester import Tester
+   677→
+   678→    for cls in [Planner, Coder, Reviewer, Tester, Debugger]:
+   679→        registry.register_class(cls)
+   680→    return registry
+   681→

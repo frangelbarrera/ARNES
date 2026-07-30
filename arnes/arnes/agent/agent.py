@@ -21,6 +21,7 @@ from arnes.llm.factory import get_provider
 from arnes.middleware import BudgetExceeded, build_middleware_stack
 from arnes.specialists.base import (
     SpecialistRegistry,
+    _drain_event_to_sink,
     get_default_specialist_registry,
 )
 from arnes.thread import Thread
@@ -377,14 +378,14 @@ class Harness:
         (e.g. ``PlaybookExecutor._drain_middleware_events``) pick it up
         automatically.
 
+        Delegates to the shared module-level :func:`_drain_event_to_sink`
+        helper so the "get list / type-guard / append" defensive pattern is
+        not duplicated between :class:`Harness` and :class:`Specialist`.
+
         If ``wrapped_provider`` has no ``_events`` attribute (e.g. a raw
         third-party provider), the emission is a no-op — the stream
         itself still works, just without an audit trail.
         """
-        events_list = getattr(wrapped_provider, "_events", None)
-        if not isinstance(events_list, list):
-            return
-
         event = AssistantMessageEvent(
             thread_id=ctx.thread_id,
             step_id=ctx.step_id,
@@ -399,4 +400,4 @@ class Harness:
                 "streamed": True,
             },
         )
-        events_list.append(event)
+        _drain_event_to_sink(wrapped_provider, event)

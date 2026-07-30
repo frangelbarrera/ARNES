@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added in Round 13
+- `arnes benchmark` CLI command now documented end-to-end in the README feature table and a dedicated "Benchmark" section. Targets +6.1 score gain to reach the 95/100 tier.
+- `CITATION.cff`: Zenodo DOI placeholder (`10.5281/zenodo.ARNES`) added so the citation record is ready for the Zenodo deposit the moment the software is published.
+- `tests/unit/test_builtin_tools.py`: new test module covering the previously-uncovered paths in `arnes/tools/builtin.py` (was 52% coverage) — ShellTool sandbox mode (mocked Docker), HttpTool with secret broker removed, FilesystemReadTool with various file sizes, FilesystemWriteTool append mode, HumanApprovalTool interactive mode, `_is_dangerous_command` full pattern matrix, `_validate_path` edge cases, and `_is_blocked_ip` IPv6 cases.
+- `arnes/cli/main.py` `_stream_specialist`: rewritten to use `Harness.stream_with_audit()` + `Thread.to_markdown()` for consistency with the rest of the bitácora system (was a bespoke markdown format that diverged from `PlaybookRunResult.to_markdown()`).
+
+### Changed in Round 13
+- `arnes/playbooks/executor.py`: removed the SPLIT-R12 backwards-compat delegating wrappers (`_drain_middleware_events`, `_resolve_input`, `_resolve_template`, `_resolve_expr`, `_TEMPLATE_RE` class attr). Internal call sites now use the canonical functions from `arnes.playbooks.events` / `arnes.playbooks.template` directly. Executor file went from 1015 → ~720 lines (under the 800-line target).
+- `arnes/playbooks/schema.py`: docstring example was already English (verified — no Spanish `nombre:` / `auditar-pr` payload remains). Documented as fixed to close the audit checklist item.
+- `tests/stress/test_template_resolution.py`: updated to call the standalone `_resolve_template` from `arnes.playbooks.template` directly instead of the executor method (which is now removed).
+- Old audit reports `docs/audits/JUDGE_*_R{1,2,3,4}.md` moved into `docs/audits/archive/` (38 files). The main `docs/audits/` folder now holds only R5+ audits + cross-cutting summaries (`AI_AUDIT.md`, `SECURITY_AUDIT.md`, `DX_AUDIT.md`, `ARCHITECTURE_AUDIT.md`, `COMPETITIVE_AUDIT.md`).
+
+### Added in Round 12
+- `arnes/benchmarks/` package: `BenchmarkRunner` with multi-seed runs (`seeds=N`), concurrent execution (`concurrent=N`), and p95 duration reporting per playbook. Pluggable `BenchmarkSuite` protocol (`BasicBenchmarkSuite` ships by default, scanning `manuals/*.yaml`).
+- `arnes benchmark` CLI command: runs the basic suite against a deterministic seeded mock LLM (no network, $0 spend) and reports per-playbook success rate / avg + p95 duration / avg tokens / avg cost. Saves JSON results to `benchmark-results.json` (or `--output`).
+- `tests/test_benchmark.py`: full coverage for `BenchmarkRunner`, `BasicBenchmarkSuite`, and `BenchmarkResults` (per-playbook aggregation, p95 math, JSON round-trip).
+- `tests/snapshot/` package: vcrpy-style cassettes for LLM provider tests. First cassette: `test_planner_basic.yaml` (LiteLLM provider fixture). `tests/snapshot/test_litellm_cassette.py` replays the cassette through `LiteLLMProvider` and asserts the structured-output path is exercised without hitting the network.
+- `arnes/playbooks/` split for the >500-line rule: extracted `result.py` (`PlaybookRunResult`), `sandbox.py` (`_is_docker_available` + `DEFAULT_SANDBOX_CONTAINER`), `events.py` (`_drain_middleware_events` + `_filter_internal_keys`), and `template.py` (`_TEMPLATE_RE` + `_resolve_input` / `_resolve_template` / `_resolve_expr`). Each extracted module is independently testable and stays under 200 lines.
+
+### Changed in Round 12
+- `arnes/specialists/base.py`: extracted the duplicated `_emit_assistant_message` pattern into a single private helper (`Specialist._emit_assistant_message`) shared by `run()` and `stream()`. The helper builds the `AssistantMessageEvent` with `ctx.thread_id` / `ctx.step_id` / `self.config.name` and appends to the wrapped provider's `_events` sink; the bitácora-draining pattern in the executor (`_drain_middleware_events`) is unchanged.
+
 ### Added in Round 11
 - `CITATION.cff`: full Citation File Format metadata for academic citations (title, authors, ORCID, version, license, repository, keywords, abstract, preferred-citation block). Closes the "scientific judge NO-GO" gap.
 - New logo at `docs/logo.svg` — centered, 120px, embedded at the top of `README.md` and the social card.

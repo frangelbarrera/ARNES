@@ -32,6 +32,32 @@ from arnes.tools.base import Tool, ToolContext, ToolRegistry
 logger = structlog.get_logger(__name__)
 
 
+def _drain_event_to_sink(
+    wrapped_provider: Any,
+    event: AssistantMessageEvent,
+) -> None:
+    """Append an ``AssistantMessageEvent`` to the wrapped provider's ``_events`` sink.
+
+    Shared helper used by both :class:`Specialist._emit_assistant_message`
+    and :class:`arnes.agent.Harness._emit_stream_audit_event` (R13 DRY pass).
+
+    The middleware (``CostGuard``) sets up a shared ``_events`` list on the
+    wrapped provider so events can be drained later by the executor's
+    ``_drain_middleware_events`` and appended to the actual ``Thread``. This
+    helper centralises the defensive ``getattr`` + ``isinstance(list)`` guard
+    that both call sites previously duplicated.
+
+    If ``wrapped_provider`` has no ``_events`` attribute (e.g. a raw
+    third-party provider without our middleware), the emission is a no-op —
+    the caller still records step-level tokens/cost on the
+    ``StepCompletedEvent``, so no data is lost.
+    """
+    events_list = getattr(wrapped_provider, "_events", None)
+    if not isinstance(events_list, list):
+        return
+    events_list.append(event)
+
+
 class SpecialistConfig(BaseModel):
     """Configuration for a specialist."""
 
@@ -465,14 +491,14 @@ class Specialist(ABC):
         ``CostGuard``); the ``PlaybookExecutor`` drains that sink after each
         step and appends the events to the ``Thread``.
 
+        Delegates to the shared module-level :func:`_drain_event_to_sink`
+        helper so the "get list / type-guard / append" defensive pattern is
+        not duplicated between :class:`Specialist` and :class:`Harness`.
+
         If ``wrapped_provider`` has no ``_events`` attribute (e.g. a raw
         third-party provider), the emission is a no-op — the executor will
         still record step-level tokens/cost on the ``StepCompletedEvent``.
         """
-        events_list = getattr(wrapped_provider, "_events", None)
-        if not isinstance(events_list, list):
-            return
-
         event = AssistantMessageEvent(
             thread_id=ctx.thread_id,
             step_id=ctx.step_id,
@@ -486,7 +512,7 @@ class Specialist(ABC):
                 "cached": response.usage.cached,
             },
         )
-        events_list.append(event)
+        _drain_event_to_sink(wrapped_provider, event)
 
     # ============================================================
     # Schema validation

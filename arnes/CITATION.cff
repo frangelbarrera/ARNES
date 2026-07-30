@@ -10,6 +10,7 @@ version: "0.1.0a1"
 date-released: "2026-07-30"
 license: Apache-2.0
 repository-code: "https://github.com/frangelbarrera/ARNES"
+doi: "10.5281/zenodo.ARNES"
 keywords:
   - ai-agents
   - agent-harness
@@ -27,3 +28,4 @@ preferred-citation:
   date-released: "2026-07-30"
   license: Apache-2.0
   url: "https://github.com/frangelbarrera/ARNES"
+  doi: "10.5281/zenodo.ARNES"

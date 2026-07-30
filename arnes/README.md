@@ -246,6 +246,7 @@ See [Recording a demo GIF](#recording-a-demo-gif) below for the `vhs` and
 | **Observability** | Structured event log | ✅ v0.1 |
 | | Auditable markdown bitácora | ✅ v0.1 |
 | | OpenTelemetry exporter | 🚧 v0.3 |
+| **Benchmarks** | BenchmarkRunner with multi-seed + concurrent + p95 | ✅ v0.1 |
 
 ---
 
@@ -322,6 +323,9 @@ arnes run manuals/hello-world.yaml
 
 # 6. Stream playbook step events as they complete
 arnes run manuals/hello-world.yaml --mock --stream
+
+# 7. Benchmark every playbook (multi-seed, p95, concurrent)
+arnes benchmark --seeds 5 --concurrent 4
 ```
 
 If you do not have Ollama installed, ARNES detects it and guides you. To use
@@ -366,6 +370,51 @@ arnes run manuals/audit-pr.yaml --model anthropic/claude-sonnet-4-20250514
 │   ollama · anthropic · openai · google · groq                 │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Benchmark
+
+ARNES ships a built-in benchmark runner that executes every playbook in
+`manuals/` against a deterministic seeded mock LLM (no network, $0 spend)
+and reports per-playbook success rate, avg/p95 duration, tokens, and cost.
+Multi-seed runs give you statistical significance; concurrent runs let
+you stress-test the executor's parallel-branch path.
+
+```bash
+# 1 seed, 1 concurrent (default — quick smoke test)
+arnes benchmark
+
+# 5 seeds per playbook (catch flaky playbooks)
+arnes benchmark --seeds 5
+
+# 4 playbooks at once (stress the asyncio.gather path)
+arnes benchmark --concurrent 4
+
+# Combined: 5 seeds × 4-way parallelism
+arnes benchmark --seeds 5 --concurrent 4
+```
+
+Example output:
+
+```
+              Benchmark Results — basic suite
+┏━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Playbook       ┃ Runs ┃ Success ┃ Avg dur   ┃ P95 dur   ┃ Avg tokens ┃ Avg cost  ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ hello-world    │    5 │    100% │    0.0089 │    0.0112 │        705 │ $0.000000 │
+│ audit-pr       │    5 │    100% │    0.0241 │    0.0298 │       2104 │ $0.000000 │
+│ debug-python   │    5 │    100% │    0.0187 │    0.0233 │       1583 │ $0.000000 │
+│ write-feature  │    5 │    100% │    0.0312 │    0.0367 │       2431 │ $0.000000 │
+└────────────────┴──────┴─────────┴───────────┴───────────┴────────────┴───────────┘
+
+Overall: success=100%, avg_dur=0.0207s, avg_tokens=1706, avg_cost=$0.000000
+
+Results saved to: benchmark-results.json
+```
+
+The JSON dump (default: `benchmark-results.json`, override with `--output`)
+is suitable for diffing across commits or pasting into a PR description.
 
 ---
 
@@ -489,7 +538,7 @@ known issues that will be fixed in v0.2:
 - ✅ VerificationLayer with structured outputs and refusal pattern
 - ✅ TokenOptimizer with model routing and semantic cache
 - ✅ MCP server (stdio transport + minimal HTTP transport with auth/rate limits)
-- ✅ CLI (init, run, run --stream, stream, lint, eval, list, mcp serve)
+- ✅ CLI (init, run, run --stream, stream, lint, eval, benchmark, list, mcp serve)
 - ✅ Docker sandbox auto-detected when `docker` is on PATH (Tier 1 dev-local)
 - ✅ SSRF protection with DNS resolution
 - ✅ Path traversal + symlink escape detection
