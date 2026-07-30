@@ -10,6 +10,7 @@ Commands:
     arnes list playbooks             List curated playbooks
     arnes lint <playbook.yaml>       Validate a playbook without executing
     arnes eval <playbook.yaml>       Run playbook with mock LLM for testing
+    arnes benchmark [--seeds N]      Run benchmark suite with mock LLM
     arnes mcp serve                  Start MCP server (stdio or http)
     arnes --version                  Print version
 """
@@ -19,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -251,8 +253,6 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     console.print(f"[dim]Tokens: {total_in} in, {total_out} out. Cost: ${total_cost:.4f}[/dim]")
 
     # Save bitácora from the accumulated chunks (no second LLM call)
-    from datetime import datetime
-
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     bitacora_path = f"bitacora-stream-{specialist.lstrip('@')}-{ts}.md"
 
@@ -279,6 +279,123 @@ def eval(playbook_path: str) -> None:
     asyncio.run(
         _run_playbook(playbook_path, "mock/test", 0.0, mock=True, interactive=False, output=None)
     )
+
+
+@cli.command()
+@click.option(
+    "--seeds",
+    default=1,
+    type=click.IntRange(min=1, max=20),
+    help="Number of seeds to run each playbook with (statistical significance)",
+)
+@click.option(
+    "--concurrent",
+    default=1,
+    type=click.IntRange(min=1, max=16),
+    help="Number of playbooks to run concurrently",
+)
+@click.option(
+    "--manuals-dir",
+    "manuals_dir",
+    type=click.Path(),
+    default=None,
+    help="Directory to scan for playbooks (default: repo manuals/)",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output",
+    type=click.Path(),
+    default="benchmark-results.json",
+    help="Path to save JSON results (default: benchmark-results.json)",
+)
+def benchmark(seeds: int, concurrent: int, manuals_dir: str | None, output: str) -> None:
+    """Run the basic benchmark suite against the mock LLM.
+
+    Runs every playbook in ``manuals/`` ``--seeds`` times with a
+    deterministic seeded mock LLM (no network, no API spend). Reports
+    per-playbook success rate, avg/p95 duration, tokens, and cost.
+
+    Examples:
+
+        arnes benchmark                          # 1 seed, 1 concurrent
+        arnes benchmark --seeds 3                # 3 seeds per playbook
+        arnes benchmark --concurrent 4           # 4 playbooks at once
+        arnes benchmark --seeds 5 --concurrent 4 # 5 seeds, 4-way parallel
+    """
+    asyncio.run(_run_benchmark(seeds, concurrent, manuals_dir, output))
+
+
+async def _run_benchmark(seeds: int, concurrent: int, manuals_dir: str | None, output: str) -> None:
+    """Run the basic benchmark suite and print/save results.
+
+    Pulls in :class:`arnes.benchmarks.BenchmarkRunner` lazily so the
+    CLI startup cost stays low — ``arnes --version`` doesn't pay for
+    importing the benchmark harness.
+    """
+    from pathlib import Path
+
+    from arnes.benchmarks import BenchmarkRunner
+    from arnes.benchmarks.suites.basic import BasicBenchmarkSuite
+
+    suite_manuals = Path(manuals_dir) if manuals_dir else None
+    suite = BasicBenchmarkSuite(manuals_dir=suite_manuals)
+
+    playbooks = suite.playbooks()
+    if not playbooks:
+        manuals_display = manuals_dir or "<repo>/manuals"
+        console.print(f"[red]✗[/red] No playbooks found in {manuals_display}")
+        sys.exit(1)
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]ARNES[/bold cyan] — Benchmark suite: {suite.name}\n"
+            f"  [dim]Playbooks:[/dim] {len(playbooks)}\n"
+            f"  [dim]Seeds:[/dim] {seeds}\n"
+            f"  [dim]Concurrent:[/dim] {concurrent}\n"
+            f"  [dim]Total runs:[/dim] {len(playbooks) * seeds}",
+            border_style="cyan",
+        )
+    )
+
+    runner = BenchmarkRunner()
+    seed_values = list(range(seeds))
+    with console.status("[cyan]Running benchmarks...[/cyan]"):
+        results = await runner.run_suite(suite, seeds=seed_values, concurrent=concurrent)
+
+    # Print results as a rich table.
+    table = Table(title=f"Benchmark Results — {suite.name} suite")
+    table.add_column("Playbook", style="cyan")
+    table.add_column("Runs", justify="right")
+    table.add_column("Success", justify="right")
+    table.add_column("Avg dur (s)", justify="right")
+    table.add_column("P95 dur (s)", justify="right")
+    table.add_column("Avg tokens", justify="right")
+    table.add_column("Avg cost", justify="right")
+
+    for m in results.per_playbook:
+        avg_tokens = m.avg_tokens_in + m.avg_tokens_out
+        table.add_row(
+            m.playbook_name,
+            str(m.runs),
+            f"{m.success_rate:.0%}",
+            f"{m.avg_duration_s:.4f}",
+            f"{m.p95_duration_s:.4f}",
+            str(avg_tokens),
+            f"${m.avg_cost_usd:.6f}",
+        )
+
+    console.print(table)
+    console.print(
+        f"\n[bold]Overall:[/bold] success={results.overall_success_rate:.0%}, "
+        f"avg_dur={results.overall_avg_duration_s:.4f}s, "
+        f"avg_tokens={results.overall_avg_tokens_in + results.overall_avg_tokens_out}, "
+        f"avg_cost=${results.overall_avg_cost_usd:.6f}"
+    )
+
+    # Save JSON results.
+    Path(output).write_text(results.to_json(), encoding="utf-8")
+    console.print(f"\n[cyan]Results saved to:[/cyan] {output}")
 
 
 @cli.group()
@@ -417,8 +534,6 @@ async def _run_playbook(
         Path(output).write_text(result.to_markdown(), encoding="utf-8")
         console.print(f"\n[cyan]Bitácora saved to:[/cyan] {output}")
     else:
-        from datetime import datetime
-
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         default_path = f"bitacora-{playbook.metadata.name}-{ts}.md"
         Path(default_path).write_text(result.to_markdown(), encoding="utf-8")

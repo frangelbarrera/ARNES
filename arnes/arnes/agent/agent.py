@@ -9,6 +9,7 @@ Hello world:
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -173,8 +174,6 @@ class Harness:
             return
 
         # Build messages (same as specialist.run but without tool-use loop)
-        import json
-
         user_content = json.dumps(input_data, indent=2, default=str)
         messages = [
             LLMMessage(role="system", content=specialist_obj.config.system_prompt),
@@ -303,8 +302,6 @@ class Harness:
         specialist_obj = self.specialist_registry.get(specialist)
         if not specialist_obj:
             return
-
-        import json
 
         user_content = json.dumps(input_data, indent=2, default=str)
         messages = [

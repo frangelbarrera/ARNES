@@ -1,0 +1,388 @@
+{
+  "suite_name": "basic",
+  "started_at": "2026-07-30T22:11:02+00:00",
+  "duration_s": 0.07613015900005848,
+  "total_runs": 20,
+  "seeds": [
+    0,
+    1
+  ],
+  "concurrent": 2,
+  "overall_success_rate": 1.0,
+  "overall_avg_duration_s": 0.0029702450999593566,
+  "overall_avg_tokens_in": 1515,
+  "overall_avg_tokens_out": 144,
+  "overall_avg_cost_usd": 0.0,
+  "per_playbook": [
+    {
+      "playbook_name": "audit-pr",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.007641334500021912,
+      "p95_duration_s": 0.010213483999905293,
+      "avg_tokens_in": 1172,
+      "avg_tokens_out": 78,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "audit-pr",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.010213483999905293,
+          "tokens_in": 1172,
+          "tokens_out": 72,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "audit-pr",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.005069185000138532,
+          "tokens_in": 1172,
+          "tokens_out": 84,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "code-review-security",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.0020535230000859883,
+      "p95_duration_s": 0.0021645810002155486,
+      "avg_tokens_in": 1754,
+      "avg_tokens_out": 130,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "code-review-security",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.0021645810002155486,
+          "tokens_in": 1754,
+          "tokens_out": 120,
+          "cost_usd": 0.0,
+          "steps_executed": 5,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "code-review-security",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.001942464999956428,
+          "tokens_in": 1754,
+          "tokens_out": 140,
+          "cost_usd": 0.0,
+          "steps_executed": 5,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "debug-python-issue",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.0026853884996853594,
+      "p95_duration_s": 0.0031480090001423378,
+      "avg_tokens_in": 1329,
+      "avg_tokens_out": 150,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "debug-python-issue",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.002222767999228381,
+          "tokens_in": 1329,
+          "tokens_out": 144,
+          "cost_usd": 0.0,
+          "steps_executed": 3,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "debug-python-issue",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.0031480090001423378,
+          "tokens_in": 1329,
+          "tokens_out": 157,
+          "cost_usd": 0.0,
+          "steps_executed": 3,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "hello-world",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.001225366499966185,
+      "p95_duration_s": 0.0012717409999822848,
+      "avg_tokens_in": 705,
+      "avg_tokens_out": 74,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "hello-world",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.0011789919999500853,
+          "tokens_in": 705,
+          "tokens_out": 70,
+          "cost_usd": 0.0,
+          "steps_executed": 2,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "hello-world",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.0012717409999822848,
+          "tokens_in": 705,
+          "tokens_out": 78,
+          "cost_usd": 0.0,
+          "steps_executed": 2,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "incident-postmortem",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.003201943499789195,
+      "p95_duration_s": 0.003251727999668219,
+      "avg_tokens_in": 2196,
+      "avg_tokens_out": 234,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "incident-postmortem",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.003251727999668219,
+          "tokens_in": 2196,
+          "tokens_out": 224,
+          "cost_usd": 0.0,
+          "steps_executed": 5,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "incident-postmortem",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.0031521589999101707,
+          "tokens_in": 2196,
+          "tokens_out": 244,
+          "cost_usd": 0.0,
+          "steps_executed": 5,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "migrate-config",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.0025353935002385697,
+      "p95_duration_s": 0.0025427540003875038,
+      "avg_tokens_in": 1481,
+      "avg_tokens_out": 157,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "migrate-config",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.0025280330000896356,
+          "tokens_in": 1481,
+          "tokens_out": 149,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "migrate-config",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.0025427540003875038,
+          "tokens_in": 1481,
+          "tokens_out": 166,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "refactor-extract-function",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.0026144524999835994,
+      "p95_duration_s": 0.002652815000146802,
+      "avg_tokens_in": 1481,
+      "avg_tokens_out": 157,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "refactor-extract-function",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.002652815000146802,
+          "tokens_in": 1481,
+          "tokens_out": 149,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "refactor-extract-function",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.0025760899998203968,
+          "tokens_in": 1481,
+          "tokens_out": 166,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "summarize-paper",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.0014332575001390069,
+      "p95_duration_s": 0.0014703990000271006,
+      "avg_tokens_in": 1399,
+      "avg_tokens_out": 101,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "summarize-paper",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.0013961160002509132,
+          "tokens_in": 1399,
+          "tokens_out": 93,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "summarize-paper",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.0014703990000271006,
+          "tokens_in": 1399,
+          "tokens_out": 109,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "write-blog-post",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.0025296579997302615,
+      "p95_duration_s": 0.002586050999525469,
+      "avg_tokens_in": 1530,
+      "avg_tokens_out": 151,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "write-blog-post",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.0024732649999350542,
+          "tokens_in": 1530,
+          "tokens_out": 143,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "write-blog-post",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.002586050999525469,
+          "tokens_in": 1530,
+          "tokens_out": 159,
+          "cost_usd": 0.0,
+          "steps_executed": 4,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "playbook_name": "write-feature-tdd",
+      "runs": 2,
+      "success_count": 2,
+      "success_rate": 1.0,
+      "avg_duration_s": 0.0037821334999534884,
+      "p95_duration_s": 0.003929305999918142,
+      "avg_tokens_in": 2111,
+      "avg_tokens_out": 215,
+      "avg_cost_usd": 0.0,
+      "per_seed_results": [
+        {
+          "playbook_name": "write-feature-tdd",
+          "seed": 0,
+          "success": true,
+          "duration_s": 0.0036349609999888344,
+          "tokens_in": 2111,
+          "tokens_out": 204,
+          "cost_usd": 0.0,
+          "steps_executed": 5,
+          "steps_failed": 0,
+          "error": null
+        },
+        {
+          "playbook_name": "write-feature-tdd",
+          "seed": 1,
+          "success": true,
+          "duration_s": 0.003929305999918142,
+          "tokens_in": 2111,
+          "tokens_out": 226,
+          "cost_usd": 0.0,
+          "steps_executed": 5,
+          "steps_failed": 0,
+          "error": null
+        }
+      ]
+    }
+  ]
+}

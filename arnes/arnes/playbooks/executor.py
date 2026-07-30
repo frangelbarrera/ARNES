@@ -6,31 +6,44 @@ The executor:
 2. For each step, invokes the specialist or tool.
 3. Applies conditional branches (if/elif/else).
 4. Runs parallel branches concurrently.
-5. Handles retries with backoff.
-6. Pauses at HITL gates.
+5. Retry execution: v0.2 (schemas defined).
+6. HITL execution: v0.2 (schemas defined).
 7. Tracks budget via CostGuard.
 8. Appends events to the Thread.
 9. Returns a PlaybookRunResult with full trace.
 
 The executor is async and supports both fire-and-forget and streaming modes.
+
+Helpers (split out for the >500-line rule, SPLIT-R12):
+
+- ``arnes.playbooks.result``: ``PlaybookRunResult`` model.
+- ``arnes.playbooks.sandbox``: ``DEFAULT_SANDBOX_CONTAINER`` + ``_is_docker_available``.
+- ``arnes.playbooks.events``: ``_drain_middleware_events`` + ``_filter_internal_keys``.
+- ``arnes.playbooks.template``: ``_TEMPLATE_RE`` + ``_resolve_input`` / ``_resolve_template`` /
+  ``_resolve_expr``.
+
+These names are re-exported by this module for backwards compatibility, so
+``from arnes.playbooks.executor import PlaybookRunResult`` (and the other
+historical spellings) continue to work.
 """
 
 from __future__ import annotations
 
 import asyncio
-import re
-import shutil
 import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 import structlog
-from pydantic import BaseModel, Field
 
 from arnes.llm.base import LLMProvider
 from arnes.llm.factory import get_provider
 from arnes.middleware.cost_guard import BudgetExceeded, CostBudget, CostGuard
+from arnes.playbooks.events import _drain_middleware_events, _filter_internal_keys
+from arnes.playbooks.result import PlaybookRunResult
+from arnes.playbooks.sandbox import DEFAULT_SANDBOX_CONTAINER, _is_docker_available
 from arnes.playbooks.schema import ConditionalBranch, Playbook, PlaybookStep
+from arnes.playbooks.template import _TEMPLATE_RE, _resolve_expr, _resolve_input, _resolve_template
 from arnes.specialists.base import SpecialistRegistry, get_default_specialist_registry
 from arnes.thread import Thread
 from arnes.thread.events import (
@@ -48,56 +61,23 @@ from arnes.tools.registry import get_default_registry
 
 logger = structlog.get_logger(__name__)
 
-# Default Docker image used by the ShellTool sandbox. The image is expected
-# to be present locally (built via `docker build -t arnes-sandbox:latest .`
-# from the project's Dockerfile.sandbox). The ShellTool falls back to a
-# clear error message if the daemon or image is missing at execution time.
-DEFAULT_SANDBOX_CONTAINER = "arnes-sandbox:latest"
-
-
-def _is_docker_available() -> bool:
-    """Return True if the ``docker`` CLI is on PATH.
-
-    Used by the executor to decide whether to wire the Docker sandbox into
-    the default ``ToolContext``. This is a presence check only — it does NOT
-    verify the daemon is running or that ``arnes-sandbox:latest`` exists.
-    The ``ShellTool`` surfaces a clear error if either is missing at
-    execution time (``FileNotFoundError`` on ``docker run``).
-
-    We deliberately avoid probing the daemon (``docker info`` / ``docker
-    version``) here because:
-
-    1. It spawns a subprocess on every ``PlaybookExecutor`` construction,
-       which is wasteful for tests and high-throughput runs.
-    2. The daemon may be temporarily down even if the CLI is installed —
-       failing fast at construction time would prevent the user from
-       running non-shell playbooks that don't need Docker at all.
-    3. The ``ShellTool._execute_in_sandbox`` already handles the
-       ``FileNotFoundError`` case (docker binary missing) and returns a
-       actionable error message.
-    """
-    return shutil.which("docker") is not None
-
-
-class PlaybookRunResult(BaseModel):
-    """Result of running a playbook."""
-
-    model_config = {"arbitrary_types_allowed": True}
-
-    thread: Thread
-    success: bool
-    steps_executed: int = 0
-    steps_failed: int = 0
-    duration_s: float = 0.0
-    total_tokens_in: int = 0
-    total_tokens_out: int = 0
-    total_cost_usd: float = 0.0
-    outputs: dict[str, Any] = Field(default_factory=dict)  # step_id → output
-    error: str | None = None
-
-    def to_markdown(self) -> str:
-        """Render the run as a markdown bitácora."""
-        return self.thread.to_markdown()
+# Public re-exports for backwards compatibility (SPLIT-R12). The canonical
+# homes for these symbols are the dedicated modules above; the names are
+# intentionally re-bound here so existing `from arnes.playbooks.executor
+# import X` imports and `unittest.mock.patch("arnes.playbooks.executor.X")`
+# patches keep working.
+__all__ = [
+    "DEFAULT_SANDBOX_CONTAINER",
+    "_TEMPLATE_RE",
+    "PlaybookExecutor",
+    "PlaybookRunResult",
+    "_drain_middleware_events",
+    "_filter_internal_keys",
+    "_is_docker_available",
+    "_resolve_expr",
+    "_resolve_input",
+    "_resolve_template",
+]
 
 
 class PlaybookExecutor:
@@ -640,6 +620,11 @@ class PlaybookExecutor:
     ) -> None:
         """Drain the middleware event sink and append events to the Thread.
 
+        Thin delegating wrapper around
+        :func:`arnes.playbooks.events._drain_middleware_events` (kept on the
+        class so existing call sites that use ``self._drain_middleware_events``
+        continue to work after SPLIT-R12).
+
         Middleware (CostGuard, TokenOptimizer, VerificationLayer) emit
         events to a shared ``_events`` list because they do not have direct
         access to the Thread. The events are created with a nil thread_id
@@ -649,21 +634,7 @@ class PlaybookExecutor:
         Idempotent: clears the sink after draining so the same events are
         not appended twice.
         """
-        events = getattr(cost_guard, "_events", None)
-        if not events:
-            return
-
-        thread_id = thread_holder[0].id
-        for event in events:
-            # Events are frozen pydantic models; use model_copy(update=...)
-            # to set the real thread_id and step_id without mutating the
-            # original (which may be referenced by middleware state).
-            patched = event.model_copy(
-                update={"thread_id": thread_id, "step_id": event.step_id or step_id}
-            )
-            thread_holder[0] = thread_holder[0].append(patched)
-
-        events.clear()
+        _drain_middleware_events(thread_holder, cost_guard, step_id)
 
     async def _execute_specialist(
         self,
@@ -985,10 +956,13 @@ class PlaybookExecutor:
         return {"terminate": None}
 
     # ============================================================
-    # Template resolution
+    # Template resolution (delegates to arnes.playbooks.template)
     # ============================================================
 
-    _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+)\s*\}\}")
+    # Backwards-compat attribute: stress tests and downstream code may
+    # reference ``PlaybookExecutor._TEMPLATE_RE`` directly. The canonical
+    # home is now ``arnes.playbooks.template._TEMPLATE_RE``.
+    _TEMPLATE_RE = _TEMPLATE_RE
 
     def _resolve_input(
         self,
@@ -997,149 +971,45 @@ class PlaybookExecutor:
     ) -> dict[str, Any]:
         """Resolve Jinja2-style template references in input.
 
-        Example: "{{ pasos.leer_diff.salida }}" → outputs["leer_diff"]["output"]
+        Thin delegating wrapper around
+        :func:`arnes.playbooks.template._resolve_input` (kept on the class
+        so existing ``self._resolve_input(...)`` call sites and stress
+        tests that drive ``executor._resolve_template`` directly continue
+        to work after SPLIT-R12).
+
+        Example: "{{ pasos.leer_diff.salida }}" -> outputs["leer_diff"]["output"]
         Handles MULTIPLE templates in the same string.
         """
-        if input_value is None:
-            return {}
-
-        if isinstance(input_value, str):
-            return {"__resolved_str__": self._resolve_template(input_value, outputs)}
-
-        if isinstance(input_value, dict):
-            resolved = {}
-            for k, v in input_value.items():
-                if isinstance(v, str):
-                    resolved[k] = self._resolve_template(v, outputs)
-                elif isinstance(v, dict):
-                    resolved[k] = self._resolve_input(v, outputs)
-                elif isinstance(v, list):
-                    resolved[k] = [
-                        self._resolve_template(item, outputs)
-                        if isinstance(item, str)
-                        else self._resolve_input(item, outputs)
-                        if isinstance(item, dict)
-                        else item
-                        for item in v
-                    ]
-                else:
-                    resolved[k] = v
-            return resolved
-
-        # Unreachable: ``input_value`` is typed as ``dict[str, Any] | str | None``
-        # and all three branches above return early. Kept as a defensive
-        # fallback for callers that bypass the type system (defence-in-depth).
-        return {"__input__": input_value}  # type: ignore[unreachable]
+        return _resolve_input(input_value, outputs)
 
     def _resolve_template(self, template: str, outputs: dict[str, Any]) -> Any:
         """Resolve a template string, handling MULTIPLE {{ }} references.
 
+        Thin delegating wrapper around
+        :func:`arnes.playbooks.template._resolve_template`.
+
         Examples:
-            "{{ pasos.X.salida }}" → outputs["X"]["output"]
-            "Plan: {{ variables.nombre }} for PR {{ variables.pr_number }}" → "Plan: foo for PR 1234"
-            "Diff: {{ pasos.leer_diff.salida }}, Sec: {{ pasos.auditoria.salida }}" → "Diff: ..., Sec: ..."
-            "{{ }}" → "{{ }}"  (empty template body — returned as literal)
+            "{{ pasos.X.salida }}" -> outputs["X"]["output"]
+            "Plan: {{ variables.nombre }} for PR {{ variables.pr_number }}" -> "Plan: foo for PR 1234"
+            "Diff: {{ pasos.leer_diff.salida }}, Sec: {{ pasos.auditoria.salida }}" -> "Diff: ..., Sec: ..."
+            "{{ }}" -> "{{ }}"  (empty template body — returned as literal)
         """
-        # Find ALL template references
-        matches = list(self._TEMPLATE_RE.finditer(template))
-
-        if not matches:
-            return template
-
-        # If the entire string is ONE template, return the resolved value (preserve type)
-        if len(matches) == 1 and matches[0].group(0) == template:
-            expr = matches[0].group(1).strip()
-            if not expr:
-                # Empty template body (e.g. "{{ }}") — return the original
-                # literal verbatim rather than re-rendering it with different
-                # whitespace.
-                return template
-            return self._resolve_expr(expr, outputs)
-
-        # Otherwise, interpolate ALL matches into the string
-        result = template
-        # Process in reverse order to keep indexes valid
-        for match in reversed(matches):
-            expr = match.group(1).strip()
-            if not expr:
-                # Empty template body — leave the original match untouched
-                continue
-            resolved = self._resolve_expr(expr, outputs)
-            result = result[: match.start()] + str(resolved) + result[match.end() :]
-
-        return result
+        return _resolve_template(template, outputs)
 
     def _resolve_expr(self, expr: str, outputs: dict[str, Any]) -> Any:
         """Resolve a single template expression like 'steps.X.output'.
 
+        Thin delegating wrapper around
+        :func:`arnes.playbooks.template._resolve_expr`.
+
         Supported forms:
-            "steps.X.output"        → outputs["X"]["output"] (or outputs["X"] if raw)
-            "steps.X.output.field"  → outputs["X"]["output"]["field"] (or outputs["X"]["field"])
-            "variables.X"           → outputs["X"]
-            "pasos.X.salida"        → legacy ES form of "steps.X.output"
+            "steps.X.output"        -> outputs["X"]["output"] (or outputs["X"] if raw)
+            "steps.X.output.field"  -> outputs["X"]["output"]["field"] (or outputs["X"]["field"])
+            "variables.X"           -> outputs["X"]
+            "pasos.X.salida"        -> legacy ES form of "steps.X.output"
 
-        Two important behaviors:
-
-        1. Only the LEADING prefix ("steps.", "variables.", "pasos.") is
-           stripped. Interior occurrences of these substrings (e.g. when a
-           step's output literally contains a key named "steps") are
-           preserved. This makes deep nesting like
-           ``{{ steps.s1.output.steps.s2.output }}`` work correctly.
-
-        2. For STEP references (``steps.*`` / legacy ``pasos.*``), the
-           "output" (and legacy "salida") segment is treated as a VIRTUAL
-           accessor: if the current dict has an "output" key, it is
-           dereferenced; if not, the segment is skipped (the current dict
-           IS the output). This makes ``{{ steps.X.output }}`` work whether
-           the step's output was stored raw (``outputs["X"] = output_dict``)
-           or wrapped (``outputs["X"] = {"output": output_dict, ...}``).
-
-           The virtual accessor does NOT apply to ``variables.*`` refs —
-           variables are user-defined and a missing key is a real error.
+        See the standalone function's docstring for the full semantics
+        (leading-prefix-only stripping, virtual ``output`` accessor for
+        step refs, etc.).
         """
-        # Strip leading prefix only — NOT all occurrences. Stripping all
-        # occurrences of "steps." would corrupt paths whose intermediate
-        # dicts literally contain a key named "steps" (deep nesting).
-        stripped = expr.strip()
-        is_step_ref = False
-        for prefix in ("steps.", "pasos.", "variables."):
-            if stripped.startswith(prefix):
-                stripped = stripped[len(prefix) :]
-                # Only steps/pasos get the virtual "output" accessor;
-                # variables use strict key lookup.
-                is_step_ref = prefix in ("steps.", "pasos.")
-                break
-
-        parts = stripped.split(".")
-
-        current: Any = outputs
-        for raw_part in parts:
-            # Legacy ES translation per-segment
-            part = "output" if raw_part == "salida" else raw_part
-            if isinstance(current, dict):
-                if part in current:
-                    current = current[part]
-                elif is_step_ref and part == "output":
-                    # Virtual accessor: the current dict is itself the
-                    # step's output (stored raw). Skip this segment so
-                    # downstream segments (e.g. ".verdict") resolve against
-                    # the output dict directly.
-                    continue
-                else:
-                    return f"{{{{ {expr} }}}}"  # Leave template as-is if not found
-            else:
-                return f"{{{{ {expr} }}}}"
-
-        return current
-
-
-def _filter_internal_keys(outputs: dict[str, Any]) -> dict[str, Any]:
-    """Filter internal sentinel keys from outputs before returning to user.
-
-    These keys are used internally by the executor for control flow
-    (skip-until tracking, approved fingerprints, etc.) and should not
-    be exposed in PlaybookRunResult.outputs.
-    """
-    return {
-        k: v for k, v in outputs.items() if not k.startswith("__") and k != "_approved_fingerprints"
-    }
+        return _resolve_expr(expr, outputs)

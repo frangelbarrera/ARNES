@@ -1,7 +1,8 @@
 """ARNES playbooks — declarative YAML manuals compiled to executable DAGs."""
 
 from arnes.playbooks.compiler import PlaybookCompileError, PlaybookCompiler
-from arnes.playbooks.executor import PlaybookExecutor, PlaybookRunResult
+from arnes.playbooks.executor import PlaybookExecutor
+from arnes.playbooks.result import PlaybookRunResult
 from arnes.playbooks.schema import (
     ConditionalBranch,
     HITLGate,
