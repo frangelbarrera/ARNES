@@ -65,7 +65,11 @@ class ShellTool(Tool):
 
     class Args(BaseModel):
         command: str = Field(..., description="Shell command to execute")
-        cwd: str = Field(default=".", description="Working directory inside sandbox")
+        cwd: str = Field(
+            default=".",
+            description="Working directory inside sandbox",
+            pattern=r"^[a-zA-Z0-9_\-./ ]+$",
+        )
         timeout_s: int = Field(default=30, ge=1, le=300)
         env: dict[str, str] = Field(default_factory=dict)
 
