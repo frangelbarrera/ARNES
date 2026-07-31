@@ -89,7 +89,6 @@ nav:
   - Statistics: statistics.md
   - Comparison: comparison.md
   - Ethics: ethics.md
-  - Audits: audits.md
 
 # Extra — GitHub stats badge + the social card used in link previews.
 extra:
@@ -101,8 +100,3 @@ extra:
 # Strict mode — warns on broken links so the docs site can't silently
 # drift from the source tree.
 strict: true
-
-# Exclude the audit archive from the search index (it's huge and not
-# user-facing).
-exclude_docs: |
-  audits/archive/*

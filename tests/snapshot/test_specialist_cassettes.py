@@ -306,8 +306,8 @@ class TestSpecialistCassetteSanity:
     @pytest.mark.parametrize(
         ("cassette", "expected_id"),
         [
-            (_CODER_CASSETTE, "chatcmpl-bench-r15-coder"),
-            (_REVIEWER_CASSETTE, "chatcmpl-bench-r15-reviewer"),
+            (_CODER_CASSETTE, "chatcmpl-arnes-coder"),
+            (_REVIEWER_CASSETTE, "chatcmpl-arnes-reviewer"),
         ],
     )
     def test_cassette_file_exists(self, cassette: Path, expected_id: str) -> None:

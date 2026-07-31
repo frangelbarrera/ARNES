@@ -6,29 +6,29 @@ The executor:
 2. For each step, invokes the specialist or tool.
 3. Applies conditional branches (if/elif/else).
 4. Runs parallel branches concurrently.
-5. Retry execution: v0.2 (schemas defined).
-6. HITL execution: v0.2 (schemas defined).
+5. Retry execution: v0.2 (schemas defined, not yet wired).
+6. HITL execution: v0.2 (schemas defined, not yet wired).
 7. Tracks budget via CostGuard.
 8. Appends events to the Thread.
 9. Returns a PlaybookRunResult with full trace.
 
 The executor is async and supports both fire-and-forget and streaming modes.
 
-Helpers (split out for the >500-line rule, SPLIT-R12):
+Helper modules (split out so each file stays focused and testable):
 
 - ``arnes.playbooks.result``: ``PlaybookRunResult`` model.
 - ``arnes.playbooks.sandbox``: ``DEFAULT_SANDBOX_CONTAINER`` + ``_is_docker_available``.
 - ``arnes.playbooks.events``: ``_drain_middleware_events`` + ``_filter_internal_keys``.
 - ``arnes.playbooks.template``: ``_TEMPLATE_RE`` + ``_resolve_input`` / ``_resolve_template`` /
   ``_resolve_expr``.
+- ``arnes.playbooks.parallel``: ``_execute_parallel_branch``.
 
 These symbols are imported into this module's namespace so callers can use
 ``from arnes.playbooks.executor import PlaybookRunResult`` (and the other
-historical spellings) — they are NOT re-bound as methods on the
-``PlaybookExecutor`` class (R13 cleanup: the SPLIT-R12 backwards-compat
-delegating wrappers were removed; call sites that used
+historical spellings). They are NOT re-bound as methods on the
+``PlaybookExecutor`` class — call sites that used
 ``executor._resolve_template(...)`` etc. should call the standalone
-functions in ``arnes.playbooks.template`` directly).
+functions in ``arnes.playbooks.template`` directly.
 """
 
 from __future__ import annotations
@@ -64,18 +64,18 @@ from arnes.tools.registry import get_default_registry
 
 logger = structlog.get_logger(__name__)
 
-# Public re-exports for backwards compatibility (SPLIT-R12). The canonical
+# Public re-exports for backwards compatibility. The canonical
 # homes for these symbols are the dedicated modules above; the names are
 # intentionally re-bound here so existing `from arnes.playbooks.executor
 # import X` imports and `unittest.mock.patch("arnes.playbooks.executor.X")`
 # patches keep working.
 #
-# Note (R13 cleanup): the SPLIT-R12 backwards-compat delegating *methods*
-# on ``PlaybookExecutor`` (``_resolve_input``, ``_resolve_template``,
-# ``_resolve_expr``, ``_drain_middleware_events``) and the
-# ``_TEMPLATE_RE`` class attribute have been removed. Call sites that used
-# ``executor.foo(...)`` should call the standalone functions in
-# ``arnes.playbooks.template`` / ``arnes.playbooks.events`` directly.
+# Note: the legacy delegating *methods* on ``PlaybookExecutor``
+# (``_resolve_input``, ``_resolve_template``, ``_resolve_expr``,
+# ``_drain_middleware_events``) and the ``_TEMPLATE_RE`` class attribute
+# have been removed. Call sites that used ``executor.foo(...)`` should call
+# the standalone functions in ``arnes.playbooks.template`` /
+# ``arnes.playbooks.events`` directly.
 __all__ = [
     "DEFAULT_SANDBOX_CONTAINER",
     "_TEMPLATE_RE",
@@ -117,7 +117,7 @@ class PlaybookExecutor:
         self.cost_budget = cost_budget or CostBudget()
         self.interactive = interactive
 
-        # Sandbox wiring (Issue 1 / FIX-R3-SEC).
+        # Sandbox wiring (see SECURITY.md for the sandbox model).
         #
         # Default behaviour:
         #   - If ``sandbox_enabled`` is explicitly passed, honour it (caller
@@ -556,7 +556,7 @@ class PlaybookExecutor:
 
         try:
             # Parallel branch — delegates to the free function in
-            # ``arnes.playbooks.parallel`` (R13 split, keeps executor
+            # ``arnes.playbooks.parallel`` (keeps the executor
             # under the 800-line target without a backwards-compat
             # wrapper method on the class).
             if step.parallel:
@@ -570,7 +570,7 @@ class PlaybookExecutor:
                 )
             # Tool invocation
             elif step.tool:
-                result = await self._execute_tool(step, thread_holder, outputs, playbook)
+                result = await self._execute_tool(step, thread_holder, outputs, cost_guard, playbook)
             else:
                 raise ValueError(f"Step '{step.id}' has no action defined")
 
@@ -698,9 +698,18 @@ class PlaybookExecutor:
         step: PlaybookStep,
         thread_holder: list[Thread],
         outputs: dict[str, Any],
+        cost_guard: CostGuard,
         playbook: Playbook,
     ) -> dict[str, Any]:
-        """Invoke a tool."""
+        """Invoke a tool directly (without going through a specialist).
+
+        Security note: the sandbox config and budget remaining are propagated
+        to the ToolContext so that ShellTool picks the right execution path
+        (Docker sandbox vs. gated local execution) and tools can refuse calls
+        that would overshoot the budget. Direct tool invocation does not go
+        through the HITL fingerprint check because the tool args come from
+        the playbook YAML (trusted author), not from an LLM.
+        """
         tool = self.tool_registry.get(step.tool or "")
         if not tool:
             return {
@@ -713,6 +722,12 @@ class PlaybookExecutor:
         ctx = ToolContext(
             thread_id=thread_holder[0].id,
             step_id=step.id,
+            working_dir=".",
+            sandbox_enabled=self._sandbox_enabled,
+            sandbox_container=self._sandbox_container,
+            budget_remaining_usd=(
+                (cost_guard.budget.effective_budget() or 0) - cost_guard.spent_usd
+            ),
             metadata={"interactive": self.interactive},
         )
 

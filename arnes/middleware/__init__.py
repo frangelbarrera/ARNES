@@ -3,8 +3,8 @@
 The :func:`build_middleware_stack` helper is the single source of truth for
 the ``TokenOptimizer → VerificationLayer → CostGuard`` wrapping pattern.
 Both :class:`arnes.agent.Harness` and
-:class:`arnes.specialists.base.Specialist` call it; the duplicate inline
-wrapping that grew across five call sites (R11 cleanup) has been removed.
+:class:`arnes.specialists.base.Specialist` call it; the previous inline
+wrapping duplicated across five call sites has been consolidated here.
 """
 
 from __future__ import annotations

@@ -40,7 +40,7 @@ What this test verifies:
   tokens for ``openai/gpt-4o`` ⇒ ``$0.000425``), proving the cassette
   isn't silently short-circuited by a mock at the LLM layer.
 
-Regeneration note (BENCH-R12):
+Regeneration note:
 
     The shipped cassette ``test_planner_basic.yaml`` was hand-authored
     to look like a real OpenAI response. To replace it with a real

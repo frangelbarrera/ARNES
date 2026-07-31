@@ -6,10 +6,10 @@
 |---|---|---|---|---|---|---|
 | **Agent definition** | Declarative YAML | Python procedural | Python classes | Python decorator | Python classes | Python functions |
 | **Distribution** | MCP server + library | Library | Library | Library (OpenAI-only) | Library | Library |
-| **Pre-built specialists** | ✅ 5 (planner, coder, reviewer, tester, debugger) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Pre-built specialists** | ✅ 12 (planner, coder, reviewer, tester, debugger, researcher, security-auditor, devops-engineer, data-scientist, product-manager, market-analyst, cost-estimator) | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Curated playbooks** | ✅ 10 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Token optimization** | ✅ Routing + cache + compaction (v0.2) | Manual | ❌ | ❌ | ❌ | ❌ |
-| **Anti-hallucination** | ✅ 5 layers (structured, refusal, hedging, confidence, critic) | DIY | ❌ | ❌ | ❌ | Partial (structured) |
+| **Anti-hallucination** | ✅ 2 layers shipped (structured outputs + refusal/hedging detection); 3 more planned for v0.2-v0.4 (confidence gate, critic loop, grounding RAG) | DIY | ❌ | ❌ | ❌ | Partial (structured) |
 | **Budget enforcement** | ✅ Hierarchical + circuit breaker + pre-flight | `max_tokens` | `max_tokens` | ❌ | ❌ | ❌ |
 | **Vendor-neutral** | ✅ Default Ollama local | Partial | ✅ | ❌ | ✅ | ✅ |
 | **Prompts visible** | ✅ On disk | ❌ | ❌ | ❌ | ❌ | ❌ |

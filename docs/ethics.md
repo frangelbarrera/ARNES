@@ -10,7 +10,7 @@ agent frameworks should be transparent, auditable, and respectful of user resour
 
 ### 1. Transparency
 Every prompt sent to an LLM is visible on disk. Every decision the agent makes
-is logged to the bitácora. No hidden behavior, no magic.
+is logged to the audit log. No hidden behavior, no magic.
 
 ### 2. User Sovereignty
 The user controls: which model to use, how much to spend, what tools the agent
@@ -38,7 +38,7 @@ first-class APIs.
   (when interactive mode is enabled). Tools like `shell`, `fs_write`, and
   `http` require explicit approval by default.
 
-- **ARNES will not hide costs.** Every run produces a bitácora with exact
+- **ARNES will not hide costs.** Every run produces an audit log with exact
   token counts and USD costs. There is no "black box" billing.
 
 - **ARNES will not store your API keys.** Keys are read from environment

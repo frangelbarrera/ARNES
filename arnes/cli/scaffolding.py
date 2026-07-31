@@ -2,13 +2,13 @@
 
 This module owns the scaffolding surface for the CLI:
 
-- :func:`_scaffold_manual` — create a new playbook YAML from the EN/ES
-  templates (used by ``arnes init --manual <name>``).
+- :func:`_scaffold_manual` — create a new playbook YAML from the standard
+  template (used by ``arnes init --manual <name>``).
 - :func:`_init_project` — bootstrap an empty ARNES project structure
   (``manuals/`` + ``run_logs/`` + a starter ``hello-world.yaml``).
-- :data:`_MANUAL_TEMPLATE_EN` / :data:`_MANUAL_TEMPLATE_ES` — the two
-  playbook YAML templates that ship with the CLI. Kept here (not in
-  ``templates/``) so they're always importable without filesystem access.
+- :data:`_MANUAL_TEMPLATE` — the playbook YAML template that ships with
+  the CLI. Kept here (not in ``templates/``) so it's always importable
+  without filesystem access.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 from arnes.cli.helpers import console
 
 
-def _scaffold_manual(name: str, lang: str) -> None:
+def _scaffold_manual(name: str) -> None:
     """Create a new playbook file from template."""
     path = Path("manuals") / f"{name}.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -28,8 +28,7 @@ def _scaffold_manual(name: str, lang: str) -> None:
         console.print(f"[yellow]File already exists: {path}[/yellow]")
         sys.exit(1)
 
-    template = _MANUAL_TEMPLATE_EN if lang == "en" else _MANUAL_TEMPLATE_ES
-    path.write_text(template.format(name=name), encoding="utf-8")
+    path.write_text(_MANUAL_TEMPLATE.format(name=name), encoding="utf-8")
     console.print(f"[green]✓[/green] Created: [cyan]{path}[/cyan]")
     console.print("\nEdit it and run with:")
     console.print(f"  [dim]arnes run {path}[/dim]")
@@ -47,7 +46,7 @@ def _init_project() -> None:
     # Create example playbook
     example = Path("manuals") / "hello-world.yaml"
     if not example.exists():
-        example.write_text(_MANUAL_TEMPLATE_EN.format(name="hello-world"), encoding="utf-8")
+        example.write_text(_MANUAL_TEMPLATE.format(name="hello-world"), encoding="utf-8")
         console.print(f"  [green]✓[/green] Created: {example}")
 
     console.print("\n[bold]Next steps:[/bold]")
@@ -56,7 +55,7 @@ def _init_project() -> None:
     console.print("  3. List specialists: [cyan]arnes list specialists[/cyan]")
 
 
-_MANUAL_TEMPLATE_EN = """\
+_MANUAL_TEMPLATE = """\
 # {name}.yaml — ARNES playbook
 # Documentation: https://github.com/frangelbarrera/ARNES#readme
 
@@ -82,35 +81,8 @@ steps:
 """
 
 
-_MANUAL_TEMPLATE_ES = """\
-# {name}.yaml — Manual de ARNES
-# Documentación: https://github.com/frangelbarrera/ARNES#readme
-
-name: {name}
-objective: Describe qué hace este manual
-budget_usd: 0.50
-
-steps:
-  - id: paso_1
-    specialist: "@planner"
-    input:
-      task: "Describe la tarea a planificar"
-
-  - id: paso_2
-    specialist: "@coder"
-    input: "{{{{ steps.paso_1.output }}}}"
-    requires: [paso_1]
-
-  - id: paso_3
-    specialist: "@reviewer"
-    input:
-      code: "{{{{ steps.paso_2.output }}}}"
-"""
-
-
 __all__ = [
-    "_MANUAL_TEMPLATE_EN",
-    "_MANUAL_TEMPLATE_ES",
+    "_MANUAL_TEMPLATE",
     "_init_project",
     "_scaffold_manual",
 ]

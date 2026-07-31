@@ -128,10 +128,10 @@ class ProactivePlanner:
     """Generates proactive plans from natural language requests.
 
     Usage:
-        planner = ProactivePlanner(provider=get_provider("anthropic/claude-sonnet-4-20250514"))
+        planner = ProactivePlanner()  # uses the default provider (ollama/llama3.2)
         plan = await planner.plan("Build a dating app for the Play Store")
-        if plan.viability_assessment.recommendation == "proceed":
-            yaml = planner.to_yaml(plan)
+        if plan["viability_assessment"]["recommendation"] == "proceed":
+            yaml = ProactivePlanner.to_yaml(plan)
             # User reviews yaml, then: arnes run generated-playbook.yaml
     """
 
@@ -139,11 +139,13 @@ class ProactivePlanner:
         self,
         provider: LLMProvider | None = None,
         budget_usd: float = 5.0,
+        model: str = "ollama/llama3.2",
     ) -> None:
         from arnes.llm.factory import get_provider
 
         self.provider = provider or get_provider()
         self.budget_usd = budget_usd
+        self.model = model
         self.specialist_registry = get_default_specialist_registry()
         self.tool_registry = get_default_registry()
 
@@ -173,7 +175,7 @@ class ProactivePlanner:
         try:
             response = await wrapped_provider.complete(
                 messages,
-                model="anthropic/claude-sonnet-4-20250514",
+                model=self.model,
                 temperature=0.1,
                 response_format={"type": "json_object"},
                 response_schema=ProactivePlan.model_json_schema(),

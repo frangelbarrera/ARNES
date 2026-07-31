@@ -1,6 +1,6 @@
 """Tests for real streaming in ARNES LLM providers and middleware.
 
-Covers (FIX-R6-STREAM):
+Covers:
 1. ``MockLLMProvider.stream_complete`` yields the full response in one chunk.
 2. ``OllamaProvider.stream_complete`` reads NDJSON from a mocked httpx
    stream and yields token-by-token chunks + a final usage chunk.

@@ -46,7 +46,7 @@ What other ways have you tried to solve this? Why are they not enough?
 
 ## Scope and impact
 
-- **Who benefits?** [e.g. all users, only Latam users, only enterprise users]
+- **Who benefits?** [e.g. all users, only enterprise users, only specific workflows]
 - **Estimated complexity:** [small / medium / large]
 - **Breaking change?** [yes / no]
 - **Aligns with roadmap?** [link to the v0.x milestone it fits, if applicable]

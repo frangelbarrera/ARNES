@@ -26,13 +26,13 @@ ARNES is governed by 10 immutable declarations (see
 3. The harness never asks for API keys.
 4. There is no hosted version of ARNES.
 5. Local-first; cloud is opt-in.
-6. The bitácora is the contract.
+6. The audit log is the contract.
 7. Budget is a hard constraint, not a hint.
 8. No vendor lock-in.
 9. No hidden prompts.
 10. ARNES will die before it changes the manifesto.
 
-## Streaming (R15)
+## Streaming
 
 The streaming path is 5-layer:
 
@@ -40,20 +40,20 @@ The streaming path is 5-layer:
 - `TokenOptimizer.stream_complete()` — passthrough (cache is v0.2).
 - `VerificationLayer.stream_complete()` — passthrough (per-chunk verification v0.2).
 - `CostGuard.stream_complete()` — pre-flight abort + final-chunk accounting.
-- `Specialist.stream()` — R15 ReAct loop: stream → emit audit event →
+- `Specialist.stream()` — ReAct loop: stream → emit audit event →
   if tool_calls, execute + iterate.
 
 The CLI's `arnes stream` command uses `Harness.stream_with_audit()` which
 returns `(chunks, thread)` so the audit trail is recorded in a real
 `Thread` mutated in place as the stream is consumed.
 
-## MCP server + SSE (R15)
+## MCP server + SSE
 
 The HTTP transport exposes:
 
 - `POST /` and `POST /mcp` — JSON-RPC dispatcher (the MCP tools).
 - `GET /events` and `GET /sse` — Server-Sent Events stream
-  (`event: <name>\ndata: <json>\n\n` frames). R15 stub emits a
+  (`event: <name>\ndata: <json>\n\n` frames). The stub emits a
   `server_info` event up-front, then idles on `: ping` heartbeats. v0.2
   will wire it to `PlaybookExecutor.stream` so subscribers see step
   transitions in real time.
@@ -64,7 +64,7 @@ Every action (LLM call, tool call, cost threshold) is an `Event` appended
 to a `Thread`. State is derived: `(state, event) → state`. This makes
 ARNES:
 
-- **Reproducible** — same input + same mock LLM ⇒ same bitácora.
-- **Auditable** — the bitácora is the entire forensic record.
+- **Reproducible** — same input + same mock LLM ⇒ same audit log.
+- **Auditable** — the audit log is the entire forensic record.
 - **Parallel-safe** — `asyncio.gather` over parallel branches, no shared
   mutable state.

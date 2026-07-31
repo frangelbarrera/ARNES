@@ -62,11 +62,11 @@ should exist. ARNES is for the world where:
   from OpenAI to Anthropic to a self-hosted Ollama is a one-line
   change, not a rewrite. Vendor-only features stay opt-in and
   second-class.
-- **Local-first is the default.** A 14-year-old in Bogotá with a
-  hand-me-down laptop and `ollama pull llama3.2` should be able to
-  build and ship agents without an API key or a credit card. The
-  Global South is not a market segment; it is half the world's
-  developers.
+- **Local-first is the default.** A 14-year-old with a hand-me-down
+  laptop and `ollama pull llama3.2` should be able to build and ship
+  agents without an API key or a credit card. Developers without access
+  to enterprise infrastructure are not a market segment; they are half
+  the world's developers.
 - **Reproducibility is a primitive, not a goal.** The stateless
   reducer `(state, event) → state` means any run can be replayed
   from its event log. HITL resume, episodic memory, and academic

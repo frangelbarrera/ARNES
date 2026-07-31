@@ -35,7 +35,7 @@ interactions:
     uri: https://api.openai.com/v1/chat/completions
   response:
     body:
-      string: '{"id":"chatcmpl-bench-r15-reviewer","object":"chat.completion","created":1700000020,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"{\"verdict\":
+      string: '{"id":"chatcmpl-arnes-reviewer","object":"chat.completion","created":1700000020,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"{\"verdict\":
         \"approve\", \"issues\": [], \"summary\": \"Code is clean, idiomatic, and
         type-annotated. No issues found.\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":58,"completion_tokens":36,"total_tokens":94}}'
     headers:
@@ -46,7 +46,7 @@ interactions:
       cache-control:
       - no-cache
       cf-ray:
-      - cassette-replay-bench-r15-reviewer
+      - cassette-replay-arnes-reviewer
       connection:
       - keep-alive
       content-type:

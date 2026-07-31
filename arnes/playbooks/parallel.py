@@ -1,17 +1,15 @@
 """Parallel-branch execution for ``PlaybookExecutor``.
 
-Extracted from ``arnes.playbooks.executor`` (R13) to keep the executor
-file under 800 lines. The free function ``_execute_parallel_branch`` is
-called directly from ``PlaybookExecutor._execute_step`` — no
-backwards-compat wrapper method is involved (R13 cleanup removed the
-SPLIT-R12 wrappers; this module ships only the canonical implementation).
+Extracted from ``arnes.playbooks.executor`` to keep the executor file under
+800 lines. The free function ``_execute_parallel_branch`` is called directly
+from ``PlaybookExecutor._execute_step``.
 
-The function takes the executor instance as its first argument
-(``executor``) so it can invoke ``executor._execute_step`` recursively
-on each sub-step. It is NOT a method on the class — keeping it as a free
-function means the executor file stays focused on the sequential run /
-stream paths while the parallel-branch complexity lives in its own
-module (with its own test surface).
+The function takes the executor instance as its first argument (``executor``)
+so it can invoke ``executor._execute_step`` recursively on each sub-step. It
+is NOT a method on the class — keeping it as a free function means the
+executor file stays focused on the sequential run / stream paths while the
+parallel-branch complexity lives in its own module (with its own test
+surface).
 """
 
 from __future__ import annotations

@@ -1,7 +1,5 @@
 """Middleware event draining + internal-key filtering for the executor.
 
-Extracted from ``arnes.playbooks.executor`` (SPLIT-R12).
-
 - ``_drain_middleware_events``: pulls events that middleware (CostGuard,
   TokenOptimizer, VerificationLayer) emitted into the shared ``_events``
   sink during a step, patches their nil ``thread_id`` / ``step_id``

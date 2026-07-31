@@ -39,7 +39,7 @@ def _drain_event_to_sink(
     """Append an ``AssistantMessageEvent`` to the wrapped provider's ``_events`` sink.
 
     Shared helper used by both :class:`Specialist._emit_assistant_message`
-    and :class:`arnes.agent.Harness._emit_stream_audit_event` (R13 DRY pass).
+    and :class:`arnes.agent.Harness._emit_stream_audit_event`.
 
     The middleware (``CostGuard``) sets up a shared ``_events`` list on the
     wrapped provider so events can be drained later by the executor's
@@ -301,7 +301,7 @@ class Specialist(ABC):
            assistant message + tool results to ``messages``, and start
            another streaming iteration.
 
-        This closes the R11→R14 ``Specialist.stream() bypasses the ReAct
+        This closes the historical ``Specialist.stream() bypasses the ReAct
         tool-use loop`` gap. Streaming now works for specialists that
         require tools (e.g. ``@coder`` with ``fs_read``, ``@reviewer``
         with ``fs_read``).

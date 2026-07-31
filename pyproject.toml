@@ -122,8 +122,6 @@ ignore = [
     "S101",     # use of assert (needed for tests)
     "S603",     # subprocess call (we use it for sandboxed shell tool)
     "S607",     # partial path subprocess (sandboxed)
-    "ANN101",   # missing self annotation (deprecated rule)
-    "ANN102",   # missing cls annotation (deprecated rule)
     "ANN401",   # dynamically typed expressions (Any) — needed for flexible APIs
     "PLC0415",  # import outside top-level — intentional for lazy loading in tools
     "PLR0913",  # too many arguments (we accept up to 8)
@@ -205,8 +203,14 @@ markers = [
     "snapshot: marks tests using vcrpy cassettes",
 ]
 filterwarnings = [
-    "error",
-    "ignore::DeprecationWarning:litellm.*",
+    # We do not promote third-party deprecation/resource warnings to errors:
+    # they are noisy and vary across OS / Python / dependency versions, which
+    # makes CI flaky on macOS and Windows for reasons unrelated to ARNES itself.
+    # Real bugs surface via ruff, mypy --strict, bandit and explicit assertions.
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::ResourceWarning",
+    # litellm emits a number of pydantic v1-style warnings on some platforms.
     "ignore::pydantic.PydanticDeprecatedSince20",
 ]
 

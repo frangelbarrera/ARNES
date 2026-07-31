@@ -17,10 +17,8 @@ The 7 stress cases exercised here:
 Both unit-level (``_resolve_template`` direct calls) and end-to-end
 (full playbook execution) paths are exercised.
 
-R13 cleanup: the unit-level tests now call the standalone
-``_resolve_template`` from ``arnes.playbooks.template`` directly (the
-``PlaybookExecutor._resolve_template`` backwards-compat wrapper was
-removed in R13).
+The unit-level tests call the standalone ``_resolve_template`` from
+``arnes.playbooks.template`` directly.
 """
 
 from __future__ import annotations
@@ -158,7 +156,7 @@ def executor() -> PlaybookExecutor:
 def bare_executor() -> PlaybookExecutor:
     """Executor with a no-op provider — used only for direct _resolve_template tests.
 
-    R13: the ``_resolve_template`` standalone function lives in
+    The ``_resolve_template`` standalone function lives in
     ``arnes.playbooks.template``; the fixture is kept for symmetry with
     the e2e fixture, but the unit tests below call ``_resolve_template``
     as a free function rather than via ``executor._resolve_template``.

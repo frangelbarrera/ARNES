@@ -30,6 +30,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Configure Windows environment
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # Force UTF-8 stdout/stderr — Python on Windows defaults to cp1252
+          # which breaks on emoji/box-drawing chars emitted by rich + litellm.
+          echo "PYTHONUTF8=1" >> "$GITHUB_ENV"
+          echo "PYTHONIOENCODING=utf-8" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

@@ -261,7 +261,7 @@ steps:
         from arnes.cli.main import cli
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "--manual", "test_playbook", "--lang", "en"])
+        result = runner.invoke(cli, ["init", "--manual", "test_playbook"])
 
         assert result.exit_code == 0, f"CLI failed: {result.output}"
         yaml_file = tmp_path / "manuals" / "test_playbook.yaml"

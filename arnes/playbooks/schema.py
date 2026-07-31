@@ -146,7 +146,7 @@ class PlaybookMetadata(BaseModel):
     author: str | None = None
     tags: list[str] = Field(default_factory=list)
     budget_usd: float = 0.50
-    language: Literal["en", "es", "bilingual"] = "en"
+    language: Literal["en"] = "en"
 
 
 class Playbook(BaseModel):
@@ -159,7 +159,7 @@ class Playbook(BaseModel):
     author: str | None = None
     tags: list[str] = Field(default_factory=list)
     budget_usd: float = 0.50
-    language: Literal["en", "es", "bilingual"] = "en"
+    language: Literal["en"] = "en"
 
     # Allow either top-level metadata fields OR a nested metadata object
     metadata: PlaybookMetadata | None = None

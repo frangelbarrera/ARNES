@@ -267,14 +267,14 @@ class _ConfigurableCostProvider(LLMProvider):
 
 
 class TestCostGuardPause:
-    """Tests for the 95% pause-at-budget behaviour (FIX-R3-SEC Issue 2)."""
+    """Tests for the 95% pause-at-budget behaviour."""
 
     @pytest.mark.asyncio
     async def test_interactive_pause_raises_and_emits_human_approval(self):
         """At 95% budget in interactive mode, the guard must:
         - set _paused = True
         - emit a HumanApprovalRequestedEvent
-        - emit a RUN_PAUSED lifecycle event (FIX-R4-DATA: previously
+        - emit a RUN_PAUSED lifecycle event (previously
           EventType.RUN_PAUSED was defined but never instantiated)
         - raise BudgetExceeded(level="pause")
         """
@@ -312,7 +312,7 @@ class TestCostGuardPause:
         assert he.data["spent_usd"] == pytest.approx(0.096)
         assert he.data["budget_usd"] == pytest.approx(0.10)
 
-        # FIX-R4-DATA: RUN_PAUSED lifecycle event must also be emitted so
+        # RUN_PAUSED lifecycle event must also be emitted so
         # the audit log records the run-state transition explicitly.
         run_paused_events = [e for e in guard._events if e.type == EventType.RUN_PAUSED]
         assert len(run_paused_events) == 1, (

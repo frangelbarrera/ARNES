@@ -40,8 +40,8 @@ short note explaining why. PRs that skip the checklist will be sent back.
       described in CONTRIBUTING.md (`feat: ...`, `fix: ...`, etc.).
 - [ ] **No secrets** — no API keys, tokens, or PII are introduced in this
       diff (including in test fixtures).
-- [ ] **Bitácora-safe** — if I added a snapshot test or example
-      bitácora, it does not contain real LLM responses with sensitive data.
+- [ ] **Run-log-safe** — if I added a snapshot test or example
+      run log, it does not contain real LLM responses with sensitive data.
 
 ## Screenshots / output
 

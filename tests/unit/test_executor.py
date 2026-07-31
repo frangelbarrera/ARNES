@@ -178,7 +178,7 @@ steps:
 
     @pytest.mark.asyncio
     async def test_parallel_branch_emits_started_and_completed_events(self, executor):
-        """FIX-R4-DATA: PARALLEL_BRANCH_STARTED and PARALLEL_BRANCH_COMPLETED
+        """PARALLEL_BRANCH_STARTED and PARALLEL_BRANCH_COMPLETED
         were previously defined in EventType but never instantiated. The
         executor must now emit them around the asyncio.gather call so the
         audit log marks the parallel-block boundaries."""
@@ -419,7 +419,7 @@ steps:
 
 
 class TestSandboxAutoDetection:
-    """Tests for the Docker sandbox auto-wiring (FIX-R3-SEC Issue 1)."""
+    """Tests for the Docker sandbox auto-wiring."""
 
     def test_is_docker_available_returns_bool(self):
         """The helper must return a bool (True/False) — never None."""
@@ -469,7 +469,7 @@ class TestSandboxAutoDetection:
 
 
 class TestPlaybookExecutorStream:
-    """Tests for ``PlaybookExecutor.stream()`` (FIX-R9-FINAL).
+    """Tests for ``PlaybookExecutor.stream()``.
 
     The streaming executor yields step-level events as each step completes,
     then yields a final ``PlaybookRunResult`` with the full thread + aggregate

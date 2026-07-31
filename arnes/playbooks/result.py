@@ -1,10 +1,8 @@
 """PlaybookRunResult — the structured return value of a playbook execution.
 
-Extracted from ``arnes.playbooks.executor`` (SPLIT-R12) so the executor
-module stays focused on the DAG walk. The result model is a plain pydantic
-``BaseModel`` carrying the final ``Thread`` plus aggregate accounting
-(steps executed/failed, tokens, cost, duration) and the per-step
-``outputs`` map.
+The result model is a plain pydantic ``BaseModel`` carrying the final
+``Thread`` plus aggregate accounting (steps executed/failed, tokens, cost,
+duration) and the per-step ``outputs`` map.
 """
 
 from __future__ import annotations

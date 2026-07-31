@@ -1,4 +1,4 @@
-"""Tests for ``Specialist.stream()`` (FIX-R9-FINAL — Fix 1).
+"""Tests for ``Specialist.stream()``.
 
 The streaming specialist mirrors ``Harness.stream()`` at the specialist
 layer: it yields ``LLMResponse`` chunks as they arrive from the provider
@@ -101,7 +101,7 @@ def _build_wrapped_provider(provider: LLMProvider) -> CostGuard:
 
 
 class TestSpecialistStream:
-    """Tests for ``Specialist.stream()`` (FIX-R9-FINAL)."""
+    """Tests for ``Specialist.stream()``."""
 
     @pytest.mark.asyncio
     async def test_stream_yields_chunks(self):
@@ -231,7 +231,7 @@ class TestSpecialistStream:
         and start another streaming iteration. The final iteration's stream
         (with no tool_calls) terminates the loop.
 
-        This closes the R11→R14 ``Specialist.stream() bypasses the ReAct
+        This closes the historical ``Specialist.stream() bypasses the ReAct
         tool-use loop`` gap.
         """
         import uuid

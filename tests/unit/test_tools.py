@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -238,19 +239,16 @@ class TestFilesystemTools:
 
     @pytest.mark.asyncio
     async def test_fs_write_dangling_symlink_escape_blocked(self, ctx_with_tmp, tmp_path):
-        """SECURITY (FIX-R3-SEC): a DANGLING symlink that points outside
-        working_dir must be rejected.
+        """SECURITY: a DANGLING symlink that points outside working_dir must
+        be rejected.
 
         ``Path.exists()`` follows the link and returns False for a dangling
         symlink (target missing). The old guard ``exists() and is_symlink()``
         was therefore skipped for dangling links, letting a write through a
         link like ``evil -> /tmp/arnes-escape.txt`` (target not yet created)
-        succeed and write OUTSIDE working_dir. The fix uses
-        ``is_symlink()`` alone, which catches both dangling and
-        non-dangling links.
+        succeed and write OUTSIDE working_dir. The fix uses ``is_symlink()``
+        alone, which catches both dangling and non-dangling links.
         """
-        import os
-
         working_dir = Path(ctx_with_tmp.working_dir)
         # Create a dangling symlink inside working_dir that points OUTSIDE.
         # Target path does NOT exist yet (dangling).
@@ -259,7 +257,10 @@ class TestFilesystemTools:
         link_path = working_dir / "evil_link"
         if link_path.exists() or link_path.is_symlink():
             link_path.unlink()
-        os.symlink(escape_target, link_path)
+        try:
+            os.symlink(escape_target, link_path)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this platform (Windows without Developer Mode)")
 
         # Sanity: the link is dangling (target does not exist).
         assert not escape_target.exists()
@@ -277,10 +278,7 @@ class TestFilesystemTools:
         #     which returns "Path outside working_dir"
         #   - the symlink guard in ``execute``, which returns
         #     "Symlink escapes working_dir"
-        # Both are correct security outcomes. The FIX-R3-SEC change
-        # ensures the symlink guard ALSO catches dangling links (the
-        # ``_validate_path`` check already catches most escapes via
-        # resolve(), but the symlink guard is defense-in-depth).
+        # Both are correct security outcomes.
         assert result.success is False
         err_lower = result.error.lower()
         assert "symlink" in err_lower or "outside" in err_lower or "escapes" in err_lower, (
@@ -299,16 +297,16 @@ class TestFilesystemTools:
     @pytest.mark.asyncio
     async def test_fs_write_symlink_inside_working_dir_allowed(self, ctx_with_tmp):
         """A symlink that resolves INSIDE working_dir is allowed (regression
-        check — the FIX-R3-SEC change tightens the dangling check but must
-        not break legitimate in-jail symlinks)."""
-        import os
-
+        check — the symlink guard must not break legitimate in-jail symlinks)."""
         working_dir = Path(ctx_with_tmp.working_dir)
         target = working_dir / "real_target.txt"
         link_path = working_dir / "good_link"
         if link_path.exists() or link_path.is_symlink():
             link_path.unlink()
-        os.symlink(target, link_path)
+        try:
+            os.symlink(target, link_path)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this platform (Windows without Developer Mode)")
 
         write_tool = FilesystemWriteTool()
         result = await write_tool.execute(

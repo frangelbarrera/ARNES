@@ -5,7 +5,7 @@ a mock-or-real LLM provider factory) ``seeds x playbooks`` times and
 aggregates the results into a single :class:`BenchmarkResults` object
 that can be serialised to JSON or rendered as a markdown table.
 
-Design goals (per BENCH-R12):
+Design goals:
 
 * **Reproducible** — same seed + same suite ⇒ same metrics (modulo wall-
   clock variance). The mock provider used by the basic suite is fully

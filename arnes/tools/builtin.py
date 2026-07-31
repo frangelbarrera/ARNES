@@ -365,7 +365,7 @@ class FilesystemWriteTool(Tool):
 
         # Symlink protection for write.
         #
-        # SECURITY (FIX-R3-SEC): use ``is_symlink()`` ALONE, NOT
+        # SECURITY: use ``is_symlink()`` ALONE, NOT
         # ``exists() and is_symlink()``. ``Path.exists()`` follows the
         # link and returns False for a DANGLING symlink (target missing),
         # which previously caused this guard to be skipped — letting a

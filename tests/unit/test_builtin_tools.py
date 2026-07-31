@@ -389,14 +389,18 @@ class TestFilesystemReadSizes:
         path.chmod(0o000)
 
         try:
-            # Skip on root (CI containers sometimes run as root, which bypasses perms).
-            if os.geteuid() == 0:
+            # Skip on root (CI containers sometimes run as root, which bypasses
+            # perms). ``os.geteuid`` only exists on Unix; on Windows we always
+            # run the test (Windows ACLs honour chmod 0o000 for the current user
+            # only when the file is on an NTFS volume with no admin override).
+            _geteuid = getattr(os, "geteuid", None)
+            if _geteuid is not None and _geteuid() == 0:
                 pytest.skip("Running as root — permission test would not exercise the deny path")
 
             tool = FilesystemReadTool()
             result = await tool.execute({"path": "noperm.txt"}, tmp_ctx)
             assert result.success is False
-            assert "permission denied" in result.error.lower()
+            assert "permission denied" in result.error.lower() or "denied" in result.error.lower()
         finally:
             path.chmod(0o644)
             path.unlink(missing_ok=True)

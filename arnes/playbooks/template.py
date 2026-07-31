@@ -1,7 +1,5 @@
 """Jinja2-style template resolution for playbook step inputs.
 
-Extracted from ``arnes.playbooks.executor`` (SPLIT-R12).
-
 Resolves ``{{ ... }}`` references against the run's ``outputs`` dict.
 Supported forms:
 

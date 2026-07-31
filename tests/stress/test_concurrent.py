@@ -24,13 +24,21 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import resource
 import sys
 import time
 import tracemalloc
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+
+# ``resource`` is Unix-only (Linux + macOS). On Windows we fall back to a
+# psutil-free RSS estimate via ``tracemalloc`` only, so the stress test still
+# runs and asserts the functional invariants (no races, no exceptions, within
+# time budget) even though the hard RSS ceiling is skipped.
+try:
+    import resource as _resource
+except ImportError:  # Windows
+    _resource = None
 
 # Make `arnes` importable when running the file directly (python tests/stress/...).
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -233,9 +241,19 @@ def _extract_run_id(user_content: str) -> str | None:
 
 
 def _get_rss_kb() -> int:
-    """Return current process RSS in KB (Linux resource module)."""
-    # ru_maxrss is in KB on Linux, in bytes on macOS — we're on Linux per spec.
-    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    """Return current process RSS in KB, or 0 if unavailable.
+
+    On Unix this uses ``resource.getrusage``. On Windows ``resource`` is not
+    available, so we return 0 and the RSS ceiling check is skipped (the
+    tracemalloc-based checks still run on every platform).
+    """
+    if _resource is None:
+        return 0
+    # ru_maxrss is in KB on Linux, in bytes on macOS — normalise to KB.
+    rss = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss
+    if sys.platform == "darwin":
+        rss //= 1024
+    return int(rss)
 
 
 def _format_kb(kb: int) -> str:
@@ -386,12 +404,14 @@ class TestConcurrentStress:
         )
 
         # 10. Memory growth sanity check (informational — soft assert via print,
-        #     hard assert at 200 MB to catch egregious leaks)
+        #     hard assert at 200 MB to catch egregious leaks). Skipped on Windows
+        #     where ``resource`` is unavailable (``_get_rss_kb`` returns 0).
         rss_delta_kb = rss_after_kb - rss_before_kb
-        # 200 MB is a generous ceiling for 50 small runs
-        assert rss_delta_kb < 200 * 1024, (
-            f"RSS grew by {_format_kb(rss_delta_kb)} — possible memory leak"
-        )
+        if _resource is not None:
+            # 200 MB is a generous ceiling for 50 small runs
+            assert rss_delta_kb < 200 * 1024, (
+                f"RSS grew by {_format_kb(rss_delta_kb)} — possible memory leak"
+            )
 
         # ============================================================
         # Report
@@ -438,7 +458,7 @@ class TestConcurrentStress:
 class TestParallelBranchConcurrent:
     """STRESS-2: parallel branch sub-steps must run concurrently.
 
-    Before FIX-R3-AI, ``_execute_parallel`` ran sub-steps in a sequential
+    Previously ``_execute_parallel`` ran sub-steps in a sequential
     for-loop — correct but not concurrent. This test verifies the
     ``asyncio.gather`` rewrite actually overlaps sub-step execution by
     checking the shared mock provider's ``max_concurrent_calls`` watermark.

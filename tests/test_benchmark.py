@@ -1,4 +1,4 @@
-"""Tests for the ARNES benchmark harness (BENCH-R12, Issue 1).
+"""Tests for the ARNES benchmark harness.
 
 Covers:
 

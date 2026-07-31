@@ -98,7 +98,7 @@ class PlaybookCompiler:
         return playbook
 
     # ============================================================
-    # Bilingual key translation (ES → EN for backwards compat)
+    # Legacy key aliases (kept for backwards compatibility)
     # ============================================================
 
     _KEY_MAP: ClassVar[dict[str, str]] = {

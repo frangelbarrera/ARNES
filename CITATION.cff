@@ -4,13 +4,11 @@ title: "ARNES — The Open Agent Harness"
 authors:
   - family-names: "Barrera"
     given-names: "Frangel"
-    orcid: "https://orcid.org/0009-0000-0000-0000"
 type: software
 version: "0.1.0a1"
-date-released: "2026-07-30"
+date-released: "2026-07-28"
 license: Apache-2.0
 repository-code: "https://github.com/frangelbarrera/ARNES"
-doi: "10.5281/zenodo.ARNES"
 keywords:
   - ai-agents
   - agent-harness
@@ -25,7 +23,6 @@ preferred-citation:
     - family-names: "Barrera"
       given-names: "Frangel"
   version: "0.1.0a1"
-  date-released: "2026-07-30"
+  date-released: "2026-07-28"
   license: Apache-2.0
   url: "https://github.com/frangelbarrera/ARNES"
-  doi: "10.5281/zenodo.ARNES"

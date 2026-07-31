@@ -49,13 +49,14 @@ is a security vulnerability and must be reported privately.
 
 The following measures are **implemented and tested today**:
 
-### Secret Broker
+### Secret Filtering
 
-API keys **never** enter the LLM context window. ARNES reads them from the
-environment and injects them just-in-time into HTTP calls. The agent only
-sees `<api_key_set: true>`. Environment variables whose names match a secret
-pattern (`API_KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `CREDENTIAL`,
-`PRIVATE_KEY`) are filtered out before being passed to subprocesses.
+Environment variables whose names match a secret pattern (`API_KEY`,
+`SECRET`, `TOKEN`, `PASSWORD`, `CREDENTIAL`, `PRIVATE_KEY`) are filtered
+out before being passed to subprocesses. **API keys are NOT redacted from
+LLM context windows in v0.1** — if you pass an API key as part of a prompt,
+it will be sent to the provider. Keep secrets in environment variables,
+not in prompt text. A prompt-redaction middleware is planned for v0.2.
 
 ### Input Validation
 
@@ -150,7 +151,8 @@ approval.
 ### Audit Log
 
 Every LLM call, every tool execution, every CostGuard decision is logged to
-the markdown audit log. The audit log is auditable and re-executable.
+the markdown audit log (the "run log"). The audit log is auditable and
+re-executable.
 
 ## Current Limitations
 

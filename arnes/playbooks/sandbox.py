@@ -1,9 +1,8 @@
 """Docker sandbox detection for the PlaybookExecutor.
 
-Extracted from ``arnes.playbooks.executor`` (SPLIT-R12). Holds the default
-sandbox container image name and the ``_is_docker_available`` presence
-check used by the executor to auto-wire the Docker sandbox into the
-default ``ToolContext``.
+Holds the default sandbox container image name and the
+``_is_docker_available`` presence check used by the executor to auto-wire
+the Docker sandbox into the default ``ToolContext``.
 """
 
 from __future__ import annotations

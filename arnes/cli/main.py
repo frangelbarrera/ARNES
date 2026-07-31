@@ -116,16 +116,10 @@ async def _run_proactive_plan(request: str, model: str, budget: float, save: boo
 
 @cli.command()
 @click.option("--manual", help="Name of the playbook to scaffold")
-@click.option(
-    "--lang",
-    type=click.Choice(["en", "es"]),
-    default="en",
-    help="Language for the scaffolded playbook",
-)
-def init(manual: str | None, lang: str) -> None:
+def init(manual: str | None) -> None:
     """Scaffold a new playbook or initialize an ARNES project."""
     if manual:
-        _scaffold_manual(manual, lang)
+        _scaffold_manual(manual)
     else:
         _init_project()
 
@@ -155,7 +149,7 @@ def run(
     asyncio.run(_run_playbook(playbook_path, model, budget, mock, interactive, output, stream))
 
 
-# Spanish alias for backwards compat (will be deprecated in v0.2)
+# Legacy alias for backwards compat (will be deprecated in v0.2)
 cli.add_command(run, name="ejecutar")
 
 

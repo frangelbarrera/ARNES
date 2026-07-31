@@ -35,7 +35,7 @@ interactions:
     uri: https://api.openai.com/v1/chat/completions
   response:
     body:
-      string: '{"id":"chatcmpl-bench-r15-coder","object":"chat.completion","created":1700000010,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"{\"files\":
+      string: '{"id":"chatcmpl-arnes-coder","object":"chat.completion","created":1700000010,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"{\"files\":
         [{\"path\": \"hello.py\", \"language\": \"python\", \"content\": \"def hello() ->
         str:\\n    return \\\"hello, world\\\"\\n\", \"action\": \"create\"}], \"summary\":
         \"Scaffolded a hello() function returning a greeting string.\", \"assumptions\":
@@ -48,7 +48,7 @@ interactions:
       cache-control:
       - no-cache
       cf-ray:
-      - cassette-replay-bench-r15-coder
+      - cassette-replay-arnes-coder
       connection:
       - keep-alive
       content-type:

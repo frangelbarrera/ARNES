@@ -35,7 +35,7 @@ interactions:
     uri: https://api.openai.com/v1/chat/completions
   response:
     body:
-      string: '{"id":"chatcmpl-bench-r12-cassette","object":"chat.completion","created":1700000000,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"{\"steps\":
+      string: '{"id":"chatcmpl-arnes-planner","object":"chat.completion","created":1700000000,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"{\"steps\":
         [{\"id\": \"s1\", \"specialist\": \"@coder\", \"input\": {}}]}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":50,"completion_tokens":30,"total_tokens":80}}'
     headers:
       access-control-expose-headers:
@@ -45,7 +45,7 @@ interactions:
       cache-control:
       - no-cache
       cf-ray:
-      - cassette-replay-bench-r12
+      - cassette-replay-arnes-planner
       connection:
       - keep-alive
       content-type:

@@ -73,9 +73,9 @@ What you expected to happen.
 
 What actually happened (panic, wrong output, silent failure, etc.).
 
-## Logs / bitácora
+## Logs / run log
 
-Paste relevant logs or the bitácora content. If the bitácora file is large,
+Paste relevant logs or the run log content. If the run log file is large,
 attach it or link to a gist. **Redact any secrets, tokens, or PII before
 sharing.**
 
