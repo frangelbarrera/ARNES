@@ -7,6 +7,13 @@ ARNES exposes 4 tools:
 - arnes_list_playbooks(dir?) → list playbooks in a directory
 - arnes_get_events(thread_id) → get event log for a thread
 
+R15 also exposes an SSE (Server-Sent Events) endpoint on the HTTP transport
+(``GET /events``) so browser-based live UX clients can subscribe to a stream
+of ``data: <json>\\n\\n`` formatted events. The endpoint is currently a stub
+that yields a heartbeat + a server-info event; v0.2 will wire it to the
+``PlaybookExecutor.stream`` event source so subscribers see step-level
+transitions in real time.
+
 Usage in Claude Desktop config:
 {
   "mcpServers": {
@@ -31,6 +38,7 @@ from typing import Any, ClassVar
 import structlog
 
 from arnes.llm.factory import get_provider
+from arnes.mcp.sse import sse_event_stream
 from arnes.middleware.cost_guard import CostBudget
 from arnes.playbooks.compiler import PlaybookCompileError, PlaybookCompiler
 from arnes.playbooks.executor import PlaybookExecutor
@@ -443,11 +451,60 @@ async def serve_http(server: ArnesMCPServer, host: str = "127.0.0.1", port: int 
             logger.exception("mcp_http_request_failed")
             return web.json_response({"error": "Internal server error"}, status=500)
 
+    async def handle_sse(request: web.Request) -> web.StreamResponse:
+        """SSE endpoint — ``GET /events`` (R15 stub for live UX).
+
+        Returns a ``text/event-stream`` response that streams
+        ``event: <name>\\ndata: <json>\\n\\n`` frames via
+        :func:`sse_event_stream`. The stub emits a single ``server_info``
+        event up-front, then idles on ``: ping`` heartbeats. v0.2 will
+        replace the heartbeat loop with a real subscription to
+        ``PlaybookExecutor.stream`` so subscribers see step transitions
+        in real time.
+
+        Auth + rate-limit rules from the middleware still apply (the
+        middleware runs on every route registered on ``app``, including
+        this GET). The body-size cap is irrelevant for a GET (no body).
+        """
+        resp = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                # ``X-Accel-Buffering: no`` disables proxy buffering on
+                # nginx — without it, the proxy holds the stream open
+                # and the browser never receives the events until the
+                # buffer fills or the connection closes.
+                "X-Accel-Buffering": "no",
+                # Opt out of HTTP/2 connection coalescing so each
+                # browser tab gets its own stream — without this, a
+                # second ``EventSource`` on the same origin may
+                # silently share the first tab's stream.
+                "Connection": "keep-alive",
+            },
+        )
+        await resp.prepare(request)
+
+        # Drive ``sse_event_stream`` and forward each frame to the client.
+        # If the client disconnects, ``resp.write`` raises
+        # ``ConnectionResetError`` — we let the exception bubble out of
+        # the ``async for`` so aiohttp tears down the response cleanly.
+        try:
+            async for frame in sse_event_stream(server):
+                await resp.write(frame.encode("utf-8"))
+        except (ConnectionResetError, asyncio.CancelledError):
+            # Client disconnected — exit cleanly.
+            pass
+        return resp
+
     app = web.Application(
         middlewares=[auth_and_limits_middleware]  # type: ignore[list-item]
     )
     app.router.add_post("/", handle)
     app.router.add_post("/mcp", handle)
+    # R15: SSE live-UX endpoint (stub — see ``sse_event_stream`` docstring).
+    app.router.add_get("/events", handle_sse)
+    app.router.add_get("/sse", handle_sse)
 
     runner = web.AppRunner(app)
     await runner.setup()

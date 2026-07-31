@@ -1,0 +1,71 @@
+interactions:
+- request:
+    body: '{"messages":[{"role":"system","content":"You are @coder..."},{"role":"user","content":"Write
+      a hello-world function"}],"model":"gpt-4o","temperature":0.0}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '167'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      user-agent:
+      - AsyncOpenAI/Python 2.50.0
+      x-stainless-arch:
+      - x64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 2.50.0
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.12.13
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: '{"id":"chatcmpl-bench-r15-coder","object":"chat.completion","created":1700000010,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"{\"files\":
+        [{\"path\": \"hello.py\", \"language\": \"python\", \"content\": \"def hello() ->
+        str:\\n    return \\\"hello, world\\\"\\n\", \"action\": \"create\"}], \"summary\":
+        \"Scaffolded a hello() function returning a greeting string.\", \"assumptions\":
+        [\"Python 3.11+ syntax is acceptable\"], \"warnings\": []}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":62,"completion_tokens":48,"total_tokens":110}}'
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      cf-ray:
+      - cassette-replay-bench-r15-coder
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      date:
+      - Thu, 30 Jul 2026 22:10:00 GMT
+      server:
+      - cloudflare
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+    status:
+      code: 200
+      message: OK
+version: 1

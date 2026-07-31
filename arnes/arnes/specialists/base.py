@@ -273,39 +273,64 @@ class Specialist(ABC):
         provider: LLMProvider,
         tool_registry: ToolRegistry | None = None,
     ) -> AsyncIterator[LLMResponse]:
-        """Stream a specialist's response token by token.
+        """Stream a specialist's response token by token through the ReAct loop.
 
         Mirrors :meth:`run` but uses ``provider.stream_complete()`` instead
         of ``provider.complete()``. Yields ``LLMResponse`` chunks as they
-        arrive from the provider. The final chunk carries the full
-        ``LLMUsage`` (``tokens_in``, ``tokens_out``, ``cost_usd``).
+        arrive from the provider. The final chunk of each iteration carries
+        the full ``LLMUsage`` (``tokens_in``, ``tokens_out``, ``cost_usd``).
 
-        Streaming specialists do NOT execute the ReAct tool-use loop — if
-        the specialist needs tools, callers should use :meth:`run` instead.
-        This is a best-effort streaming path for read-only / generation
-        tasks (planning, summarising, drafting code without shell access).
+        Streaming ReAct loop (R15):
 
-        Audit trail: after the stream completes, a single
-        :class:`AssistantMessageEvent` is appended to the wrapped
-        provider's ``_events`` sink (same pattern as :meth:`run`). The
-        event carries the full accumulated content and the final usage,
-        so the bitácora records streaming runs the same way it records
-        non-streaming runs. Streaming produces ONE event per call (not
-        per-chunk events) — per-chunk events would balloon the audit log
-        without adding forensic value, and the chunks themselves are not
-        durable (they're a transport optimisation, not a semantic unit).
+        Unlike the v0.1 streaming path (which bypassed tool execution), the
+        R15 streaming path **participates in the ReAct loop**. For each
+        iteration up to ``config.max_iterations``:
+
+        1. Stream chunks from ``provider.stream_complete()`` with the
+           specialist's ``tool_schemas`` attached.
+        2. Accumulate per-iteration content + ``tool_calls`` (vendors that
+           stream tool calls deliver them as ``delta.tool_calls`` fragments
+           on intermediate chunks; the reassembled list is available on the
+           final chunk of the iteration).
+        3. After the iteration's stream ends, emit a single
+           :class:`AssistantMessageEvent` carrying the accumulated content
+           + final usage (same audit-trail pattern as :meth:`run`).
+        4. If the iteration produced no ``tool_calls`` → it's the final
+           response → return.
+        5. If ``tool_calls`` are present → execute each tool, append the
+           assistant message + tool results to ``messages``, and start
+           another streaming iteration.
+
+        This closes the R11→R14 ``Specialist.stream() bypasses the ReAct
+        tool-use loop`` gap. Streaming now works for specialists that
+        require tools (e.g. ``@coder`` with ``fs_read``, ``@reviewer``
+        with ``fs_read``).
+
+        Audit trail: ONE ``AssistantMessageEvent`` is appended to the
+        wrapped provider's ``_events`` sink per iteration (same as
+        :meth:`run`). Per-chunk events would balloon the audit log
+        without adding forensic value.
 
         Usage::
 
             async for chunk in specialist.stream(input_data, ctx, provider=p):
                 print(chunk.content, end="", flush=True)
         """
-        # Build messages (same as run(), minus the tool-use loop)
+        # Build messages (system + user) and the available tool list.
         user_content = self._format_input(input_data)
         messages: list[LLMMessage] = [
             LLMMessage(role="system", content=self.config.system_prompt),
             LLMMessage(role="user", content=user_content),
         ]
+
+        available_tools: list[Tool] = []
+        tool_schemas: list[dict[str, Any]] = []
+        if tool_registry and self.config.tools:
+            for tool_name in self.config.tools:
+                tool = tool_registry.get(tool_name)
+                if tool:
+                    available_tools.append(tool)
+                    tool_schemas.append(self._tool_to_schema(tool))
 
         # Wrap provider with the full middleware stack if not already wrapped
         # (mirrors run()).
@@ -328,40 +353,124 @@ class Specialist(ABC):
             effective_response_schema = self.config.pydantic_model.model_json_schema()
         wants_json = bool(self.config.output_schema or self.config.pydantic_model)
 
-        # Accumulate content + usage so we can emit a single
-        # AssistantMessageEvent after the stream ends. Per-chunk usage is
-        # zero on intermediate chunks (see LLMProvider.stream_complete
-        # contract); the final chunk carries the full usage.
-        accumulated_content: list[str] = []
-        total_usage = LLMUsage()
+        # ReAct loop — up to max_iterations streaming rounds. Each round:
+        # stream → emit audit event → if tool_calls, execute + continue.
+        for _iteration in range(self.config.max_iterations):
+            # Per-iteration accumulators. ``content`` is the concatenation
+            # of every chunk's ``content`` delta (vendors send just the
+            # new token, not the running concatenation). ``tool_calls`` is
+            # the reassembled list — vendors that stream tool calls
+            # deliver them on the final chunk; vendors that don't leave
+            # this empty.
+            iter_content: list[str] = []
+            iter_tool_calls: list[dict[str, Any]] = []
+            iter_usage = LLMUsage()
 
-        async for chunk in wrapped_provider.stream_complete(
-            messages,
-            model=model,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-            response_format={"type": "json_object"} if wants_json else None,
-            response_schema=effective_response_schema,
-        ):
-            if chunk.content:
-                accumulated_content.append(chunk.content)
-            # The last non-zero usage wins (providers send the full count
-            # on the final chunk, not a running delta).
-            if chunk.usage.tokens_in > 0 or chunk.usage.tokens_out > 0 or chunk.usage.cost_usd > 0:
-                total_usage = chunk.usage
-            yield chunk
+            try:
+                async for chunk in wrapped_provider.stream_complete(
+                    messages,
+                    model=model,
+                    tools=tool_schemas if tool_schemas else None,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                    response_format={"type": "json_object"} if wants_json else None,
+                    response_schema=effective_response_schema,
+                ):
+                    if chunk.content:
+                        iter_content.append(chunk.content)
+                    # Vendors that stream tool_calls send the reassembled
+                    # list on the final non-empty chunk of the iteration.
+                    # We accumulate so the LAST non-empty list wins (matches
+                    # the "last non-zero usage wins" pattern for usage).
+                    if chunk.tool_calls:
+                        iter_tool_calls = list(chunk.tool_calls)
+                    if (
+                        chunk.usage.tokens_in > 0
+                        or chunk.usage.tokens_out > 0
+                        or chunk.usage.cost_usd > 0
+                    ):
+                        iter_usage = chunk.usage
+                    yield chunk
+            except BudgetExceeded as e:
+                logger.error(
+                    "specialist_stream_budget_exceeded",
+                    specialist=self.config.name,
+                    error=str(e),
+                )
+                # Yield a final sentinel chunk so callers that block on the
+                # final chunk to read usage don't hang — they'll see zeros
+                # and can detect the anomaly.
+                yield LLMResponse(
+                    content="",
+                    tool_calls=[],
+                    usage=LLMUsage(
+                        tokens_in=0,
+                        tokens_out=0,
+                        cost_usd=0.0,
+                        model=model,
+                        cached=False,
+                    ),
+                    model=model,
+                )
+                return
 
-        # Emit a single AssistantMessageEvent for the bitácora. We
-        # construct a synthetic LLMResponse carrying the accumulated
-        # content + final usage so we can reuse the same _emit_assistant_message
-        # helper that run() uses (DRY: same event shape, same sink).
-        synthetic_response = LLMResponse(
-            content="".join(accumulated_content),
+            # Emit the per-iteration AssistantMessageEvent for the bitácora.
+            # We construct a synthetic LLMResponse carrying the accumulated
+            # content + final usage so we can reuse the same
+            # _emit_assistant_message helper that run() uses.
+            iter_response = LLMResponse(
+                content="".join(iter_content),
+                tool_calls=iter_tool_calls,
+                usage=iter_usage,
+                model=model,
+            )
+            self._emit_assistant_message(wrapped_provider, ctx, iter_response, model)
+
+            # If no tool calls, this iteration IS the final response — exit.
+            if not iter_tool_calls:
+                return
+
+            # Tool calls present → execute each, append assistant + tool
+            # results to messages, and loop for the next streaming iteration.
+            messages.append(
+                LLMMessage(
+                    role="assistant",
+                    content="".join(iter_content),
+                    tool_calls=iter_tool_calls,
+                )
+            )
+            for tc in iter_tool_calls:
+                tool_result = await self._execute_tool_call(tc, available_tools, ctx)
+                messages.append(
+                    LLMMessage(
+                        role="tool",
+                        content=json.dumps(tool_result, default=str),
+                        tool_call_id=tc.get("id"),
+                        name=tc.get("function", {}).get("name"),
+                    )
+                )
+            # Continue loop for the next streaming iteration.
+
+        # If we exited the loop without a tool-call-free response, the LLM
+        # kept calling tools past max_iterations. Log it and yield a final
+        # zero-usage sentinel so callers don't hang waiting for usage.
+        logger.error(
+            "specialist_stream_max_iterations_exceeded",
+            specialist=self.config.name,
+            max_iterations=self.config.max_iterations,
+        )
+        yield LLMResponse(
+            content="",
             tool_calls=[],
-            usage=total_usage,
+            usage=LLMUsage(
+                tokens_in=0,
+                tokens_out=0,
+                cost_usd=0.0,
+                model=model,
+                cached=False,
+            ),
             model=model,
         )
-        self._emit_assistant_message(wrapped_provider, ctx, synthetic_response, model)
 
     # ============================================================
     # Tool execution

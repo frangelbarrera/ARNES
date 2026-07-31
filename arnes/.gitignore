@@ -83,6 +83,9 @@ arnes_cache.db
 *.arnes-thread.json
 bitacora-*.md
 
+# MkDocs build output (R15 docs site)
+site/
+
 # OS
 Thumbs.db
 tool-results/

@@ -632,3 +632,102 @@ class TestServerConstants:
             assert required in _BLOCKED_PATH_PREFIXES, (
                 f"{required} must be in _BLOCKED_PATH_PREFIXES"
             )
+
+
+class TestSSEEventStream:
+    """Tests for the R15 SSE (Server-Sent Events) stub endpoint.
+
+    The HTTP server registers ``GET /events`` and ``GET /sse`` as
+    streaming routes that yield ``text/event-stream`` frames via
+    :func:`arnes.mcp.server.sse_event_stream`. These tests exercise the
+    generator directly (without binding a real socket) so the wire
+    format and the initial-event behaviour are pinned.
+    """
+
+    @pytest.mark.asyncio
+    async def test_format_sse_event_produces_spec_compliant_frame(self) -> None:
+        """``_format_sse_event`` must emit ``event:`` + ``data:`` + blank line."""
+        from arnes.mcp.sse import format_sse_event
+
+        frame = format_sse_event("server_info", {"server": "arnes", "version": "0.1.0a1"})
+        # Spec: every event ends with a blank line (``\n\n``).
+        assert frame.endswith("\n\n")
+        assert frame.startswith("event: server_info\n")
+        assert "data: " in frame
+
+    @pytest.mark.asyncio
+    async def test_format_sse_event_handles_dict_payload(self) -> None:
+        """A dict payload is JSON-serialised onto a single ``data:`` line.
+
+        ``json.dumps`` escapes any embedded newlines in string values, so
+        the common dict case produces exactly one ``data:`` line. This test
+        pins that behaviour — a regression in the JSON encoding (e.g.
+        accidentally enabling ``indent=``) would break the wire format.
+        """
+        from arnes.mcp.sse import format_sse_event
+
+        frame = format_sse_event("server_info", {"server": "arnes", "ok": True})
+        assert frame.startswith("event: server_info\n")
+        # Exactly one ``data:`` line for a single-line JSON payload.
+        assert frame.count("data: ") == 1
+        assert '"server": "arnes"' in frame
+        assert '"ok": true' in frame
+        assert frame.endswith("\n\n")
+
+    @pytest.mark.asyncio
+    async def test_sse_event_stream_emits_initial_server_info_event(self) -> None:
+        """The first yielded frame must be a ``server_info`` event carrying
+        the server name + version — this is what a browser-based subscriber
+        uses to confirm the endpoint works end-to-end."""
+        from arnes.mcp.sse import sse_event_stream
+
+        server = ArnesMCPServer()
+        # Use a tiny heartbeat interval so the test doesn't block on the
+        # first heartbeat — but we only consume the first frame anyway.
+        gen = sse_event_stream(server, heartbeat_interval_s=0.01, initial_event_count=1)
+
+        first = await gen.__anext__()
+        assert first.startswith("event: server_info\n")
+        assert f'"server": "{server.SERVER_INFO["name"]}"' in first
+        assert f'"version": "{server.SERVER_INFO["version"]}"' in first
+        assert first.endswith("\n\n")
+
+        # Close the generator so its heartbeat task doesn't leak.
+        await gen.aclose()
+
+    @pytest.mark.asyncio
+    async def test_sse_event_stream_yields_heartbeat_comment_after_initial_events(
+        self,
+    ) -> None:
+        """After the initial ``server_info`` event(s), the stream must idle
+        on ``: ping`` comments — these keep the connection alive through
+        proxies without dispatching client-side event listeners."""
+        from arnes.mcp.sse import sse_event_stream
+
+        server = ArnesMCPServer()
+        # Tiny heartbeat so the test doesn't sleep for 15 s.
+        gen = sse_event_stream(server, heartbeat_interval_s=0.01, initial_event_count=1)
+
+        # Skip the initial server_info frame.
+        await gen.__anext__()
+
+        # The next frame must be a heartbeat comment.
+        heartbeat = await gen.__anext__()
+        assert heartbeat.startswith(": ping")
+        assert heartbeat.endswith("\n\n")
+
+        await gen.aclose()
+
+    @pytest.mark.asyncio
+    async def test_sse_event_stream_zero_initial_events_only_heartbeats(self) -> None:
+        """When ``initial_event_count=0``, the very first frame is a heartbeat
+        comment — confirms the heartbeat loop runs even when no intro event
+        is requested."""
+        from arnes.mcp.sse import sse_event_stream
+
+        server = ArnesMCPServer()
+        gen = sse_event_stream(server, heartbeat_interval_s=0.01, initial_event_count=0)
+
+        first = await gen.__anext__()
+        assert first.startswith(": ping")
+        await gen.aclose()

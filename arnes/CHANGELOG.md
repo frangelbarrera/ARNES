@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added in Round 15
+- **Streaming now participates in the ReAct tool-use loop** (`Specialist.stream()`): closes the R11→R14 top-AI-issue gap. Each streaming iteration emits an `AssistantMessageEvent`; if the provider streams `tool_calls`, the specialist executes the tools, appends assistant + tool messages, and starts another streaming iteration. Yields a final zero-usage sentinel on `max_iterations` exhaustion or `BudgetExceeded` so callers don't hang.
+- **SSE (Server-Sent Events) endpoint stub on the MCP HTTP transport**: `GET /events` and `GET /sse` yield `event: <name>\ndata: <json>\n\n` frames via the new `arnes/mcp/sse.py` module. R15 stub emits a single `server_info` event up-front, then idles on `: ping` heartbeats (15 s interval). v0.2 will replace the heartbeat loop with a real subscription to `PlaybookExecutor.stream` so subscribers see step transitions in real time. The wire format is stable across that upgrade.
+- **`arnes/cli/helpers.py` + `arnes/cli/scaffolding.py` + `arnes/mcp/sse.py`**: extracted from `arnes/cli/main.py` (774 → 293 lines) and `arnes/mcp/server.py` to keep both files under the AGENTS.md 500-line rule. `helpers.py` owns the async runners + the schema-valid mock LLM provider; `scaffolding.py` owns the `arnes init` template helpers; `sse.py` owns the SSE wire-format helpers + the async generator.
+- **2 new vcrpy cassettes** under `tests/snapshot/cassettes/`: `test_coder_basic.yaml` (62 in + 48 out tokens, validates against `CoderOutput`) and `test_reviewer_basic.yaml` (58 in + 36 out tokens, validates against `ReviewerOutput`). The full snapshot test suite now covers 3 of 5 specialists.
+- **MkDocs documentation site scaffold**: `mkdocs.yml` (MkDocs Material, dark/light palette, strict mode) + 7 stub docs pages under `docs/*.md` (`index.md`, `quickstart.md`, `architecture.md`, `specialists.md`, `playbooks.md`, `mcp-server.md`, `benchmarking.md`, `audits.md`). `mkdocs build --strict` passes cleanly.
+- 22 new tests (376 → 398): 6 SSE wire-format/stream tests, 1 streaming-with-ReAct-loop test, 1 streaming-no-tool-calls regression test (renamed), 16 specialist-cassette tests (8 for `@coder`, 8 for `@reviewer`).
+
+### Changed in Round 15
+- `arnes/specialists/base.py`: `Specialist.stream()` rewritten to participate in the ReAct loop (was bypassing tool execution). Each iteration: stream → emit audit event → if `tool_calls`, execute + iterate. File grew from 706 → 815 lines (still over the 500-line rule — the streaming-with-tools path is genuinely one cohesive class).
+- `arnes/mcp/server.py`: SSE wire-format helpers + the async generator extracted to `arnes/mcp/sse.py`. The HTTP transport now registers `GET /events` and `GET /sse` routes via `app.router.add_get(...)`. File shrunk from 668 → 590 lines.
+- `arnes/cli/main.py`: 774 → 293 lines. All async helpers + the mock LLM provider + scaffolding moved to `helpers.py` / `scaffolding.py`.
+- `arnes/llm/base.py`: `LLMProvider.stream_complete` contract documented to allow final chunks to carry non-empty `tool_calls` lists (vendors stream `delta.tool_calls` fragments that callers reassemble).
+- `.gitignore`: added `site/` (MkDocs build output).
+
 ### Added in Round 13
 - `arnes benchmark` CLI command now documented end-to-end in the README feature table and a dedicated "Benchmark" section. Targets +6.1 score gain to reach the 95/100 tier.
 - `CITATION.cff`: Zenodo DOI placeholder (`10.5281/zenodo.ARNES`) added so the citation record is ready for the Zenodo deposit the moment the software is published.

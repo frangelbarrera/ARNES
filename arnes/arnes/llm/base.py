@@ -117,6 +117,14 @@ class LLMProvider(ABC):
           counts are only known once generation completes.
         - A final chunk with the full ``LLMUsage`` (tokens + cost) is
           yielded after the stream ends, when the vendor exposes usage.
+        - The final chunk (or a dedicated chunk just before the usage-only
+          one) MAY carry a non-empty ``tool_calls`` list — vendors stream
+          ``tool_calls`` as ``delta.tool_calls`` fragments that callers
+          must reassemble. The ReAct-aware streaming specialist
+          (:meth:`arnes.specialists.base.Specialist.stream`) inspects the
+          final accumulated ``tool_calls`` after the stream ends, executes
+          the tools, and starts another streaming iteration with the tool
+          results appended to the message history.
 
         Implementations:
 

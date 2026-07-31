@@ -190,12 +190,17 @@ class TestSpecialistStream:
         assert "steps" in full_content
 
     @pytest.mark.asyncio
-    async def test_stream_does_not_execute_tool_loop(self):
-        """Streaming skips the ReAct tool-use loop (best-effort path).
+    async def test_stream_no_tool_calls_terminates_after_one_iteration(self):
+        """Streaming with a provider that returns no tool_calls terminates
+        after one ReAct iteration (no tool execution).
 
-        We verify this by giving the specialist a tool_registry with a
-        tool, but the stream should NOT execute any tools — it should
-        just stream the LLM response.
+        The R15 streaming path now participates in the ReAct loop — if the
+        provider streams tool_calls, the specialist executes the tools and
+        starts another streaming iteration. This mock returns a complete
+        JSON response without ``tool_calls``, so the loop exits after one
+        iteration. The key invariant: we got chunks, the call_count is
+        exactly 1 (one stream_complete call, no follow-up calls from a
+        ReAct continuation).
         """
         from arnes.tools.registry import get_default_registry
 
@@ -212,9 +217,124 @@ class TestSpecialistStream:
             chunks.append(chunk)
 
         # The mock provider returns a complete JSON response without
-        # tool_calls, so even if the tool loop ran it would terminate
-        # immediately. The key invariant: we got chunks, the call_count
-        # is exactly 1 (one stream_complete call, no follow-up complete()
-        # calls from a ReAct loop).
+        # tool_calls, so even though the ReAct loop is wired, it
+        # terminates immediately after 1 iteration.
         assert provider.call_count == 1
         assert len(chunks) > 0
+
+    @pytest.mark.asyncio
+    async def test_stream_executes_react_tool_loop_when_tool_calls_present(self):
+        """R15: streaming now participates in the ReAct loop.
+
+        When the provider streams a final chunk with ``tool_calls`` populated,
+        the specialist must execute the tool, append the result to messages,
+        and start another streaming iteration. The final iteration's stream
+        (with no tool_calls) terminates the loop.
+
+        This closes the R11→R14 ``Specialist.stream() bypasses the ReAct
+        tool-use loop`` gap.
+        """
+        import uuid
+
+        from arnes.tools.registry import get_default_registry
+
+        # Provider that streams ONE iteration with a tool_call, then a
+        # SECOND iteration with a plain JSON final response.
+        class ReActStreamingProvider(LLMProvider):
+            """Two-iteration streaming provider for the ReAct-with-stream test."""
+
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def complete(
+                self,
+                messages: list[LLMMessage],
+                *,
+                model: str = "mock",
+                **kwargs: Any,
+            ) -> LLMResponse:
+                self.call_count += 1
+                return LLMResponse(
+                    content='{"steps": []}',
+                    tool_calls=[],
+                    usage=LLMUsage(tokens_in=1, tokens_out=1, cost_usd=0.0, model=model),
+                    model=model,
+                )
+
+            async def stream_complete(
+                self,
+                messages: list[LLMMessage],
+                *,
+                model: str = "mock",
+                **kwargs: Any,
+            ) -> AsyncIterator[LLMResponse]:
+                self.call_count += 1
+                if self.call_count == 1:
+                    # Iteration 1: stream a tool_call.
+                    yield LLMResponse(
+                        content='{"thinking": "need to read fs"}',
+                        tool_calls=[
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "fs_read",
+                                    "arguments": '{"path": "README.md"}',
+                                },
+                            }
+                        ],
+                        usage=LLMUsage(
+                            tokens_in=10,
+                            tokens_out=5,
+                            cost_usd=0.0,
+                            model=model,
+                        ),
+                        model=model,
+                    )
+                else:
+                    # Iteration 2: final response (no tool_calls).
+                    content = '{"steps": [{"id": "s1", "specialist": "@coder", "input": {}}]}'
+                    yield LLMResponse(
+                        content=content,
+                        tool_calls=[],
+                        usage=LLMUsage(
+                            tokens_in=sum(len(m.content) // 4 for m in messages),
+                            tokens_out=len(content) // 4,
+                            cost_usd=0.0,
+                            model=model,
+                        ),
+                        model=model,
+                    )
+
+            def list_models(self) -> list[str]:
+                return ["mock"]
+
+        provider = ReActStreamingProvider()
+        wrapped = _build_wrapped_provider(provider)
+        specialist = Planner()
+        ctx = ToolContext(thread_id=uuid.uuid4(), specialist="@planner")
+        tool_registry = get_default_registry()
+
+        chunks = []
+        async for chunk in specialist.stream(
+            {"task": "Plan"}, ctx, provider=wrapped, tool_registry=tool_registry
+        ):
+            chunks.append(chunk)
+
+        # TWO streaming iterations: 1st returned tool_calls → execute →
+        # 2nd returned final JSON.
+        assert provider.call_count == 2, (
+            f"Expected 2 stream_complete calls (ReAct loop), got {provider.call_count}"
+        )
+        # Final accumulated content includes the second iteration's JSON.
+        full_content = "".join(c.content for c in chunks)
+        assert "steps" in full_content
+
+        # TWO AssistantMessageEvents emitted (one per iteration).
+        from arnes.thread.events import EventType
+
+        events = getattr(wrapped, "_events", [])
+        audit_events = [e for e in events if e.type == EventType.ASSISTANT_MESSAGE]
+        assert len(audit_events) == 2, (
+            f"Expected 2 AssistantMessageEvents (one per ReAct iteration), got {len(audit_events)}"
+        )
