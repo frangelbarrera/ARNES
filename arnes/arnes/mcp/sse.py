@@ -1,21 +1,30 @@
-"""ARNES MCP server — SSE (Server-Sent Events) live-UX stub (R15).
+"""ARNES MCP server — SSE (Server-Sent Events) live-UX module.
 
 Extracted from :mod:`arnes.mcp.server` in R15 to keep ``server.py`` under
-the AGENTS.md 500-line rule. This module owns the SSE wire-format helper
-and the async generator that drives the ``GET /events`` HTTP endpoint.
+the AGENTS.md 500-line rule. This module owns:
 
-R15 stub behavior:
+- The SSE wire-format helper (:func:`format_sse_event`).
+- The ambient heartbeat generator (:func:`sse_event_stream`) —
+  R15 stub behaviour, used by ``GET /events`` and ``GET /sse``.
+- The playbook-streaming generator (:func:`playbook_event_stream`)
+  — R16 wiring that drives ``POST /runs/stream`` by forwarding each
+  event from :meth:`arnes.playbooks.executor.PlaybookExecutor.stream`
+  as an SSE frame.
 
-- Emits a single ``server_info`` event up-front so a browser-based
-  subscriber can confirm the endpoint works end-to-end.
-- Then idles on ``: ping`` heartbeats every 15 s to keep the connection
-  alive through proxies.
+R16 closed the top Competitive issue ("SSE endpoint is a stub, not
+wired to ``PlaybookExecutor.stream``"). The ``GET /events`` route
+keeps its heartbeat-only behaviour (for ambient subscription
+patterns that want a keep-alive channel); the new ``POST /runs/stream``
+route is what actually streams step-level transitions.
 
-v0.2 will replace the heartbeat loop with a real subscription to
-:class:`arnes.playbooks.executor.PlaybookExecutor.stream` so subscribers
-see step-level transitions in real time. The wire format
-(``event: <name>\\ndata: <json>\\n\\n``) is stable across that upgrade —
-clients written today keep working.
+Wire format (stable across v0.2)::
+
+    event: <event_type>\\n
+    data: <json>\\n
+    \\n
+
+Clients written today keep working when v0.2 adds more event types
+(MCP transport, HITL pause/resume, OTel export).
 """
 
 from __future__ import annotations
@@ -28,6 +37,9 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from arnes.mcp.server import ArnesMCPServer
+    from arnes.playbooks.executor import PlaybookExecutor
+    from arnes.playbooks.schema import Playbook
+    from arnes.thread.events import Event
 
 # Heartbeat interval for the SSE endpoint. A small ``: ping`` comment is
 # sent every N seconds to keep the connection alive through proxies that
@@ -36,8 +48,8 @@ SSE_HEARTBEAT_INTERVAL_S: float = 15.0
 
 # How many "hello" events to emit before settling into heartbeat-only mode.
 # The current stub emits 1 server-info event so a browser-based subscriber
-# can verify the endpoint works end-to-end. v0.2 will replace this with a
-# real subscription to ``PlaybookExecutor.stream``.
+# can verify the endpoint works end-to-end. The heartbeat loop is the
+# ambient channel; ``POST /runs/stream`` is the per-run channel.
 SSE_INITIAL_EVENT_COUNT: int = 1
 
 
@@ -57,6 +69,47 @@ def format_sse_event(event: str, data: Any) -> str:
     return f"event: {event}\n{body}\n\n"
 
 
+def _event_to_payload(event: Event) -> dict[str, Any]:
+    """Convert a Thread event into a JSON-serialisable dict for SSE.
+
+    Keeps the wire payload small: only the event-type discriminator and
+    the most useful fields (``thread_id``, ``step_id``, ``specialist``,
+    ``timestamp``, ``data``). The full event log stays in the Thread
+    (clients fetch it via ``arnes_get_events`` if they need the
+    complete transcript).
+    """
+    return {
+        "event_type": event.type.value,
+        "event_id": str(event.id),
+        "thread_id": str(event.thread_id),
+        "step_id": event.step_id,
+        "specialist": event.specialist,
+        "timestamp": event.timestamp.isoformat(),
+        "data": event.data,
+    }
+
+
+def _run_result_to_payload(result: Any) -> dict[str, Any]:
+    """Convert a :class:`PlaybookRunResult` into a JSON-serialisable dict.
+
+    The full thread is omitted from the SSE payload (it can be huge for
+    long playbooks). Callers that need the full thread fetch it via
+    ``arnes_get_events(thread_id)`` after the stream ends.
+    """
+    return {
+        "success": result.success,
+        "steps_executed": result.steps_executed,
+        "steps_failed": result.steps_failed,
+        "duration_s": result.duration_s,
+        "total_tokens_in": result.total_tokens_in,
+        "total_tokens_out": result.total_tokens_out,
+        "total_cost_usd": result.total_cost_usd,
+        "error": result.error,
+        "outputs": {k: v for k, v in result.outputs.items() if not k.startswith("__")},
+        "thread_id": str(result.thread.id) if result.thread is not None else None,
+    }
+
+
 async def sse_event_stream(
     server: ArnesMCPServer,
     *,
@@ -65,7 +118,8 @@ async def sse_event_stream(
 ) -> AsyncIterator[str]:
     """Yield SSE-formatted frames for an HTTP ``GET /events`` subscriber.
 
-    R15 stub behavior:
+    Ambient-channel behaviour (R15 stub, preserved for backwards
+    compatibility):
 
     - Emits ``initial_event_count`` ``server_info`` events up-front so a
       browser-based client can confirm the endpoint works end-to-end.
@@ -74,10 +128,10 @@ async def sse_event_stream(
       are part of the SSE spec — they keep the connection alive through
       proxies without dispatching client-side event listeners.
 
-    v0.2 will replace the heartbeat loop with a real subscription to
-    ``PlaybookExecutor.stream`` so subscribers see step-level transitions
-    in real time. The wire format (``event: <name>\\ndata: <json>\\n\\n``)
-    is stable across that upgrade — clients written today keep working.
+    R16 added :func:`playbook_event_stream` for the per-run channel —
+    use that for actually streaming step-level transitions to a client.
+    This generator is for ambient subscription patterns (presence,
+    keep-alive, server-info discovery) only.
 
     The generator is cancellable: closing the HTTP response (client
     disconnect) cancels the asyncio task driving the iteration, which
@@ -104,9 +158,85 @@ async def sse_event_stream(
         yield ": ping\n\n"
 
 
+async def playbook_event_stream(
+    executor: PlaybookExecutor,
+    playbook: Playbook,
+    *,
+    initial_input: dict[str, Any] | None = None,
+    server: ArnesMCPServer | None = None,
+    emit_initial_server_info: bool = True,
+) -> AsyncIterator[str]:
+    """Stream a playbook run as SSE frames (R16 wiring).
+
+    Wraps :meth:`arnes.playbooks.executor.PlaybookExecutor.stream` and
+    converts each yielded item into an SSE frame:
+
+    - Each :class:`arnes.thread.events.Event` becomes an SSE event whose
+      ``event:`` field is the event-type value (``step_started``,
+      ``step_completed``, ``run_completed``, ``run_failed``,
+      ``cost_threshold``, ``assistant_message``, …). The ``data:`` field
+      is the JSON-serialised event payload (see :func:`_event_to_payload`).
+    - The final :class:`arnes.playbooks.result.PlaybookRunResult` becomes
+      an SSE event of type ``run_result`` carrying the aggregate
+      accounting (success flag, steps, tokens, cost, error, outputs).
+      This is always the last frame.
+
+    If ``server`` is provided and ``emit_initial_server_info`` is true,
+    a single ``server_info`` event is emitted up-front so the client can
+    confirm the endpoint works before the first step event arrives. The
+    event is identical to the one emitted by :func:`sse_event_stream`.
+
+    The stream ends after the ``run_result`` frame — no heartbeats.
+    This is a finite stream: open a new ``POST /runs/stream`` connection
+    for each run. For an ambient keep-alive channel, use ``GET /events``.
+
+    Behaviour on failure:
+
+    - If the run aborts mid-step (``BudgetExceeded``), the executor
+      yields a ``RunFailedEvent`` followed by the final
+      ``PlaybookRunResult(success=False)``. Both are forwarded as SSE
+      frames — the client always sees the failure transition and the
+      final accounting.
+    - If the run completes successfully, the client sees
+      ``step_completed`` per step, then ``run_completed``, then
+      ``run_result``.
+
+    Cancellation: closing the HTTP response (client disconnect)
+    cancels the asyncio task driving the iteration. The executor's
+    ``stream()`` generator receives ``asyncio.CancelledError`` on its
+    next ``await`` and exits cleanly. No partial state is committed
+    to disk; the in-memory Thread is discarded.
+    """
+    if emit_initial_server_info and server is not None:
+        yield format_sse_event(
+            "server_info",
+            {
+                "server": server.SERVER_INFO["name"],
+                "version": server.SERVER_INFO["version"],
+                "protocol": server.PROTOCOL_VERSION,
+                "ts": time.time(),
+            },
+        )
+
+    async for item in executor.stream(playbook, initial_input=initial_input):
+        # The executor yields either an Event or a PlaybookRunResult. We
+        # discriminate on the presence of ``type`` (Event has it;
+        # PlaybookRunResult does not — it has ``success`` / ``outputs``).
+        event_type = getattr(item, "type", None)
+        if event_type is not None and hasattr(event_type, "value"):
+            # It's a Thread Event — narrow the type via cast so mypy
+            # accepts the ``_event_to_payload`` call (the executor's
+            # stream() return type is a union of Event | PlaybookRunResult).
+            yield format_sse_event(event_type.value, _event_to_payload(item))  # type: ignore[arg-type]
+        else:
+            # It's the final PlaybookRunResult.
+            yield format_sse_event("run_result", _run_result_to_payload(item))
+
+
 __all__ = [
     "SSE_HEARTBEAT_INTERVAL_S",
     "SSE_INITIAL_EVENT_COUNT",
     "format_sse_event",
+    "playbook_event_stream",
     "sse_event_stream",
 ]

@@ -10,6 +10,7 @@ implements budget enforcement correctly:
 - crewai: max_tokens only (no USD, no circuit breaker)
 
 ARNES CostGuard provides:
+
 - Hierarchical budget: org → project → agent → task with inheritance
 - Per-step + per-total USD tracking
 - Circuit breaker temporal: max USD/minute (denial-of-wallet defense)
@@ -17,6 +18,13 @@ ARNES CostGuard provides:
 - HITL: pause and ask for approval at 95% of budget
 - Hard stop: abort at 100% of budget
 - Audit log: every decision logged to Thread events via the event sink
+
+R16 split: :class:`BudgetExceeded` and :class:`CostBudget` were
+extracted to :mod:`arnes.middleware.budget` to keep this module
+under the AGENTS.md 500-line rule. They are re-exported here for
+backwards compatibility (existing
+``from arnes.middleware.cost_guard import CostBudget, BudgetExceeded``
+imports keep working).
 """
 
 from __future__ import annotations
@@ -28,12 +36,19 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from pydantic import BaseModel
 
 from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse
+from arnes.middleware.budget import BudgetExceeded, CostBudget
 from arnes.thread.events import CostThresholdEvent, Event, EventType, HumanApprovalRequestedEvent
 
 logger = structlog.get_logger(__name__)
+
+# Re-export ``BudgetExceeded`` and ``CostBudget`` for backwards
+# compatibility (existing imports of the shape
+# ``from arnes.middleware.cost_guard import CostBudget`` keep working
+# after the R16 split). The canonical home for these is
+# :mod:`arnes.middleware.budget`.
+__all__ = ["BudgetExceeded", "CostBudget", "CostGuard"]
 
 
 # Sentinel thread_id used by middleware when the real Thread id is not
@@ -42,52 +57,6 @@ logger = structlog.get_logger(__name__)
 # event sink after each step. Using a stable nil UUID makes the placeholder
 # easy to spot in logs.
 NIL_THREAD_ID = UUID(int=0)
-
-
-class BudgetExceeded(Exception):
-    """Raised when a budget is exceeded. Aborts the current run."""
-
-    def __init__(self, message: str, *, spent: float, budget: float, level: str) -> None:
-        super().__init__(message)
-        self.spent = spent
-        self.budget = budget
-        self.level = level
-
-
-class CostBudget(BaseModel):
-    """Hierarchical budget for a run.
-
-    Each level inherits from its parent unless explicitly overridden:
-    - org_budget_usd: total budget for the organization (None = unlimited)
-    - project_budget_usd: budget for this project (inherits from org)
-    - agent_budget_usd: budget for this agent (inherits from project)
-    - task_budget_usd: budget for this specific task (inherits from agent)
-
-    Plus temporal circuit breaker:
-    - max_usd_per_minute: abort if spend rate exceeds this (DoW defense)
-    """
-
-    org_budget_usd: float | None = None
-    project_budget_usd: float | None = None
-    agent_budget_usd: float | None = None
-    task_budget_usd: float | None = 0.50  # Default: $0.50 per task
-
-    max_usd_per_minute: float = 1.00  # Default: max $1/min (DoW defense)
-    warn_at_pct: float = 0.75  # Warn at 75%
-    pause_at_pct: float = 0.95  # Pause + HITL at 95%
-    abort_at_pct: float = 1.00  # Hard stop at 100%
-
-    # Effective budget = most specific non-None value
-    def effective_budget(self) -> float | None:
-        for v in [
-            self.task_budget_usd,
-            self.agent_budget_usd,
-            self.project_budget_usd,
-            self.org_budget_usd,
-        ]:
-            if v is not None:
-                return v
-        return None
 
 
 class CostGuard(LLMProvider):

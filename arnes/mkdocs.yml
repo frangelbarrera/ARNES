@@ -85,6 +85,10 @@ nav:
   - Playbooks: playbooks.md
   - MCP Server: mcp-server.md
   - Benchmarking: benchmarking.md
+  - Standard Suites: benchmarks.md
+  - Statistics: statistics.md
+  - Comparison: comparison.md
+  - Ethics: ethics.md
   - Audits: audits.md
 
 # Extra — GitHub stats badge + the social card used in link previews.

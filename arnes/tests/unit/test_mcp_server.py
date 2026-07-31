@@ -731,3 +731,299 @@ class TestSSEEventStream:
         first = await gen.__anext__()
         assert first.startswith(": ping")
         await gen.aclose()
+
+
+class TestPlaybookEventStream:
+    """Tests for the R16 SSE wiring — :func:`arnes.mcp.sse.playbook_event_stream`.
+
+    The R16 wiring replaced the heartbeat-only stub with a real per-run
+    channel that forwards each event from
+    :meth:`arnes.playbooks.executor.PlaybookExecutor.stream` as an SSE
+    frame. These tests exercise the generator directly (without binding
+    a real HTTP socket) so the wire format, event ordering, and
+    failure handling are pinned.
+    """
+
+    @pytest.fixture
+    def mock_provider(self) -> Any:
+        """A schema-valid mock provider that satisfies every specialist's
+        response schema (planner / coder / reviewer / tester / debugger)."""
+
+        class _SchemaValidMockProvider(LLMProvider):
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def complete(
+                self,
+                messages: list[LLMMessage],
+                *,
+                model: str = "mock",
+                tools: list[dict[str, Any]] | None = None,
+                temperature: float = 0.0,
+                max_tokens: int | None = None,
+                response_format: dict[str, Any] | None = None,
+                response_schema: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> LLMResponse:
+                self.call_count += 1
+                sys_msg = next((m for m in messages if m.role == "system"), None)
+                sys_content = sys_msg.content if sys_msg else ""
+                if "@planner" in sys_content:
+                    content = '{"steps": [{"id": "s1", "specialist": "@coder", "input": {}}]}'
+                elif "@coder" in sys_content:
+                    content = (
+                        '{"files": [{"path": "out.py", "language": "python", '
+                        '"content": "pass"}], "summary": "ok", '
+                        '"assumptions": [], "warnings": []}'
+                    )
+                elif "@reviewer" in sys_content:
+                    content = '{"verdict": "approve", "issues": [], "summary": "LGTM"}'
+                else:
+                    content = '{"result": "ok"}'
+                tokens_in = sum(len(m.content) // 4 for m in messages)
+                tokens_out = len(content) // 4
+                return LLMResponse(
+                    content=content,
+                    tool_calls=[],
+                    usage=LLMUsage(
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        cost_usd=0.0,
+                        model=model,
+                        cached=False,
+                    ),
+                    model=model,
+                )
+
+            async def stream_complete(
+                self,
+                messages: list[LLMMessage],
+                *,
+                model: str = "mock",
+                tools: list[dict[str, Any]] | None = None,
+                temperature: float = 0.0,
+                max_tokens: int | None = None,
+                response_format: dict[str, Any] | None = None,
+                response_schema: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> AsyncIterator[LLMResponse]:
+                response = await self.complete(
+                    messages,
+                    model=model,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format=response_format,
+                    response_schema=response_schema,
+                    **kwargs,
+                )
+                yield response
+
+            def list_models(self) -> list[str]:
+                return ["mock"]
+
+        return _SchemaValidMockProvider()
+
+    @pytest.fixture
+    def executor(self, mock_provider: Any) -> Any:
+        from arnes.middleware.cost_guard import CostBudget
+        from arnes.playbooks.executor import PlaybookExecutor
+
+        return PlaybookExecutor(
+            provider=mock_provider,
+            cost_budget=CostBudget(task_budget_usd=1.0),
+        )
+
+    @pytest.mark.asyncio
+    async def test_emits_server_info_first_when_server_provided(self, executor: Any) -> None:
+        """The first frame is a ``server_info`` event when ``server`` is
+        provided and ``emit_initial_server_info`` is true — lets a browser
+        client confirm the endpoint works before the first step event."""
+        from arnes.mcp.sse import playbook_event_stream
+        from arnes.playbooks.compiler import PlaybookCompiler
+
+        playbook = PlaybookCompiler.from_string(
+            """
+name: sse_server_info
+objective: Test server_info emission
+steps:
+  - id: s1
+    specialist: "@planner"
+    input: {task: "Plan"}
+"""
+        )
+        server = ArnesMCPServer()
+        gen = playbook_event_stream(executor, playbook, server=server)
+
+        first = await gen.__anext__()
+        assert first.startswith("event: server_info\n")
+        assert f'"server": "{server.SERVER_INFO["name"]}"' in first
+        assert f'"version": "{server.SERVER_INFO["version"]}"' in first
+        assert first.endswith("\n\n")
+
+        # Drain the rest so the asyncio task doesn't leak.
+        async for _ in gen:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_emits_step_events_and_run_result_for_happy_path(self, executor: Any) -> None:
+        """A 2-step run yields ``step_completed`` for each step, a
+        ``run_completed`` transition, and a final ``run_result`` frame
+        carrying the aggregate accounting."""
+        from arnes.mcp.sse import playbook_event_stream
+        from arnes.playbooks.compiler import PlaybookCompiler
+
+        playbook = PlaybookCompiler.from_string(
+            """
+name: sse_happy
+objective: Test happy path
+steps:
+  - id: s1
+    specialist: "@planner"
+    input: {task: "Plan"}
+  - id: s2
+    specialist: "@coder"
+    input: {spec: "Code"}
+"""
+        )
+        # Skip the server_info frame to keep the test focused on the
+        # step / run frames.
+        gen = playbook_event_stream(executor, playbook, emit_initial_server_info=False)
+
+        frames: list[str] = []
+        async for frame in gen:
+            frames.append(frame)
+
+        # Every frame ends with the SSE delimiter.
+        assert all(f.endswith("\n\n") for f in frames)
+
+        event_types = [f.split("\n", 1)[0].removeprefix("event: ") for f in frames]
+        # Two step_completed + one run_completed + one run_result = 4
+        assert event_types.count("step_completed") == 2, event_types
+        assert "run_completed" in event_types, event_types
+        assert event_types[-1] == "run_result", event_types
+
+        # The final run_result frame carries the aggregate accounting.
+        last = frames[-1]
+        assert last.startswith("event: run_result\n")
+        assert '"success": true' in last
+        assert '"steps_executed": 2' in last
+        assert '"steps_failed": 0' in last
+        # The thread_id is present (non-null) on a successful run.
+        assert '"thread_id":' in last and "null" not in last.split('"thread_id":')[1].split(",")[0]
+
+    @pytest.mark.asyncio
+    async def test_emits_run_failed_and_run_result_on_step_failure(self, executor: Any) -> None:
+        """A failing step yields ``run_failed`` + a final ``run_result``
+        frame with ``success: false`` — the client always sees the
+        failure transition and the final accounting."""
+        from arnes.mcp.sse import playbook_event_stream
+        from arnes.playbooks.compiler import PlaybookCompiler
+
+        playbook = PlaybookCompiler.from_string(
+            """
+name: sse_fail
+objective: Test failure
+steps:
+  - id: s1
+    specialist: "@nonexistent"
+    input: {task: "x"}
+"""
+        )
+        gen = playbook_event_stream(executor, playbook, emit_initial_server_info=False)
+
+        frames: list[str] = []
+        async for frame in gen:
+            frames.append(frame)
+
+        event_types = [f.split("\n", 1)[0].removeprefix("event: ") for f in frames]
+        assert "run_failed" in event_types, event_types
+        assert event_types[-1] == "run_result", event_types
+
+        last = frames[-1]
+        assert '"success": false' in last
+        # Error message is surfaced on the final result.
+        assert '"error":' in last
+
+    @pytest.mark.asyncio
+    async def test_skips_server_info_when_flag_false(self, executor: Any) -> None:
+        """``emit_initial_server_info=False`` suppresses the up-front
+        ``server_info`` frame — the first frame the client sees is a
+        real step event."""
+        from arnes.mcp.sse import playbook_event_stream
+        from arnes.playbooks.compiler import PlaybookCompiler
+
+        playbook = PlaybookCompiler.from_string(
+            """
+name: sse_no_info
+objective: Test no server_info
+steps:
+  - id: s1
+    specialist: "@planner"
+    input: {task: "Plan"}
+"""
+        )
+        server = ArnesMCPServer()
+        gen = playbook_event_stream(
+            executor,
+            playbook,
+            server=server,
+            emit_initial_server_info=False,
+        )
+
+        first = await gen.__anext__()
+        # Must NOT be a server_info event.
+        assert not first.startswith("event: server_info\n")
+        # Must be a real step event (step_started or step_completed).
+        assert first.startswith("event: step_") or first.startswith("event: run_")
+
+        async for _ in gen:
+            pass
+
+    def test_event_to_payload_carries_discriminator_fields(self) -> None:
+        """``_event_to_payload`` must surface ``event_type``, ``thread_id``,
+        ``step_id``, ``timestamp``, and ``data`` so a client can route
+        the event without parsing the ``data`` blob."""
+        from arnes.mcp.sse import _event_to_payload
+        from arnes.thread import Thread
+        from arnes.thread.events import StepStartedEvent
+
+        thread = Thread.create()
+        event = StepStartedEvent(
+            thread_id=thread.id,
+            step_id="my_step",
+            specialist="@planner",
+            data={"step_id": "my_step", "specialist": "@planner"},
+        )
+        payload = _event_to_payload(event)
+        assert payload["event_type"] == "step_started"
+        assert payload["step_id"] == "my_step"
+        assert payload["specialist"] == "@planner"
+        assert payload["thread_id"] == str(thread.id)
+        assert "timestamp" in payload
+        assert payload["data"] == {"step_id": "my_step", "specialist": "@planner"}
+
+    def test_run_result_to_payload_omits_internal_keys(self) -> None:
+        """``_run_result_to_payload`` must filter ``__``-prefixed outputs
+        (internal control-flow keys like ``__skip_steps_until``) so they
+        don't leak to the SSE client."""
+        from arnes.mcp.sse import _run_result_to_payload
+        from arnes.playbooks.result import PlaybookRunResult
+        from arnes.thread import Thread
+
+        thread = Thread.create()
+        result = PlaybookRunResult(
+            thread=thread,
+            success=True,
+            steps_executed=1,
+            outputs={
+                "visible_output": {"foo": "bar"},
+                "__skip_steps_until": {"next_step": True},
+            },
+        )
+        payload = _run_result_to_payload(result)
+        assert "visible_output" in payload["outputs"]
+        assert "__skip_steps_until" not in payload["outputs"]
+        assert payload["thread_id"] == str(thread.id)
+        assert payload["success"] is True
+        assert payload["steps_executed"] == 1

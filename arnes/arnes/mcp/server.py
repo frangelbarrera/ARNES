@@ -2,49 +2,91 @@
 
 When installed as an MCP server in Claude Desktop, Cursor, Cline, or Zed,
 ARNES exposes 4 tools:
+
 - arnes_run_playbook(path, input?) → run a playbook
 - arnes_list_specialists() → list available specialists
 - arnes_list_playbooks(dir?) → list playbooks in a directory
-- arnes_get_events(thread_id) → get event log for a thread
+- arnes_validate_playbook(path) → validate a playbook YAML
 
-R15 also exposes an SSE (Server-Sent Events) endpoint on the HTTP transport
-(``GET /events``) so browser-based live UX clients can subscribe to a stream
-of ``data: <json>\\n\\n`` formatted events. The endpoint is currently a stub
-that yields a heartbeat + a server-info event; v0.2 will wire it to the
-``PlaybookExecutor.stream`` event source so subscribers see step-level
-transitions in real time.
+R15 added an SSE (Server-Sent Events) endpoint on the HTTP transport
+(``GET /events``) — the ambient heartbeat channel. R16 added
+``POST /runs/stream`` — the per-run channel that wires
+:func:`arnes.mcp.sse.playbook_event_stream` to
+:meth:`arnes.playbooks.executor.PlaybookExecutor.stream` so subscribers
+see step-level transitions in real time.
 
-Usage in Claude Desktop config:
-{
-  "mcpServers": {
-    "arnes": {
-      "command": "arnes",
-      "args": ["mcp", "serve"]
+The HTTP transport (aiohttp app, route handlers, security helpers)
+lives in :mod:`arnes.mcp.http` — extracted in R16 to keep this
+module focused on the JSON-RPC dispatcher + path-validation guard.
+
+Usage in Claude Desktop config::
+
+    {
+      "mcpServers": {
+        "arnes": {
+          "command": "arnes",
+          "args": ["mcp", "serve"]
+        }
+      }
     }
-  }
-}
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
-import time
-from collections.abc import Awaitable, Callable
+import sys
 from pathlib import Path
 from typing import Any, ClassVar
 
 import structlog
 
 from arnes.llm.factory import get_provider
-from arnes.mcp.sse import sse_event_stream
 from arnes.middleware.cost_guard import CostBudget
 from arnes.playbooks.compiler import PlaybookCompileError, PlaybookCompiler
 from arnes.playbooks.executor import PlaybookExecutor
 from arnes.specialists.base import get_default_specialist_registry
 
 logger = structlog.get_logger(__name__)
+
+
+# ============================================================
+# Backwards-compat re-exports (R16 split)
+# ============================================================
+# The HTTP transport was extracted to :mod:`arnes.mcp.http` in R16
+# to keep this module under the AGENTS.md 500-line rule. The
+# security helpers (``_RateLimiter``, ``_constant_time_eq``,
+# ``_MAX_REQUEST_BYTES``, ``_RATE_LIMIT_RPM``) and ``serve_http``
+# live there now. They are re-exported here so existing imports of
+# the shape ``from arnes.mcp.server import _constant_time_eq``
+# (used by tests) keep working — the canonical home is
+# :mod:`arnes.mcp.http`.
+
+from arnes.mcp.http import (  # noqa: E402 - intentional re-export after logger setup
+    _MAX_REQUEST_BYTES,
+    _RATE_LIMIT_RPM,
+    _constant_time_eq,
+    _rate_limiter,
+    _RateLimiter,
+    serve_http,
+)
+
+# ``__all__`` declares the re-exports explicitly so type-checkers and
+# linters treat the imported names as the public surface of this
+# module (otherwise ruff F401 would flag them as unused imports).
+__all__ = [
+    "_BLOCKED_PATH_PREFIXES",
+    "_MAX_REQUEST_BYTES",
+    "_RATE_LIMIT_RPM",
+    "ArnesMCPServer",
+    "_RateLimiter",
+    "_attach_serve_methods",
+    "_constant_time_eq",
+    "_rate_limiter",
+    "_validate_playbook_path",
+    "serve_http",
+    "serve_stdio",
+]
 
 # ============================================================
 # Path traversal protection
@@ -136,8 +178,11 @@ class ArnesMCPServer:
         },
     ]
 
-    def __init__(self) -> None:
-        self._executor: PlaybookExecutor | None = None
+    # ``ArnesMCPServer`` is stateless across calls — no ``__init__``
+    # state is required. Executors are constructed per-request inside
+    # ``_run_playbook`` / ``handle_sse_run``. (R16 cleanup: removed
+    # the unused ``self._executor`` attribute that was set in
+    # ``__init__`` but never read — dead code from an earlier design.)
 
     async def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle a single JSON-RPC request."""
@@ -346,7 +391,6 @@ async def serve_stdio(server: ArnesMCPServer) -> None:
     Uses synchronous readline in a thread executor to avoid Windows asyncio
     pipe compatibility issues.
     """
-    import sys
 
     while True:
         try:
@@ -369,197 +413,9 @@ async def serve_stdio(server: ArnesMCPServer) -> None:
             break
 
 
-async def serve_http(server: ArnesMCPServer, host: str = "127.0.0.1", port: int = 8765) -> None:
-    """Run the MCP server over HTTP (simple POST /endpoint).
-
-    This is a minimal HTTP server for testing. For production use the
-    official MCP SDK with proper SSE transport.
-
-    SECURITY:
-    - If env var ``ARNES_MCP_TOKEN`` is set, every request must carry
-      ``Authorization: Bearer <token>``. Constant-time comparison is used.
-    - If no token is configured, the server refuses to bind on anything
-      other than ``127.0.0.1`` / ``::1`` (loopback only) — binding to
-      ``0.0.0.0`` without auth would expose playbook execution to the
-      local network.
-    - Rate limited: at most ``_RATE_LIMIT_RPM`` requests per minute per
-      client IP (sliding window, in-memory).
-    - Request body size capped at ``_MAX_REQUEST_BYTES`` (1 MiB).
-    """
-    from aiohttp import web
-
-    token = os.environ.get("ARNES_MCP_TOKEN")
-    if not token:
-        # No token configured → enforce loopback-only binding.
-        if host not in ("127.0.0.1", "::1", "localhost"):
-            raise RuntimeError(
-                "ARNES_MCP_TOKEN is not set. Refusing to start HTTP server on "
-                f"non-loopback host '{host}'. Set ARNES_MCP_TOKEN or bind to "
-                "127.0.0.1 / ::1."
-            )
-
-    @web.middleware
-    async def auth_and_limits_middleware(
-        request: web.Request,
-        handler: Callable[[web.Request], Awaitable[web.Response]],
-    ) -> web.Response:
-        # --- 1. Bearer token authentication ---
-        if token:
-            auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer "):
-                return web.json_response(
-                    {"error": "Missing or malformed Authorization header"}, status=401
-                )
-            provided = auth_header[len("Bearer ") :]
-            # Constant-time comparison to avoid timing side channels.
-            if not _constant_time_eq(provided, token):
-                return web.json_response({"error": "Invalid token"}, status=401)
-
-        # --- 2. Request size limit ---
-        cl = request.headers.get("Content-Length")
-        if cl is not None:
-            try:
-                if int(cl) > _MAX_REQUEST_BYTES:
-                    return web.json_response({"error": "Request body too large"}, status=413)
-            except ValueError:
-                return web.json_response({"error": "Invalid Content-Length"}, status=400)
-
-        # --- 3. Rate limiting (per IP, sliding window) ---
-        client_ip = request.remote or "unknown"
-        if not _rate_limiter.allow(client_ip):
-            return web.json_response(
-                {"error": "Rate limit exceeded. Max 100 requests/minute."}, status=429
-            )
-
-        return await handler(request)
-
-    async def handle(request: web.Request) -> web.Response:
-        try:
-            # Cap the actual body read size too (Content-Length can lie / be absent).
-            raw = await request.content.read(_MAX_REQUEST_BYTES + 1)
-            if len(raw) > _MAX_REQUEST_BYTES:
-                return web.json_response({"error": "Request body too large"}, status=413)
-            try:
-                request_data = json.loads(raw)
-            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                return web.json_response({"error": f"Invalid JSON: {e}"}, status=400)
-            response = await server.handle_request(request_data)
-            return web.json_response(response)
-        except Exception:
-            # Avoid leaking internal details (paths, stack fragments) to a
-            # remote caller — log the full error, return a generic message.
-            logger.exception("mcp_http_request_failed")
-            return web.json_response({"error": "Internal server error"}, status=500)
-
-    async def handle_sse(request: web.Request) -> web.StreamResponse:
-        """SSE endpoint — ``GET /events`` (R15 stub for live UX).
-
-        Returns a ``text/event-stream`` response that streams
-        ``event: <name>\\ndata: <json>\\n\\n`` frames via
-        :func:`sse_event_stream`. The stub emits a single ``server_info``
-        event up-front, then idles on ``: ping`` heartbeats. v0.2 will
-        replace the heartbeat loop with a real subscription to
-        ``PlaybookExecutor.stream`` so subscribers see step transitions
-        in real time.
-
-        Auth + rate-limit rules from the middleware still apply (the
-        middleware runs on every route registered on ``app``, including
-        this GET). The body-size cap is irrelevant for a GET (no body).
-        """
-        resp = web.StreamResponse(
-            status=200,
-            headers={
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                # ``X-Accel-Buffering: no`` disables proxy buffering on
-                # nginx — without it, the proxy holds the stream open
-                # and the browser never receives the events until the
-                # buffer fills or the connection closes.
-                "X-Accel-Buffering": "no",
-                # Opt out of HTTP/2 connection coalescing so each
-                # browser tab gets its own stream — without this, a
-                # second ``EventSource`` on the same origin may
-                # silently share the first tab's stream.
-                "Connection": "keep-alive",
-            },
-        )
-        await resp.prepare(request)
-
-        # Drive ``sse_event_stream`` and forward each frame to the client.
-        # If the client disconnects, ``resp.write`` raises
-        # ``ConnectionResetError`` — we let the exception bubble out of
-        # the ``async for`` so aiohttp tears down the response cleanly.
-        try:
-            async for frame in sse_event_stream(server):
-                await resp.write(frame.encode("utf-8"))
-        except (ConnectionResetError, asyncio.CancelledError):
-            # Client disconnected — exit cleanly.
-            pass
-        return resp
-
-    app = web.Application(
-        middlewares=[auth_and_limits_middleware]  # type: ignore[list-item]
-    )
-    app.router.add_post("/", handle)
-    app.router.add_post("/mcp", handle)
-    # R15: SSE live-UX endpoint (stub — see ``sse_event_stream`` docstring).
-    app.router.add_get("/events", handle_sse)
-    app.router.add_get("/sse", handle_sse)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host, port)
-    await site.start()
-
-    # Run forever
-    await asyncio.Event().wait()
-
-
 # ============================================================
-# HTTP transport security helpers
+# Serve-method attachment (R16: serve_http lives in arnes.mcp.http)
 # ============================================================
-
-_MAX_REQUEST_BYTES = 1024 * 1024  # 1 MiB body cap
-_RATE_LIMIT_RPM = 100  # max requests per minute per IP
-
-
-class _RateLimiter:
-    """Sliding-window per-IP rate limiter (in-memory, single-process).
-
-    Adequate for the simple HTTP transport shipped here. For multi-worker
-    deployments, swap this for a Redis-backed limiter.
-    """
-
-    def __init__(self, max_requests: int, window_s: float) -> None:
-        self._max = max_requests
-        self._window = window_s
-        self._hits: dict[str, list[float]] = {}
-
-    def allow(self, ip: str) -> bool:
-        now = time.monotonic()
-        bucket = self._hits.get(ip, [])
-        # Drop entries outside the window.
-        cutoff = now - self._window
-        bucket = [t for t in bucket if t >= cutoff]
-        if len(bucket) >= self._max:
-            self._hits[ip] = bucket
-            return False
-        bucket.append(now)
-        self._hits[ip] = bucket
-        return True
-
-
-_rate_limiter = _RateLimiter(max_requests=_RATE_LIMIT_RPM, window_s=60.0)
-
-
-def _constant_time_eq(a: str, b: str) -> bool:
-    """Constant-time string comparison to prevent timing attacks on the token.
-
-    Falls back to ``hmac.compare_digest`` when available.
-    """
-    import hmac
-
-    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
 # Add ``serve_stdio`` / ``serve_http`` as methods on ArnesMCPServer.
@@ -570,6 +426,7 @@ def _constant_time_eq(a: str, b: str) -> bool:
 # declared in the class body — this is a standard Python pattern for adding
 # methods after class definition (e.g. for backwards-compat aliases).
 def _attach_serve_methods() -> None:
+
     def serve_stdio_self(self: ArnesMCPServer) -> Any:
         return serve_stdio(self)
 

@@ -2,6 +2,36 @@
 
 > *The harness, not the horse.*
 
+## Problem statement
+
+The agent layer of 2024–2026 is being shipped without reins. Teams
+build with LLMs that hallucinate, vendors that lock-in, frameworks
+that hide the prompt, and budgets that nobody enforces. The four
+symptoms repeat across every team we have talked to:
+
+1. **Opacity.** You cannot read the prompt the framework sent. You
+   cannot diff the model-router decision. You cannot print the state
+   object. When a run goes wrong, you reverse-engineer it from logs
+   that were never designed for replay.
+2. **Vendor capture.** Vendor-only features (OpenAI function-calling
+   shapes, Anthropic prompt-caching, Google grounding) get promoted
+   to first-class APIs. Switching providers means rewriting agent
+   code, not swapping a string.
+3. **Spend denial-of-service.** Without real budget enforcement an
+   agent can burn $50 in 90 seconds in a retry loop. `max_tokens` is
+   a per-call cap, not a budget. By the time the bill arrives, the
+   run is long over.
+4. **Audit amnesia.** Compliance, security review, and academic
+   reproducibility all demand a transcript: what was asked, what was
+   returned, what tools were called, what it cost. Most frameworks
+   treat this as a logging afterthought rather than a primary artifact.
+
+The cost of these symptoms is real: production incidents that can't
+be reconstructed, research results that can't be peer-reviewed, and
+credit-card bills that can't be explained. ARNES exists to make the
+agent loop as inspectable as a Unix pipeline — because inspectable
+agents are the only ones worth shipping.
+
 Today's agent frameworks ask three things of you: abstract your logic behind
 opaque classes, depend on a single LLM vendor, and trace through magic
 functions you can't debug. In return they offer "productivity." What they
@@ -15,12 +45,37 @@ you orchestrate AI agents without surrendering the reins. Designed so you can
 read every call, switch providers in one line, and reason about your system
 the way you reason about any procedural code.
 
-We believe the agent era will be written by developers who refuse to cede
-control. Who choose verbs over magic. Who prefer 50 lines they understand
-over 5 lines they don't.
+## Constructive vision — the world ARNES builds
+
+A reactive manifesto names what is wrong; a constructive one names what
+should exist. ARNES is for the world where:
+
+- **Every agent run leaves a paper trail.** A bitácora that compliance
+  can audit, security can review, and a researcher can cite. The
+  transcript is the unit of trust — not the framework's promise.
+- **Budgets fail closed by default.** No agent ships to production
+  without a hard USD ceiling, a temporal circuit breaker, and a
+  pre-flight projection that refuses to spend money it cannot afford.
+  Denial-of-wallet is a real attack class; treating it as optional is
+  malpractice.
+- **Vendors are interchangeable.** A provider is a string. Switching
+  from OpenAI to Anthropic to a self-hosted Ollama is a one-line
+  change, not a rewrite. Vendor-only features stay opt-in and
+  second-class.
+- **Local-first is the default.** A 14-year-old in Bogotá with a
+  hand-me-down laptop and `ollama pull llama3.2` should be able to
+  build and ship agents without an API key or a credit card. The
+  Global South is not a market segment; it is half the world's
+  developers.
+- **Reproducibility is a primitive, not a goal.** The stateless
+  reducer `(state, event) → state` means any run can be replayed
+  from its event log. HITL resume, episodic memory, and academic
+  peer-review all build on the same primitive.
 
 ARNES was born south of the equator, where doing more with less is not
-aesthetic — it is survival.
+aesthetic — it is survival. The constructive vision is not "catch up
+to Silicon Valley." It is "build the tool the next generation of
+developers worldwide deserves, and give it away."
 
 ---
 
@@ -62,4 +117,5 @@ aesthetic — it is survival.
 
 ---
 
-*Manifesto v1.0 — Fixed on the first commit. Immutable.*
+*Manifesto v1.1 — Problem Statement + Constructive Vision added in R16.
+The ten declarations are unchanged from v1.0 (fixed on the first commit, immutable).*
