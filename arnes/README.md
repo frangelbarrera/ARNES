@@ -39,37 +39,6 @@
 
 > **If your framework needs a debugger for your debugger, it is the wrong framework.**
 
-## Why ARNES?
-
-Agent frameworks in 2024-2026 share three defects that ARNES fixes:
-
-1. **They are black boxes.** You can't read the prompt sent to the LLM. You can't
-   see what decision the model router made. You can't diff your agent stack.
-   **ARNES fixes this:** every prompt is a file on disk, every decision is in
-   the bitácora, every run is replayable.
-
-2. **They have vendor lock-in.** If a feature only exists in OpenAI or only in
-   Anthropic, they expose it as a first-class API. Your code gets tied to that
-   vendor.
-   **ARNES fixes this:** vendor-neutral by design. Default model is local
-   (Ollama, $0). Switching providers is one line. No vendor-only features.
-
-3. **They don't respect your money.** Without real budget enforcement, an agent
-   can burn $50 in 90 seconds without you knowing until the bill arrives.
-   **ARNES fixes this:** hierarchical CostGuard with circuit breaker, pre-flight
-   cost estimation, HITL pause at 95%, hard stop at 100%.
-
-## Who is ARNES for?
-
-- **Platform engineers** who want agent workflows in git, reviewable in PRs
-- **DevOps teams** who need cost predictability and audit trails
-- **Researchers** who need reproducible experiments and citation-ready software
-- **Indie developers** who want local-first AI without API bills
-- **Regulated industries** (banking, health, gov) that require full audit trails
-
-ARNES is NOT for you if you want a visual drag-and-drop builder, 500+ pre-built
-integrations, or a hosted SaaS. ARNES is code-first, local-first, and control-first.
-
 ## What it looks like
 
 ```bash
