@@ -56,7 +56,8 @@ For researchers using ARNES:
   to record and replay responses.
 
 - **Citation**: If you use ARNES in academic work, cite it using the
-  [CITATION.cff](../CITATION.cff) file.
+  [CITATION.cff](https://github.com/frangelbarrera/ARNES/blob/main/CITATION.cff)
+  file.
 
 - **Data integrity**: The immutable Thread event log provides a complete audit
   trail. Every run can be replayed from the event log.
