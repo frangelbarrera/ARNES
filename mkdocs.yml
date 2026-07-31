@@ -1,9 +1,9 @@
-# MkDocs configuration for ARNES — R15 scaffold.
+# MkDocs configuration for ARNES.
 #
 # Run `mkdocs serve` from the repo root to preview the site locally.
 # Run `mkdocs build` to produce a static site under `site/`.
 #
-# The docs structure is intentionally minimal in R15: the README is the
+# The docs structure is intentionally minimal: the README is the
 # primary docs source (rendered as the index), and the manual stubs
 # under docs/*.md exist to (a) document the navigation skeleton, (b)
 # give the docs site a real shape so MkDocs Material renders more than

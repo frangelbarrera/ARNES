@@ -1,21 +1,18 @@
 """ARNES MCP server — SSE (Server-Sent Events) live-UX module.
 
-Extracted from :mod:`arnes.mcp.server` in R15 to keep ``server.py`` under
-the AGENTS.md 500-line rule. This module owns:
+This module owns the SSE surface for the MCP HTTP transport:
 
 - The SSE wire-format helper (:func:`format_sse_event`).
 - The ambient heartbeat generator (:func:`sse_event_stream`) —
-  R15 stub behaviour, used by ``GET /events`` and ``GET /sse``.
+  used by ``GET /events`` and ``GET /sse``.
 - The playbook-streaming generator (:func:`playbook_event_stream`)
-  — R16 wiring that drives ``POST /runs/stream`` by forwarding each
-  event from :meth:`arnes.playbooks.executor.PlaybookExecutor.stream`
-  as an SSE frame.
+  that drives ``POST /runs/stream`` by forwarding each event from
+  :meth:`arnes.playbooks.executor.PlaybookExecutor.stream` as an SSE
+  frame.
 
-R16 closed the top Competitive issue ("SSE endpoint is a stub, not
-wired to ``PlaybookExecutor.stream``"). The ``GET /events`` route
-keeps its heartbeat-only behaviour (for ambient subscription
-patterns that want a keep-alive channel); the new ``POST /runs/stream``
-route is what actually streams step-level transitions.
+The ``GET /events`` route keeps its heartbeat-only behaviour (for
+ambient subscription patterns that want a keep-alive channel); the
+``POST /runs/stream`` route streams step-level transitions.
 
 Wire format (stable across v0.2)::
 
@@ -118,8 +115,7 @@ async def sse_event_stream(
 ) -> AsyncIterator[str]:
     """Yield SSE-formatted frames for an HTTP ``GET /events`` subscriber.
 
-    Ambient-channel behaviour (R15 stub, preserved for backwards
-    compatibility):
+    Ambient-channel behaviour (preserved for backwards compatibility):
 
     - Emits ``initial_event_count`` ``server_info`` events up-front so a
       browser-based client can confirm the endpoint works end-to-end.
@@ -128,9 +124,9 @@ async def sse_event_stream(
       are part of the SSE spec — they keep the connection alive through
       proxies without dispatching client-side event listeners.
 
-    R16 added :func:`playbook_event_stream` for the per-run channel —
-    use that for actually streaming step-level transitions to a client.
-    This generator is for ambient subscription patterns (presence,
+    Use :func:`playbook_event_stream` for the per-run channel — that is
+    what actually streams step-level transitions to a client. This
+    generator is for ambient subscription patterns (presence,
     keep-alive, server-info discovery) only.
 
     The generator is cancellable: closing the HTTP response (client
@@ -166,7 +162,7 @@ async def playbook_event_stream(
     server: ArnesMCPServer | None = None,
     emit_initial_server_info: bool = True,
 ) -> AsyncIterator[str]:
-    """Stream a playbook run as SSE frames (R16 wiring).
+    """Stream a playbook run as SSE frames.
 
     Wraps :meth:`arnes.playbooks.executor.PlaybookExecutor.stream` and
     converts each yielded item into an SSE frame:

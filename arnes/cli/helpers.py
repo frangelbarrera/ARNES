@@ -1,14 +1,14 @@
 """ARNES CLI helpers — async runners + mock LLM provider.
 
-Extracted from ``cli/main.py`` in R15 to keep the click command definitions
-in ``main.py`` slim (under the AGENTS.md 500-line rule). This module owns:
+This module owns the support code for the click command definitions in
+``main.py`` (keeping ``main.py`` slim):
 
 - :class:`_SchemaValidMockLLMProvider` — the mock LLM used by
   ``arnes run --mock`` / ``arnes eval`` / ``arnes stream --mock``.
 - :func:`_run_playbook` / :func:`_run_playbook_streaming` — execute a
   playbook (buffered or streaming) and render the result.
 - :func:`_stream_specialist` — token-by-token specialist streaming via
-  :meth:`Harness.stream_with_audit`, with bitácora persistence.
+  :meth:`Harness.stream_with_audit`, with audit log persistence.
 - :func:`_run_benchmark` — run the basic benchmark suite and print/save
   results.
 - :func:`_serve_mcp` — start the MCP server (stdio or http transport).
@@ -174,7 +174,7 @@ async def _run_playbook(
     When ``stream=True``, uses :meth:`PlaybookExecutor.stream` to yield
     step-level events as each step completes (instead of buffering the
     whole run behind a spinner). The final ``PlaybookRunResult`` is
-    captured from the last yield for stats + bitácora persistence.
+    captured from the last yield for stats + audit-log persistence.
     """
     # Compile
     try:
@@ -231,15 +231,15 @@ async def _run_playbook(
     console.print(f"[dim]Tokens in/out:[/dim] {result.total_tokens_in}/{result.total_tokens_out}")
     console.print(f"[dim]Total cost:[/dim] ${result.total_cost_usd:.4f}")
 
-    # Save bitácora
+    # Save run log
     if output:
         Path(output).write_text(result.to_markdown(), encoding="utf-8")
-        console.print(f"\n[cyan]Bitácora saved to:[/cyan] {output}")
+        console.print(f"\n[cyan]Run log saved to:[/cyan] {output}")
     else:
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        default_path = f"bitacora-{playbook.metadata.name}-{ts}.md"
+        default_path = f"arnes-run-{playbook.metadata.name}-{ts}.md"
         Path(default_path).write_text(result.to_markdown(), encoding="utf-8")
-        console.print(f"\n[cyan]Bitácora saved to:[/cyan] {default_path}")
+        console.print(f"\n[cyan]Run log saved to:[/cyan] {default_path}")
 
 
 async def _run_playbook_streaming(
@@ -294,15 +294,13 @@ async def _run_playbook_streaming(
 
 
 async def _stream_specialist(specialist: str, task: str, model: str, mock: bool) -> None:
-    """Stream a specialist's response token-by-token and save a bitácora.
+    """Stream a specialist's response token-by-token and save a run log.
 
     Uses :meth:`Harness.stream_with_audit` so the audit trail is recorded in
     a real ``Thread`` (mutated in place as the stream is consumed) and the
-    bitácora is rendered via :meth:`Thread.to_markdown`. This keeps the
+    run log is rendered via :meth:`Thread.to_markdown`. This keeps the
     streaming CLI output consistent with the markdown produced by
-    ``arnes run`` / ``PlaybookRunResult.to_markdown`` — previously the
-    streaming path emitted a bespoke markdown format that diverged from
-    the rest of the bitácora system.
+    ``arnes run`` / ``PlaybookRunResult.to_markdown``.
     """
     from arnes import Harness, HarnessConfig
 
@@ -334,7 +332,7 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     # mutated in place as the chunks are consumed. After the stream ends,
     # the thread carries a single AssistantMessageEvent with the full
     # accumulated content + final usage — exactly what the rest of the
-    # bitácora system records for non-streaming runs.
+    # audit-log system records for non-streaming runs.
     chunks_iter, thread = harness.stream_with_audit(specialist, {"task": task})
 
     total_in = 0
@@ -358,13 +356,13 @@ async def _stream_specialist(specialist: str, task: str, model: str, mock: bool)
     console.print("[dim]---[/dim]")
     console.print(f"[dim]Tokens: {total_in} in, {total_out} out. Cost: ${total_cost:.4f}[/dim]")
 
-    # Save bitácora — same format as ``arnes run`` (Thread.to_markdown)
+    # Save run log — same format as ``arnes run`` (Thread.to_markdown)
     # so streaming runs can be diffed against non-streaming runs.
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    bitacora_path = f"bitacora-stream-{specialist.lstrip('@')}-{ts}.md"
+    run_log_path = f"arnes-stream-{specialist.lstrip('@')}-{ts}.md"
 
-    Path(bitacora_path).write_text(thread.to_markdown(), encoding="utf-8")
-    console.print(f"\n[cyan]Bitácora saved to:[/cyan] {bitacora_path}")
+    Path(run_log_path).write_text(thread.to_markdown(), encoding="utf-8")
+    console.print(f"\n[cyan]Run log saved to:[/cyan] {run_log_path}")
 
 
 # ============================================================

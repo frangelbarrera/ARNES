@@ -7,130 +7,130 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added in Round 16
-- **`POST /runs/stream` SSE endpoint** — wires `PlaybookExecutor.stream()` to the MCP HTTP transport via the new `playbook_event_stream()` helper in `arnes/mcp/sse.py`. Subscribers receive a finite stream of `event: <type>\ndata: <json>\n\n` frames: one `server_info` event up-front, one frame per Thread event (`step_started`, `step_completed`, `run_completed` / `run_failed`, `cost_threshold`, `assistant_message`, …), and a final `run_result` frame carrying the aggregate accounting. Closes the R7→R15 top Competitive issue ("SSE stub not connected to actual streaming"). The `GET /events` heartbeat-only channel is preserved as the ambient subscription channel.
-- **`docs/ethics.md`** — normative ethics doc covering transparency (manifesto declaration #6 made operational via the bitácora), user control (budgets fail closed, HITL as a typed tool, vendor is a string, local-first default), and responsible AI use (shipped guard-rails, deliberately-disabled use cases, operator-responsible use cases). Versioned `ethics-v1.0`.
+### Added
+- **`POST /runs/stream` SSE endpoint** — wires `PlaybookExecutor.stream()` to the MCP HTTP transport via the new `playbook_event_stream()` helper in `arnes/mcp/sse.py`. Subscribers receive a finite stream of `event: <type>\ndata: <json>\n\n` frames: one `server_info` event up-front, one frame per Thread event (`step_started`, `step_completed`, `run_completed` / `run_failed`, `cost_threshold`, `assistant_message`, …), and a final `run_result` frame carrying the aggregate accounting. Closes the top Competitive issue ("SSE stub not connected to actual streaming"). The `GET /events` heartbeat-only channel is preserved as the ambient subscription channel.
+- **`docs/ethics.md`** — normative ethics doc covering transparency (manifesto declaration #6 made operational via the audit log), user control (budgets fail closed, HITL as a typed tool, vendor is a string, local-first default), and responsible AI use (shipped guard-rails, deliberately-disabled use cases, operator-responsible use cases). Versioned `ethics-v1.0`.
 - **`docs/comparison.md`** — full feature matrix vs LangChain / CrewAI / OpenAI Agents SDK, with honest call-outs where the comparison could be read as unfair to a competitor. Includes a "decision guide" section for picking between the four.
 - **`docs/benchmarks.md`** — HumanEval-style stub documentation. Ships `arnes/benchmarks/humaneval_stub.py` with 3 hand-authored problems + `check()` + `pass_at_k()` helpers. Explains how to wire a real standard-suite adapter (HumanEval / MBPP / SWE-bench / GAIA).
 - **`docs/statistics.md`** — statistical-significance testing methodology. Bootstrap CIs, Mann-Whitney U / Welch's t-test / Fisher's exact test selection, effect-size reporting, Benjamini-Hochberg correction, power analysis. Documents the `arnes benchmark --stats` v0.2 plan.
-- **`MANIFESTO.md` Problem Statement + Constructive Vision** — the reactive manifesto gained a Problem Statement section (4 symptoms: opacity, vendor capture, spend DoS, audit amnesia) and a Constructive Vision section (5 declarations: paper trail, budgets fail closed, vendors interchangeable, local-first default, reproducibility as primitive). Manifesto version bumped to v1.1 (the 10 declarations are unchanged — immutable).
-- **README sections**: "Why ARNES?" (real-world problem), "Who is ARNES for?" (5 target users + 3 not-for-yet), "Reproducibility" (what is / isn't reproducible, citation guidance), "Benchmark results (R15 reference run)" (10 playbooks × 2 seeds × 2 concurrent = 20 runs, all 100% success, $0 cost).
-- **`arnes/mcp/http.py`** — HTTP transport extracted from `mcp/server.py`. Owns `serve_http`, `_RateLimiter`, `_constant_time_eq`, route handlers (`handle`, `handle_sse`, `handle_sse_run`), and the security constants (`_MAX_REQUEST_BYTES`, `_RATE_LIMIT_RPM`).
-- **`arnes/tools/_security.py`** — security helpers extracted from `tools/builtin.py`. Owns `_is_dangerous_command`, `_looks_like_secret`, `_validate_path`, `_check_ssrf_async`, `_build_ip_pinned_url`, `_is_blocked_ip`, and the constants `_DANGEROUS_PATTERNS` / `_BLOCKED_HOSTS` / `_BLOCKED_IPS`.
-- **`arnes/middleware/budget.py`** — `BudgetExceeded` exception + `CostBudget` model extracted from `middleware/cost_guard.py`. Keeps `cost_guard.py` focused on the `CostGuard` middleware (the LLMProvider wrapper).
+- **`MANIFESTO.md` Problem Statement + Constructive Vision** — the reactive manifesto gained a Problem Statement section (4 symptoms: opacity, vendor capture, spend DoS, audit amnesia) and a Constructive Vision section (5 declarations: paper trail, budgets fail closed, vendors interchangeable, local-first default, reproducibility as primitive).
+- **README sections**: "Why ARNES?" (real-world problem), "Who is ARNES for?" (5 target users + 3 not-for-yet), "Reproducibility" (what is / isn't reproducible, citation guidance), "Benchmark results (sample run)" (10 playbooks × 2 seeds × 2 concurrent = 20 runs, all 100% success, $0 cost).
+- **`arnes/mcp/http.py`** — HTTP transport for `mcp/server.py`. Owns `serve_http`, `_RateLimiter`, `_constant_time_eq`, route handlers (`handle`, `handle_sse`, `handle_sse_run`), and the security constants (`_MAX_REQUEST_BYTES`, `_RATE_LIMIT_RPM`).
+- **`arnes/tools/_security.py`** — security helpers for `tools/builtin.py`. Owns `_is_dangerous_command`, `_looks_like_secret`, `_validate_path`, `_check_ssrf_async`, `_build_ip_pinned_url`, `_is_blocked_ip`, and the constants `_DANGEROUS_PATTERNS` / `_BLOCKED_HOSTS` / `_BLOCKED_IPS`.
+- **`arnes/middleware/budget.py`** — `BudgetExceeded` exception + `CostBudget` model for `middleware/cost_guard.py`. Keeps `cost_guard.py` focused on the `CostGuard` middleware (the LLMProvider wrapper).
 - **HumanEval-style stub module** `arnes/benchmarks/humaneval_stub.py` — 3 hand-authored HumanEval-style problems (`sort_numbers`, `fibonacci`, `is_even`) + `check(problem, completion)` helper + `pass_at_k(results, k)` metric. Reference implementation of the standard-suite adapter pattern documented in `docs/benchmarks.md`.
 - 22 new tests (398 → 420): 6 SSE playbook-event-stream tests (server_info emission, happy-path step events, failure handling, server_info suppression, payload converters), 16 HumanEval-stub tests (problem shape, check accepts/rejects, pass@k math).
 
-### Changed in Round 16
+### Changed
 - `arnes/mcp/server.py`: 716 → 447 lines. HTTP transport + security helpers extracted to `arnes/mcp/http.py`. The `ArnesMCPServer.__init__` no longer sets the unused `self._executor` attribute (dead code from an earlier design).
 - `arnes/mcp/sse.py`: 112 → 242 lines. New `playbook_event_stream()` function wraps `PlaybookExecutor.stream()` and converts each event to an SSE frame. New `_event_to_payload()` and `_run_result_to_payload()` helpers keep the wire payload small.
 - `arnes/tools/builtin.py`: 668 → 460 lines. All security helpers (`_is_dangerous_command`, `_looks_like_secret`, `_validate_path`, `_check_ssrf_async`, `_build_ip_pinned_url`, `_is_blocked_ip`) extracted to `arnes/tools/_security.py`. Re-exported here for backwards compatibility.
 - `arnes/middleware/cost_guard.py`: 611 → 580 lines. `BudgetExceeded` + `CostBudget` extracted to `arnes/middleware/budget.py`. Re-exported here for backwards compatibility.
-- `MANIFESTO.md`: gained a Problem Statement section + a Constructive Vision section. The 10 declarations are unchanged (immutable). Version bumped v1.0 → v1.1.
+- `MANIFESTO.md`: gained a Problem Statement section + a Constructive Vision section. The 10 declarations are unchanged (immutable).
 - `README.md`: 596 → ~720 lines. New "Why ARNES?", "Who is ARNES for?", "Reproducibility", and "Benchmark results" sections.
 - `mkdocs.yml`: nav extended from 8 → 12 pages (added Standard Suites, Statistics, Comparison, Ethics).
 
-### Added in Round 15
-- **Streaming now participates in the ReAct tool-use loop** (`Specialist.stream()`): closes the R11→R14 top-AI-issue gap. Each streaming iteration emits an `AssistantMessageEvent`; if the provider streams `tool_calls`, the specialist executes the tools, appends assistant + tool messages, and starts another streaming iteration. Yields a final zero-usage sentinel on `max_iterations` exhaustion or `BudgetExceeded` so callers don't hang.
-- **SSE (Server-Sent Events) endpoint stub on the MCP HTTP transport**: `GET /events` and `GET /sse` yield `event: <name>\ndata: <json>\n\n` frames via the new `arnes/mcp/sse.py` module. R15 stub emits a single `server_info` event up-front, then idles on `: ping` heartbeats (15 s interval). v0.2 will replace the heartbeat loop with a real subscription to `PlaybookExecutor.stream` so subscribers see step transitions in real time. The wire format is stable across that upgrade.
-- **`arnes/cli/helpers.py` + `arnes/cli/scaffolding.py` + `arnes/mcp/sse.py`**: extracted from `arnes/cli/main.py` (774 → 293 lines) and `arnes/mcp/server.py` to keep both files under the AGENTS.md 500-line rule. `helpers.py` owns the async runners + the schema-valid mock LLM provider; `scaffolding.py` owns the `arnes init` template helpers; `sse.py` owns the SSE wire-format helpers + the async generator.
+### Added
+- **Streaming now participates in the ReAct tool-use loop** (`Specialist.stream()`): closes the top-AI-issue gap. Each streaming iteration emits an `AssistantMessageEvent`; if the provider streams `tool_calls`, the specialist executes the tools, appends assistant + tool messages, and starts another streaming iteration. Yields a final zero-usage sentinel on `max_iterations` exhaustion or `BudgetExceeded` so callers don't hang.
+- **SSE (Server-Sent Events) endpoint stub on the MCP HTTP transport**: `GET /events` and `GET /sse` yield `event: <name>\ndata: <json>\n\n` frames via the new `arnes/mcp/sse.py` module. The stub emits a single `server_info` event up-front, then idles on `: ping` heartbeats (15 s interval). v0.2 will replace the heartbeat loop with a real subscription to `PlaybookExecutor.stream` so subscribers see step transitions in real time. The wire format is stable across that upgrade.
+- **`arnes/cli/helpers.py` + `arnes/cli/scaffolding.py` + `arnes/mcp/sse.py`**: extracted from `arnes/cli/main.py` (774 → 293 lines) and `arnes/mcp/server.py`. `helpers.py` owns the async runners + the schema-valid mock LLM provider; `scaffolding.py` owns the `arnes init` template helpers; `sse.py` owns the SSE wire-format helpers + the async generator.
 - **2 new vcrpy cassettes** under `tests/snapshot/cassettes/`: `test_coder_basic.yaml` (62 in + 48 out tokens, validates against `CoderOutput`) and `test_reviewer_basic.yaml` (58 in + 36 out tokens, validates against `ReviewerOutput`). The full snapshot test suite now covers 3 of 5 specialists.
 - **MkDocs documentation site scaffold**: `mkdocs.yml` (MkDocs Material, dark/light palette, strict mode) + 7 stub docs pages under `docs/*.md` (`index.md`, `quickstart.md`, `architecture.md`, `specialists.md`, `playbooks.md`, `mcp-server.md`, `benchmarking.md`, `audits.md`). `mkdocs build --strict` passes cleanly.
 - 22 new tests (376 → 398): 6 SSE wire-format/stream tests, 1 streaming-with-ReAct-loop test, 1 streaming-no-tool-calls regression test (renamed), 16 specialist-cassette tests (8 for `@coder`, 8 for `@reviewer`).
 
-### Changed in Round 15
+### Changed
 - `arnes/specialists/base.py`: `Specialist.stream()` rewritten to participate in the ReAct loop (was bypassing tool execution). Each iteration: stream → emit audit event → if `tool_calls`, execute + iterate. File grew from 706 → 815 lines (still over the 500-line rule — the streaming-with-tools path is genuinely one cohesive class).
 - `arnes/mcp/server.py`: SSE wire-format helpers + the async generator extracted to `arnes/mcp/sse.py`. The HTTP transport now registers `GET /events` and `GET /sse` routes via `app.router.add_get(...)`. File shrunk from 668 → 590 lines.
 - `arnes/cli/main.py`: 774 → 293 lines. All async helpers + the mock LLM provider + scaffolding moved to `helpers.py` / `scaffolding.py`.
 - `arnes/llm/base.py`: `LLMProvider.stream_complete` contract documented to allow final chunks to carry non-empty `tool_calls` lists (vendors stream `delta.tool_calls` fragments that callers reassemble).
 - `.gitignore`: added `site/` (MkDocs build output).
 
-### Added in Round 13
+### Added
 - `arnes benchmark` CLI command now documented end-to-end in the README feature table and a dedicated "Benchmark" section. Targets +6.1 score gain to reach the 95/100 tier.
 - `CITATION.cff`: Zenodo DOI placeholder (`10.5281/zenodo.ARNES`) added so the citation record is ready for the Zenodo deposit the moment the software is published.
 - `tests/unit/test_builtin_tools.py`: new test module covering the previously-uncovered paths in `arnes/tools/builtin.py` (was 52% coverage) — ShellTool sandbox mode (mocked Docker), HttpTool with secret broker removed, FilesystemReadTool with various file sizes, FilesystemWriteTool append mode, HumanApprovalTool interactive mode, `_is_dangerous_command` full pattern matrix, `_validate_path` edge cases, and `_is_blocked_ip` IPv6 cases.
-- `arnes/cli/main.py` `_stream_specialist`: rewritten to use `Harness.stream_with_audit()` + `Thread.to_markdown()` for consistency with the rest of the bitácora system (was a bespoke markdown format that diverged from `PlaybookRunResult.to_markdown()`).
+- `arnes/cli/main.py` `_stream_specialist`: rewritten to use `Harness.stream_with_audit()` + `Thread.to_markdown()` for consistency with the rest of the audit-log system (was a bespoke markdown format that diverged from `PlaybookRunResult.to_markdown()`).
 
-### Changed in Round 13
-- `arnes/playbooks/executor.py`: removed the SPLIT-R12 backwards-compat delegating wrappers (`_drain_middleware_events`, `_resolve_input`, `_resolve_template`, `_resolve_expr`, `_TEMPLATE_RE` class attr). Internal call sites now use the canonical functions from `arnes.playbooks.events` / `arnes.playbooks.template` directly. Executor file went from 1015 → ~720 lines (under the 800-line target).
+### Changed
+- `arnes/playbooks/executor.py`: removed the backwards-compat delegating wrappers (`_drain_middleware_events`, `_resolve_input`, `_resolve_template`, `_resolve_expr`, `_TEMPLATE_RE` class attr). Internal call sites now use the canonical functions from `arnes.playbooks.events` / `arnes.playbooks.template` directly. Executor file went from 1015 → ~720 lines (under the 800-line target).
 - `arnes/playbooks/schema.py`: docstring example was already English (verified — no Spanish `nombre:` / `auditar-pr` payload remains). Documented as fixed to close the audit checklist item.
 - `tests/stress/test_template_resolution.py`: updated to call the standalone `_resolve_template` from `arnes.playbooks.template` directly instead of the executor method (which is now removed).
-- Old audit reports `docs/audits/JUDGE_*_R{1,2,3,4}.md` moved into `docs/audits/archive/` (38 files). The main `docs/audits/` folder now holds only R5+ audits + cross-cutting summaries (`AI_AUDIT.md`, `SECURITY_AUDIT.md`, `DX_AUDIT.md`, `ARCHITECTURE_AUDIT.md`, `COMPETITIVE_AUDIT.md`).
+- Old audit reports `docs/audits/JUDGE_*_R{1,2,3,4}.md` moved into `docs/audits/archive/` (38 files). The main `docs/audits/` folder now holds only recent audits + cross-cutting summaries (`AI_AUDIT.md`, `SECURITY_AUDIT.md`, `DX_AUDIT.md`, `ARCHITECTURE_AUDIT.md`, `COMPETITIVE_AUDIT.md`).
 
-### Added in Round 12
+### Added
 - `arnes/benchmarks/` package: `BenchmarkRunner` with multi-seed runs (`seeds=N`), concurrent execution (`concurrent=N`), and p95 duration reporting per playbook. Pluggable `BenchmarkSuite` protocol (`BasicBenchmarkSuite` ships by default, scanning `manuals/*.yaml`).
 - `arnes benchmark` CLI command: runs the basic suite against a deterministic seeded mock LLM (no network, $0 spend) and reports per-playbook success rate / avg + p95 duration / avg tokens / avg cost. Saves JSON results to `benchmark-results.json` (or `--output`).
 - `tests/test_benchmark.py`: full coverage for `BenchmarkRunner`, `BasicBenchmarkSuite`, and `BenchmarkResults` (per-playbook aggregation, p95 math, JSON round-trip).
 - `tests/snapshot/` package: vcrpy-style cassettes for LLM provider tests. First cassette: `test_planner_basic.yaml` (LiteLLM provider fixture). `tests/snapshot/test_litellm_cassette.py` replays the cassette through `LiteLLMProvider` and asserts the structured-output path is exercised without hitting the network.
-- `arnes/playbooks/` split for the >500-line rule: extracted `result.py` (`PlaybookRunResult`), `sandbox.py` (`_is_docker_available` + `DEFAULT_SANDBOX_CONTAINER`), `events.py` (`_drain_middleware_events` + `_filter_internal_keys`), and `template.py` (`_TEMPLATE_RE` + `_resolve_input` / `_resolve_template` / `_resolve_expr`). Each extracted module is independently testable and stays under 200 lines.
+- `arnes/playbooks/` split: extracted `result.py` (`PlaybookRunResult`), `sandbox.py` (`_is_docker_available` + `DEFAULT_SANDBOX_CONTAINER`), `events.py` (`_drain_middleware_events` + `_filter_internal_keys`), and `template.py` (`_TEMPLATE_RE` + `_resolve_input` / `_resolve_template` / `_resolve_expr`). Each extracted module is independently testable and stays under 200 lines.
 
-### Changed in Round 12
-- `arnes/specialists/base.py`: extracted the duplicated `_emit_assistant_message` pattern into a single private helper (`Specialist._emit_assistant_message`) shared by `run()` and `stream()`. The helper builds the `AssistantMessageEvent` with `ctx.thread_id` / `ctx.step_id` / `self.config.name` and appends to the wrapped provider's `_events` sink; the bitácora-draining pattern in the executor (`_drain_middleware_events`) is unchanged.
+### Changed
+- `arnes/specialists/base.py`: extracted the duplicated `_emit_assistant_message` pattern into a single private helper (`Specialist._emit_assistant_message`) shared by `run()` and `stream()`. The helper builds the `AssistantMessageEvent` with `ctx.thread_id` / `ctx.step_id` / `self.config.name` and appends to the wrapped provider's `_events` sink; the audit-log-draining pattern in the executor (`_drain_middleware_events`) is unchanged.
 
-### Added in Round 11
+### Added
 - `CITATION.cff`: full Citation File Format metadata for academic citations (title, authors, ORCID, version, license, repository, keywords, abstract, preferred-citation block). Closes the "scientific judge NO-GO" gap.
 - New logo at `docs/logo.svg` — centered, 120px, embedded at the top of `README.md` and the social card.
 - Audit reports consolidated under `docs/audits/` (root cleanup — no judge/marketing markdown files left at the repo root).
 
-### Changed in Round 11
+### Changed
 - Dead code cleanup: 10 unused items removed across `arnes/` (stale imports, unreachable branches, deprecated helpers).
 - DRY: extracted `build_middleware_stack()` helper to centralize the TokenOptimizer → VerificationLayer → CostGuard wrapping order (was duplicated in `Harness.run()`, `Harness.stream()`, and `Specialist._wrap_provider()`).
 
-### Added in Round 10
-- `arnes stream` CLI command now saves a bitácora markdown file alongside the streamed output, closing the same audit-trail gap that `Harness.stream_with_audit()` fixed at the SDK layer in R9.
+### Added
+- `arnes stream` CLI command now saves a run-log markdown file alongside the streamed output, closing the same audit-trail gap that `Harness.stream_with_audit()` fixed at the SDK layer.
 - CLI docstring on `arnes/cli/main.py` updated to enumerate every subcommand (`init`, `run`, `run --stream`, `stream`, `lint`, `eval`, `list specialists`, `list playbooks`, `mcp serve`).
 - README CLI feature list refreshed to match the actual `arnes` CLI surface (was stale — missing `stream` and `run --stream`).
 
-### Changed in Round 10
+### Changed
 - CLI docstring updated with all commands (was missing `stream` and `run --stream`).
 - README CLI feature list updated to match the actual CLI surface.
 
-### Fixed in Round 10
-- Double-call bug in `arnes stream`: the CLI invoked the specialist's `stream()` twice on the same input (once for the live token printout and once for the bitácora capture), doubling cost and interleaving two streams in the audit log. Fixed by capturing the streamed chunks into a single async iterator and replaying them for both the terminal and the bitácora writer.
+### Fixed
+- Double-call bug in `arnes stream`: the CLI invoked the specialist's `stream()` twice on the same input (once for the live token printout and once for the run-log capture), doubling cost and interleaving two streams in the audit log. Fixed by capturing the streamed chunks into a single async iterator and replaying them for both the terminal and the run-log writer.
 
-### Added in Round 9
+### Added
 - `Specialist.stream()` method: token-by-token streaming at the specialist layer. Mirrors `Harness.stream()` but operates directly on a `Specialist` instance, yielding `LLMResponse` chunks from `provider.stream_complete()`. After the stream completes, emits a single `AssistantMessageEvent` to the wrapped provider's `_events` sink (same audit pattern as `run()`).
 - `PlaybookExecutor.stream()` method: step-level streaming at the playbook layer. Yields `StepCompletedEvent` / `StepFailedEvent` as each step finishes (without waiting for the whole playbook), then `RunCompletedEvent` / `RunFailedEvent`, then a final `PlaybookRunResult` with the full thread + aggregate accounting. Documented as best-effort: parallel branches stream in completion order, not definition order.
-- `Harness.stream_with_audit()` method: returns `(chunks, thread)` tuple. The chunks are the token-by-token `AsyncIterator[LLMResponse]`; the thread is mutated in place as the stream is consumed, ending with a single `AssistantMessageEvent` carrying the full accumulated content + final usage. Closes the audit-trail gap: streaming no longer bypasses the bitácora.
+- `Harness.stream_with_audit()` method: returns `(chunks, thread)` tuple. The chunks are the token-by-token `AsyncIterator[LLMResponse]`; the thread is mutated in place as the stream is consumed, ending with a single `AssistantMessageEvent` carrying the full accumulated content + final usage. Closes the audit-trail gap: streaming no longer bypasses the audit log.
 - `Harness.stream()` now emits an `AssistantMessageEvent` to the wrapped provider's `_events` sink after the stream completes (one event per call, not per chunk — per-chunk events would balloon the audit log without forensic value).
-- `arnes run --stream` CLI flag: streams step-level events as they complete (best-effort: parallel branches stream in completion order). The final `PlaybookRunResult` is captured from the last yield for stats + bitácora persistence.
+- `arnes run --stream` CLI flag: streams step-level events as they complete (best-effort: parallel branches stream in completion order). The final `PlaybookRunResult` is captured from the last yield for stats + run-log persistence.
 - README: added `arnes run --stream` example to the quick-start section.
-- 16 new tests covering `Specialist.stream()`, `PlaybookExecutor.stream()`, `Harness.stream_with_audit()`, and the streaming bitácora emission (235 → 251 tests).
+- 16 new tests covering `Specialist.stream()`, `PlaybookExecutor.stream()`, `Harness.stream_with_audit()`, and the streaming audit-log emission (235 → 251 tests).
 
-### Added in Round 8
+### Added
 - `arnes stream` CLI command: stream a specialist's response token-by-token from the command line. Supports `--mock` and `--model` flags.
 - `tests/unit/test_harness_stream.py`: 5 dedicated tests for `Harness.stream()` (yields chunks, final chunk has usage, unknown specialist yields nothing, name normalization, middleware passthrough).
 - `examples/README.md`: entry for `05_streaming.py`.
 
-### Changed in Round 8
+### Changed
 - `arnes/cli/main.py`: explicit `provider: LLMProvider` annotation on `_SchemaValidMockLLMProvider` assignment (mypy --strict clean).
 
-### Added in Round 7
+### Added
 - `Harness.stream()` method: async generator that wraps the provider with the full middleware stack (TokenOptimizer → VerificationLayer → CostGuard) and yields `LLMResponse` chunks from `stream_complete()`. Same `(specialist, input_data)` signature as `run()`.
 - `examples/05_streaming.py`: demonstrates token-by-token streaming using `Harness.stream()` with a `StreamingMockProvider` that yields 10-char chunks + a final usage chunk.
 - README: "LLM streaming is implemented for all providers" (was stale "not yet implemented").
 
-### Changed in Round 7
+### Changed
 - `arnes/cli/main.py` mock docstring: updated to reflect that real streaming exists in `OllamaProvider` and `LiteLLMProvider` (was stale "Streaming coming in v0.2").
 
-### Added in Round 6
+### Added
 - REAL token-by-token streaming in `OllamaProvider.stream_complete()`: reads NDJSON from `/api/chat` with `stream: true` via `httpx.AsyncClient.stream`, yields per-token chunks, yields a final usage chunk on `done: true`, handles malformed lines, wraps `httpx.ConnectError` in `RuntimeError` with install instructions. 8 dedicated tests.
 - REAL token-by-token streaming in `LiteLLMProvider.stream_complete()`: iterates the `CustomStreamWrapper` from `litellm.acompletion(stream=True)`, extracts `delta.content` via a helper that handles both pydantic `Delta` instances and plain dicts, captures usage on chunks that carry it, yields a final usage chunk. 5 dedicated tests.
 - `CostGuard.stream_complete()`: pre-flight abort check + circuit-breaker check before stream starts, post-stream `spent_usd` update using the final chunk's `cost_usd`. 7 dedicated tests including pre-flight abort and post-abort raise.
 - `TokenOptimizer.stream_complete()`: thin passthrough (no cache population for streaming in v0.1).
 - 23 new streaming tests (207 → 230 tests). Coverage: 72.95% → 73.95%.
 
-### Changed in Round 6
+### Changed
 - `TokenOptimizer._cache`: `asyncio.Lock` for cache reads/writes (was unprotected — concurrent cache mutations could race). Lock is correctly scoped: provider call runs OUTSIDE the lock so slow LLM calls don't serialize concurrent requests for different keys.
-- `AGENTS.md`: "Thread: append-only event log (mutates in place for O(1) performance)" (was stale "immutable" — R5 false-fix-claim now actually applied).
+- `AGENTS.md`: "Thread: append-only event log (mutates in place for O(1) performance)" (was stale "immutable").
 
-### Added in Round 5
+### Added
 - `_filter_internal_keys()` helper: filters internal sentinel keys (`__skip_steps_until`, `__resolved_str__`, `__input__`, `_approved_fingerprints`) from `PlaybookRunResult.outputs` before returning to user. Applied at both the success path and the `BudgetExceeded` path.
 
-### Changed in Round 5
-- `Harness.run()`: separated `BudgetExceeded` from generic `Exception` in error handling. `BudgetExceeded` returns `{"success": False, "budget_exceeded": True, ...}`; generic `Exception` returns `{"success": False, "error_type": type(e).__name__, ...}`. Closes the R4 Dev top issue where budget errors and unexpected errors were indistinguishable.
+### Changed
+- `Harness.run()`: separated `BudgetExceeded` from generic `Exception` in error handling. `BudgetExceeded` returns `{"success": False, "budget_exceeded": True, ...}`; generic `Exception` returns `{"success": False, "error_type": type(e).__name__, ...}`. Closes the Dev top issue where budget errors and unexpected errors were indistinguishable.
 
-### Added in Round 4
+### Added
 - `LLMProvider.stream_complete()` abstract method for streaming responses (MockLLMProvider yields full response; Ollama and LiteLLM now support real token-by-token streaming).
 - `Dockerfile.sandbox` + `scripts/build-sandbox.sh` for Tier 1 Docker sandbox image.
 - CodeQL workflow (`.github/workflows/codeql.yml`) with `security-extended` query suite, weekly schedule.
@@ -144,7 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All 5 specialists now have `pydantic_model` for strong output validation.
 - True `asyncio.gather` parallelism in `_execute_parallel` (was sequential for-loop).
 
-### Changed in Round 4
+### Changed
 - `Thread.append()`: O(N²) → O(1) by mutating in place (8.8x speedup at 1000 events). Documented as append-only, not immutable.
 - Sandbox auto-detection: `PlaybookExecutor` now detects Docker via `shutil.which("docker")` and enables sandbox automatically.
 - CostGuard 95% pause: now emits `HumanApprovalRequestedEvent` and `RUN_PAUSED` in interactive mode (was a no-op).
@@ -163,10 +163,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `_clean_json_response()` helper strips markdown fences before JSON parsing.
 - `max_iterations` exceeded now returns clear error (was validating empty response).
 - `peek_cost()` implemented on LiteLLMProvider for pre-flight budget check.
-- README: removed stale claims, updated to match R4 reality, added real terminal output.
+- README: removed stale claims, updated to match reality, added real terminal output.
 - `setup-and-push.sh` and `PUBLISHING_GUIDE.md`: fixed stale Spanish paths.
 
-### Fixed in Round 4
+### Fixed
 - TokenOptimizer cache_key now includes `response_schema` (was cache poisoning across schemas).
 - `aiohttp` added to `mcp` optional dependencies (was ImportError at runtime).
 - Conditional branch executor: Spanish attrs (`branch.accion`, `branch.especialista`) → English (`action`, `specialist`).

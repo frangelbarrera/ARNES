@@ -216,7 +216,7 @@ class TestThread:
         thread = thread.extend(events)
         md = thread.to_markdown()
 
-        assert "Bitácora ARNES" in md
+        assert "Audit log ARNES" in md
         assert "user_message" in md
         assert "step_started" in md
         assert "s1" in md

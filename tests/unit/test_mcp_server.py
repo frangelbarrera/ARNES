@@ -1,6 +1,6 @@
 """Tests for arnes.mcp.server.
 
-Covers the JSON-RPC dispatcher, path-traversal guards, the 4 MCP tools,
+Covers the JSON-RPC dispatcher, path-traversal guards, the 6 MCP tools,
 and the HTTP-transport security helpers (``_RateLimiter``, bearer-token
 comparison). The HTTP server itself is not started — we test the request
 handler and the security primitives directly.
@@ -59,17 +59,19 @@ class TestJSONRPCDispatcher:
         assert "tools" in response["result"]["capabilities"]
 
     @pytest.mark.asyncio
-    async def test_tools_list_returns_four_tools(self) -> None:
+    async def test_tools_list_returns_six_tools(self) -> None:
         server = ArnesMCPServer()
         response = await server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         tools = response["result"]["tools"]
-        assert len(tools) == 4, f"Expected 4 tools, got {len(tools)}: {[t['name'] for t in tools]}"
+        assert len(tools) == 6, f"Expected 6 tools, got {len(tools)}: {[t['name'] for t in tools]}"
         names = {t["name"] for t in tools}
         assert names == {
             "arnes_run_playbook",
             "arnes_list_specialists",
+            "arnes_list_specialists_detailed",
             "arnes_list_playbooks",
             "arnes_validate_playbook",
+            "arnes_plan",
         }
         # Every tool must declare an inputSchema so clients can render args forms.
         for tool in tools:
@@ -114,7 +116,7 @@ class TestJSONRPCDispatcher:
 
 class TestListSpecialists:
     @pytest.mark.asyncio
-    async def test_arnes_list_specialists_returns_five_specialists(self) -> None:
+    async def test_arnes_list_specialists_returns_all_specialists(self) -> None:
         server = ArnesMCPServer()
         response = await server.handle_request(
             {
@@ -125,13 +127,29 @@ class TestListSpecialists:
             }
         )
         payload = _call_tool_response(response)
-        # The default registry exposes the 5 v0.1 specialists: planner, coder,
-        # reviewer, tester, debugger. If this regresses (e.g. a specialist
-        # fails to import), this test catches it.
+        # The default registry exposes 12 specialists: the 5 original v0.1
+        # specialists (planner, coder, reviewer, tester, debugger) plus 7
+        # specialist-expansion additions (researcher, security-auditor,
+        # devops-engineer, data-scientist, product-manager, market-analyst,
+        # cost-estimator). If this regresses (e.g. a specialist fails to
+        # import), this test catches it.
         assert "specialists" in payload
-        assert len(payload["specialists"]) == 5
+        assert len(payload["specialists"]) == 12
         names = {s["name"] for s in payload["specialists"]}
-        assert names == {"@planner", "@coder", "@reviewer", "@tester", "@debugger"}
+        assert names == {
+            "@planner",
+            "@coder",
+            "@reviewer",
+            "@tester",
+            "@debugger",
+            "@researcher",
+            "@security-auditor",
+            "@devops-engineer",
+            "@data-scientist",
+            "@product-manager",
+            "@market-analyst",
+            "@cost-estimator",
+        }
         # Each entry must be self-describing enough for a client to render it.
         for spec in payload["specialists"]:
             assert "name" in spec
@@ -470,8 +488,8 @@ class TestRunPlaybook:
         assert payload["steps_executed"] == 2
         assert payload["steps_failed"] == 0
         assert payload["total_cost_usd"] == 0.0
-        # The bitacora preview must be non-empty.
-        assert payload["bitacora_preview"]
+        # The run log preview must be non-empty.
+        assert payload["run_log_preview"]
         # Internal `__`-prefixed outputs are filtered out before serialization.
         for key in payload["outputs"]:
             assert not key.startswith("__")
@@ -635,7 +653,7 @@ class TestServerConstants:
 
 
 class TestSSEEventStream:
-    """Tests for the R15 SSE (Server-Sent Events) stub endpoint.
+    """Tests for the SSE (Server-Sent Events) ambient endpoint.
 
     The HTTP server registers ``GET /events`` and ``GET /sse`` as
     streaming routes that yield ``text/event-stream`` frames via
@@ -734,9 +752,9 @@ class TestSSEEventStream:
 
 
 class TestPlaybookEventStream:
-    """Tests for the R16 SSE wiring — :func:`arnes.mcp.sse.playbook_event_stream`.
+    """Tests for the SSE wiring — :func:`arnes.mcp.sse.playbook_event_stream`.
 
-    The R16 wiring replaced the heartbeat-only stub with a real per-run
+    The wiring replaces the heartbeat-only stub with a real per-run
     channel that forwards each event from
     :meth:`arnes.playbooks.executor.PlaybookExecutor.stream` as an SSE
     frame. These tests exercise the generator directly (without binding

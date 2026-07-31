@@ -144,12 +144,12 @@ class Harness:
         Yields ``LLMResponse`` chunks as they arrive from the provider.
         The final chunk contains the full usage stats.
 
-        Audit trail (FIX-R9-DATA): after the stream completes, a single
+        Audit trail: after the stream completes, a single
         :class:`AssistantMessageEvent` carrying the full accumulated
         content + final usage is appended to the wrapped provider's
         ``_events`` sink. Streaming therefore no longer bypasses the
-        bitácora — the audit log records streaming runs the same way
-        it records non-streaming runs.
+        audit log — streaming runs are recorded the same way
+        non-streaming runs are.
 
         Streaming produces ONE ``AssistantMessageEvent`` per call (not
         per-chunk events). Per-chunk events would balloon the audit log
@@ -266,7 +266,7 @@ class Harness:
 
         The thread is the same append-only event log used everywhere
         else in ARNES, so ``thread.to_markdown()`` produces a valid
-        bitácora entry for the streaming run.
+        audit-log entry for the streaming run.
 
         Usage::
 

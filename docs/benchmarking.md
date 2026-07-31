@@ -67,7 +67,7 @@ ARNES uses [vcrpy](https://vcrpy.readthedocs.io/) to record real LLM HTTP
 traffic once, then replay it on every test run — no API spend, fully
 deterministic.
 
-R15 ships 3 cassettes under `tests/snapshot/cassettes/`:
+ARNES ships 3 cassettes under `tests/snapshot/cassettes/`:
 
 | Cassette                    | Specialist | Provider         |
 |-----------------------------|------------|------------------|

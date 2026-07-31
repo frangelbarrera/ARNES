@@ -42,7 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # /workspace is the only writable path at runtime (via --tmpfs). ARNES
-# specialists write generated code, scratch files, and bitácora fragments
+# specialists write generated code, scratch files, and run-log fragments
 # here. Anything outside /workspace is read-only under --read-only.
 WORKDIR /workspace
 

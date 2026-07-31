@@ -1,4 +1,4 @@
-"""ARNES MCP server — HTTP transport (extracted from ``mcp.server`` in R16).
+"""ARNES MCP server — HTTP transport.
 
 Owns the HTTP transport for :class:`arnes.mcp.server.ArnesMCPServer`:
 
@@ -7,22 +7,18 @@ Owns the HTTP transport for :class:`arnes.mcp.server.ArnesMCPServer`:
 - :func:`_constant_time_eq` — constant-time bearer-token comparison.
 - Constants ``_MAX_REQUEST_BYTES`` (1 MiB body cap), ``_RATE_LIMIT_RPM``.
 
-R15 split rationale: ``mcp/server.py`` was 590 lines and growing.
-Extracting the HTTP transport (and its security helpers) to a
-sibling module keeps ``server.py`` focused on the JSON-RPC
-dispatcher and the path-validation guard.
-
-R16 added the ``POST /runs/stream`` route that wires SSE to
-:func:`arnes.mcp.sse.playbook_event_stream` — see ``handle_sse_run``.
+The HTTP transport (and its security helpers) lives in this sibling
+module so ``server.py`` stays focused on the JSON-RPC dispatcher and
+the path-validation guard.
 
 Routes registered on the aiohttp app:
 
 - ``POST /`` and ``POST /mcp`` — JSON-RPC over HTTP.
-- ``GET /events`` and ``GET /sse`` — SSE ambient channel (R15,
-  heartbeat-only). See :func:`arnes.mcp.sse.sse_event_stream`.
-- ``POST /runs/stream`` — SSE per-run channel (R16). Streams
-  step-level events from :meth:`PlaybookExecutor.stream` for a
-  single playbook run. See :func:`arnes.mcp.sse.playbook_event_stream`.
+- ``GET /events`` and ``GET /sse`` — SSE ambient channel
+  (heartbeat-only). See :func:`arnes.mcp.sse.sse_event_stream`.
+- ``POST /runs/stream`` — SSE per-run channel. Streams step-level
+  events from :meth:`PlaybookExecutor.stream` for a single playbook
+  run. See :func:`arnes.mcp.sse.playbook_event_stream`.
 
 All routes run through :func:`auth_and_limits_middleware` which
 enforces bearer-token auth, request-size cap, and per-IP rate
@@ -197,7 +193,7 @@ async def serve_http(  # noqa: PLR0915 - HTTP transport + 4 route handlers in on
             return web.json_response({"error": "Internal server error"}, status=500)
 
     async def handle_sse(request: web.Request) -> web.StreamResponse:
-        """SSE endpoint — ``GET /events`` (R15 ambient channel).
+        """SSE endpoint — ``GET /events`` (ambient channel).
 
         Returns a ``text/event-stream`` response that streams
         ``event: <name>\\ndata: <json>\\n\\n`` frames via
@@ -242,7 +238,7 @@ async def serve_http(  # noqa: PLR0915 - HTTP transport + 4 route handlers in on
         return resp
 
     async def handle_sse_run(request: web.Request) -> web.StreamResponse:
-        """SSE endpoint — ``POST /runs/stream`` (R16 per-run channel).
+        """SSE endpoint — ``POST /runs/stream`` (per-run channel).
 
         Accepts a JSON body ``{"path": ..., "input"?: ..., "model"?: ...,
         "budget_usd"?: ...}`` and streams the playbook run as a finite
@@ -253,9 +249,7 @@ async def serve_http(  # noqa: PLR0915 - HTTP transport + 4 route handlers in on
         connection closes after the ``run_result`` frame.
 
         Wires :func:`arnes.mcp.sse.playbook_event_stream` to
-        :meth:`arnes.playbooks.executor.PlaybookExecutor.stream` —
-        the R16 fix that closed the top Competitive issue ("SSE stub
-        not connected to actual streaming").
+        :meth:`arnes.playbooks.executor.PlaybookExecutor.stream`.
 
         Auth + rate-limit + body-size rules from the middleware apply
         (this is a POST, so the 1 MiB body cap is enforced on the
@@ -369,10 +363,10 @@ async def serve_http(  # noqa: PLR0915 - HTTP transport + 4 route handlers in on
     )
     app.router.add_post("/", handle)
     app.router.add_post("/mcp", handle)
-    # R15: SSE ambient channel — heartbeat + server_info only.
+    # SSE ambient channel — heartbeat + server_info only.
     app.router.add_get("/events", handle_sse)
     app.router.add_get("/sse", handle_sse)
-    # R16: SSE per-run channel — streams step-level events from
+    # SSE per-run channel — streams step-level events from
     # ``PlaybookExecutor.stream`` for a single playbook run.
     app.router.add_post("/runs/stream", handle_sse_run)
 

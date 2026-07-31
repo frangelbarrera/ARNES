@@ -142,22 +142,31 @@ steps:
         # which returns no tool_calls, so exactly one AssistantMessageEvent per step)
         assert len(result.thread) == 13
 
-        bitacora = result.to_markdown()
-        assert "plan" in bitacora
-        assert "code" in bitacora
-        assert "review" in bitacora
-        assert "test" in bitacora
+        audit_log = result.to_markdown()
+        assert "plan" in audit_log
+        assert "code" in audit_log
+        assert "review" in audit_log
+        assert "test" in audit_log
 
     @pytest.mark.asyncio
-    async def test_specialist_registry_has_all_5_specialists(self):
+    async def test_specialist_registry_has_all_12_specialists(self):
         registry = get_default_specialist_registry()
         specialists = registry.list_names()
+        # Original 5 specialists
         assert "@planner" in specialists
         assert "@coder" in specialists
         assert "@reviewer" in specialists
         assert "@tester" in specialists
         assert "@debugger" in specialists
-        assert len(specialists) == 5
+        # 7 specialist-expansion additions beyond the original 5.
+        assert "@researcher" in specialists
+        assert "@security-auditor" in specialists
+        assert "@devops-engineer" in specialists
+        assert "@data-scientist" in specialists
+        assert "@product-manager" in specialists
+        assert "@market-analyst" in specialists
+        assert "@cost-estimator" in specialists
+        assert len(specialists) == 12
 
     @pytest.mark.asyncio
     async def test_tool_registry_has_all_5_tools(self):

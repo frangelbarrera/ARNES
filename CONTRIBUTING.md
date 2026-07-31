@@ -4,7 +4,7 @@ Thank you for considering contributing to ARNES! This document guides you throug
 
 ## Code of Conduct
 
-By participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md). TL;DR: be respectful, inclusive, and professional. ARNES was born in Latam and we especially welcome Spanish-speaking contributors.
+By participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md). TL;DR: be respectful, inclusive, and professional.
 
 ## Development Setup
 
@@ -211,7 +211,7 @@ Open an [issue](https://github.com/frangelbarrera/ARNES/issues/new?template=bug_
 3. **OS**: Linux/macOS/Windows + version
 4. **Minimal reproduction**: minimal code that reproduces the bug
 5. **Expected vs actual output**
-6. **Logs**: paste the bitácora content if applicable
+6. **Logs**: paste the run log content if applicable
 
 ## Reporting Security Vulnerabilities
 

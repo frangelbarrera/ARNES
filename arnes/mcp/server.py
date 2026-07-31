@@ -8,16 +8,15 @@ ARNES exposes 4 tools:
 - arnes_list_playbooks(dir?) → list playbooks in a directory
 - arnes_validate_playbook(path) → validate a playbook YAML
 
-R15 added an SSE (Server-Sent Events) endpoint on the HTTP transport
-(``GET /events``) — the ambient heartbeat channel. R16 added
-``POST /runs/stream`` — the per-run channel that wires
-:func:`arnes.mcp.sse.playbook_event_stream` to
+The HTTP transport exposes two SSE channels: ``GET /events`` for an
+ambient heartbeat, and ``POST /runs/stream`` for a per-run channel
+that wires :func:`arnes.mcp.sse.playbook_event_stream` to
 :meth:`arnes.playbooks.executor.PlaybookExecutor.stream` so subscribers
 see step-level transitions in real time.
 
 The HTTP transport (aiohttp app, route handlers, security helpers)
-lives in :mod:`arnes.mcp.http` — extracted in R16 to keep this
-module focused on the JSON-RPC dispatcher + path-validation guard.
+lives in :mod:`arnes.mcp.http`; this module focuses on the JSON-RPC
+dispatcher + path-validation guard.
 
 Usage in Claude Desktop config::
 
@@ -51,13 +50,13 @@ logger = structlog.get_logger(__name__)
 
 
 # ============================================================
-# Backwards-compat re-exports (R16 split)
+# Backwards-compat re-exports (HTTP transport lives in arnes.mcp.http)
 # ============================================================
-# The HTTP transport was extracted to :mod:`arnes.mcp.http` in R16
-# to keep this module under the AGENTS.md 500-line rule. The
-# security helpers (``_RateLimiter``, ``_constant_time_eq``,
+# The HTTP transport lives in :mod:`arnes.mcp.http` to keep this
+# module focused on the JSON-RPC dispatcher + path-validation guard.
+# The security helpers (``_RateLimiter``, ``_constant_time_eq``,
 # ``_MAX_REQUEST_BYTES``, ``_RATE_LIMIT_RPM``) and ``serve_http``
-# live there now. They are re-exported here so existing imports of
+# live there. They are re-exported here so existing imports of
 # the shape ``from arnes.mcp.server import _constant_time_eq``
 # (used by tests) keep working — the canonical home is
 # :mod:`arnes.mcp.http`.
@@ -176,13 +175,38 @@ class ArnesMCPServer:
                 "required": ["path"],
             },
         },
+        {
+            "name": "arnes_plan",
+            "description": "Proactively analyze a request, assess market viability, estimate costs, identify risks, and generate a playbook. ARNES researches BEFORE executing — it doesn't just start coding.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "request": {
+                        "type": "string",
+                        "description": "What the user wants to build (e.g., 'Build a dating app for the Play Store')",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "LLM model for planning (default: anthropic/claude-sonnet-4-20250514)",
+                    },
+                    "budget_usd": {
+                        "type": "number",
+                        "description": "Max budget for the planning call (default: 5.0)",
+                    },
+                },
+                "required": ["request"],
+            },
+        },
+        {
+            "name": "arnes_list_specialists_detailed",
+            "description": "List all 12 ARNES specialists with their roles, tools, and capabilities.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
     ]
 
     # ``ArnesMCPServer`` is stateless across calls — no ``__init__``
     # state is required. Executors are constructed per-request inside
-    # ``_run_playbook`` / ``handle_sse_run``. (R16 cleanup: removed
-    # the unused ``self._executor`` attribute that was set in
-    # ``__init__`` but never read — dead code from an earlier design.)
+    # ``_run_playbook`` / ``handle_sse_run``.
 
     async def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle a single JSON-RPC request."""
@@ -248,10 +272,14 @@ class ArnesMCPServer:
             return await self._run_playbook(args)
         if name == "arnes_list_specialists":
             return self._list_specialists()
+        if name == "arnes_list_specialists_detailed":
+            return self._list_specialists_detailed()
         if name == "arnes_list_playbooks":
-            return self._list_playbooks(args.get("dir", "manuales"))
+            return self._list_playbooks(args.get("dir", "manuals"))
         if name == "arnes_validate_playbook":
             return self._validate_playbook(args["path"])
+        if name == "arnes_plan":
+            return await self._proactive_plan(args)
         raise ValueError(f"Unknown tool: {name}")
 
     async def _run_playbook(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -295,7 +323,7 @@ class ArnesMCPServer:
             "total_cost_usd": result.total_cost_usd,
             "outputs": {k: v for k, v in result.outputs.items() if not k.startswith("__")},
             "error": result.error,
-            "bitacora_preview": result.to_markdown()[:500] + "..."
+            "run_log_preview": result.to_markdown()[:500] + "..."
             if len(result.to_markdown()) > 500
             else result.to_markdown(),
         }
@@ -383,6 +411,51 @@ class ArnesMCPServer:
         except PlaybookCompileError as e:
             return {"valid": False, "error": str(e)}
 
+    def _list_specialists_detailed(self) -> dict[str, Any]:
+        """List all specialists with detailed capabilities."""
+        registry = get_default_specialist_registry()
+        specialists = []
+        for config in registry.configs():
+            specialists.append(
+                {
+                    "name": config.name,
+                    "description": config.description,
+                    "tools": config.tools,
+                    "default_model": config.default_model or "ollama/llama3.2",
+                    "has_structured_output": bool(config.output_schema or config.pydantic_model),
+                }
+            )
+        return {
+            "total": len(specialists),
+            "specialists": specialists,
+        }
+
+    async def _proactive_plan(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Run the proactive planner — researches before executing."""
+        from arnes.llm.factory import get_provider
+        from arnes.proactive import ProactivePlanner
+
+        request = args["request"]
+        model = args.get("model", "anthropic/claude-sonnet-4-20250514")
+        budget = args.get("budget_usd", 5.0)
+
+        try:
+            provider = get_provider(model)
+        except Exception as e:
+            return {"error": f"Failed to initialize provider: {e}"}
+
+        planner = ProactivePlanner(provider=provider, budget_usd=budget)
+        plan_result = await planner.plan(request)
+
+        if "error" in plan_result:
+            return plan_result
+
+        # Also generate YAML so the caller can save and run it
+        yaml_content = ProactivePlanner.to_yaml(plan_result)
+        plan_result["generated_yaml"] = yaml_content
+
+        return plan_result
+
 
 async def serve_stdio(server: ArnesMCPServer) -> None:
     """Run the MCP server over stdio (JSON-RPC).
@@ -414,7 +487,7 @@ async def serve_stdio(server: ArnesMCPServer) -> None:
 
 
 # ============================================================
-# Serve-method attachment (R16: serve_http lives in arnes.mcp.http)
+# Serve-method attachment (serve_http lives in arnes.mcp.http)
 # ============================================================
 
 

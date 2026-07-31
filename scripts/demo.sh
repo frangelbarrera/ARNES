@@ -130,17 +130,17 @@ header "1. Run a manual with the mock LLM (no network, \$0 cost)"
 
 run "${ARNES[@]}" run manuals/hello-world.yaml --mock
 
-# Show the bitácora that was just produced.
-LATEST_BITACORA="$(ls -t bitacora-hello-world-*.md 2>/dev/null | head -1 || true)"
-if [[ -n "$LATEST_BITACORA" ]]; then
-  header "2. The bitácora — an auditable markdown trail"
-  printf '\033[2m# Showing first 40 lines of %s\033[0m\n' "$LATEST_BITACORA"
+# Show the run log that was just produced.
+LATEST_RUN_LOG="$(ls -t arnes-run-hello-world-*.md 2>/dev/null | head -1 || true)"
+if [[ -n "$LATEST_RUN_LOG" ]]; then
+  header "2. The run log — an auditable markdown trail"
+  printf '\033[2m# Showing first 40 lines of %s\033[0m\n' "$LATEST_RUN_LOG"
   echo
-  sed -n '1,40p' "$LATEST_BITACORA"
+  sed -n '1,40p' "$LATEST_RUN_LOG"
   echo
-  printf '\033[2m# ... (%s has the full audit trail)\033[0m\n' "$LATEST_BITACORA"
+  printf '\033[2m# ... (%s has the full audit trail)\033[0m\n' "$LATEST_RUN_LOG"
 else
-  echo "No bitácora was produced — check that arnes run succeeded."
+  echo "No run log was produced — check that arnes run succeeded."
 fi
 
 # 2. List specialists --------------------------------------------------------

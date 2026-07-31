@@ -15,10 +15,9 @@
 | **Prompts visible** | ✅ On disk | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Streaming** | ✅ 5 layers (provider → specialist → harness → executor → CLI) | ✅ | ❌ | ✅ | ❌ | ✅ |
 | **MCP server** | ✅ Native (stdio + HTTP + SSE) | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Audit trail** | ✅ Markdown bitácora | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Audit trail** | ✅ Markdown audit log | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Benchmark suite** | ✅ Multi-seed + concurrent | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **CITATION.cff** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Latam identity** | ✅ Bilingual EN/ES | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ## What ARNES Does Differently
 
@@ -39,7 +38,7 @@ No other framework implements hierarchical budget enforcement with:
 - Hard stop at 100%
 
 ### 3. Auditable by Design
-The markdown bitácora is not a log file — it's a document you can `git diff`.
+The markdown audit log is not a log file — it's a document you can `git diff`.
 For regulated industries (banking, health, government), this is non-negotiable.
 
 ### 4. MCP-Native

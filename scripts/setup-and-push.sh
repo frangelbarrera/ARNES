@@ -135,9 +135,9 @@ arnes lint manuals/smoke-test.yaml
 # Execute with mock
 arnes run manuals/smoke-test.yaml --mock
 
-# Verify bitácora was created
-if ! ls bitacora-smoke-test-*.md 1> /dev/null 2>&1; then
-    echo -e "${RED}✗ Smoke test failed: no bitácora generated${NC}"
+# Verify run log was created
+if ! ls arnes-run-smoke-test-*.md 1> /dev/null 2>&1; then
+    echo -e "${RED}✗ Smoke test failed: no run log generated${NC}"
     cd -
     rm -rf "$SMOKE_DIR"
     exit 1

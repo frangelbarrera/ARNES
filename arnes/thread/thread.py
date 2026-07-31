@@ -185,9 +185,9 @@ class Thread(BaseModel):
         return cls.from_json(Path(path).read_text(encoding="utf-8"))
 
     def to_markdown(self) -> str:
-        """Render the thread as an audit-friendly markdown bitácora."""
+        """Render the thread as an audit-friendly markdown audit log."""
         lines: list[str] = []
-        lines.append(f"# Bitácora ARNES — Thread {self.id}")
+        lines.append(f"# Audit log ARNES — Thread {self.id}")
         lines.append("")
         lines.append(f"**Total events:** {len(self.events)}")
         lines.append("")
@@ -231,7 +231,7 @@ def _reduce_event(state: dict[str, Any], event: Event) -> dict[str, Any]:
         # lives on the StepCompletedEvent (one per step, summing every LLM call
         # the specialist made inside that step). AssistantMessageEvent still
         # carries tokens_in/out/cost_usd in its ``data`` payload for visibility
-        # in the bitácora — it's just not what the reducer sums.
+        # in the audit log — it's just not what the reducer sums.
 
     elif event.type == EventType.TOOL_CALL:
         state["tools_called"].append(

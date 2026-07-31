@@ -149,7 +149,7 @@ class TestHarnessStream:
 
 
 class TestHarnessStreamAudit:
-    """Tests for the streaming bitácora (FIX-R9-FINAL — Fix 2).
+    """Tests for the streaming audit log.
 
     Harness.stream() must emit an AssistantMessageEvent after the stream
     completes so the audit trail records streaming runs the same way it
@@ -221,7 +221,7 @@ class TestHarnessStreamAudit:
 
     @pytest.mark.asyncio
     async def test_stream_with_audit_thread_renders_to_markdown(self):
-        """The audit thread from stream_with_audit() renders as a valid bitácora."""
+        """The audit thread from stream_with_audit() renders as a valid audit log."""
         harness = Harness(
             config=HarnessConfig(model="mock/test", budget_usd=0.10),
             provider=StreamingMockProvider(),
@@ -233,7 +233,7 @@ class TestHarnessStreamAudit:
             pass
 
         md = thread.to_markdown()
-        assert "Bitácora ARNES" in md
+        assert "Audit log ARNES" in md
         assert "assistant_message" in md
         assert "@planner" in md
 

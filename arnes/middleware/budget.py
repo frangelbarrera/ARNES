@@ -1,4 +1,4 @@
-"""ARNES Cost Guard — budget model + exception (extracted in R16).
+"""ARNES Cost Guard — budget model + exception.
 
 Owns:
 
@@ -8,14 +8,13 @@ Owns:
   (org → project → agent → task) with temporal circuit breaker +
   threshold percentages.
 
-R16 split rationale: ``cost_guard.py`` was 611 lines. Extracting
-the budget model + exception (which are pure data + a thin
-exception, no logic) to a sibling module keeps ``cost_guard.py``
-focused on the :class:`CostGuard` middleware (the LLMProvider
-wrapper that enforces the budget). The two modules are imported
-together via :mod:`arnes.middleware.cost_guard`'s re-exports so
-existing ``from arnes.middleware.cost_guard import CostBudget,
-BudgetExceeded`` imports keep working.
+The budget model + exception (pure data + a thin exception, no logic)
+live in this sibling module so ``cost_guard.py`` stays focused on the
+:class:`CostGuard` middleware (the LLMProvider wrapper that enforces
+the budget). The two modules are imported together via
+:mod:`arnes.middleware.cost_guard`'s re-exports so existing
+``from arnes.middleware.cost_guard import CostBudget, BudgetExceeded``
+imports keep working.
 """
 
 from __future__ import annotations

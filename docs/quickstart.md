@@ -16,7 +16,7 @@ ollama pull llama3.2
 arnes init
 # Creates:
 #   manuals/
-#   bitacoras/
+#   run_logs/
 #   manuals/hello-world.yaml
 ```
 

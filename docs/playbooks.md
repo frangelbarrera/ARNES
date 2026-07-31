@@ -32,7 +32,7 @@ steps:
 
 | Field        | Type     | Required | Description                                        |
 |--------------|----------|----------|----------------------------------------------------|
-| `name`       | string   | yes      | Playbook name (used in bitácora filenames).       |
+| `name`       | string   | yes      | Playbook name (used in run-log filenames).        |
 | `objective`  | string   | yes      | One-sentence description (rendered in the UI).    |
 | `budget_usd` | number   | yes      | Hard USD cap for the whole run.                    |
 | `steps`      | list     | yes      | Ordered list of step definitions.                 |
@@ -64,7 +64,7 @@ Inputs are resolved with Jinja2:
 arnes run path/to/playbook.yaml
 arnes run path/to/playbook.yaml --stream    # step events as they complete
 arnes run path/to/playbook.yaml --mock      # $0, no network
-arnes run path/to/playbook.yaml --output my-bitacora.md
+arnes run path/to/playbook.yaml --output my-run-log.md
 ```
 
 ## Lint

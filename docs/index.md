@@ -15,7 +15,7 @@ This is the docs site index. For the canonical README, see the
 - **Local-first.** Default provider is Ollama on `localhost:11434`.
 - **Vendor-neutral.** Anthropic, OpenAI, Google, Groq via LiteLLM.
 - **Budget-guarded.** Hierarchical CostGuard with hard-stop + HITL pause.
-- **Auditable.** Every LLM call → bitácora → Thread → JSON / Markdown.
+- **Auditable.** Every LLM call → audit log → Thread → JSON / Markdown.
 - **Open.** Apache-2.0. No hosted version. No vendor-only first-class APIs.
 
 ## Quick links

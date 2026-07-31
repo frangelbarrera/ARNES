@@ -41,11 +41,11 @@ class CoderOutput(BaseModel):
 5. Validate response against `pydantic_model`.
 6. Return structured result.
 
-## Streaming with tools (R15)
+## Streaming with tools
 
 `Specialist.stream()` mirrors `run()` but uses
-`provider.stream_complete()`. R15 closes the R11→R14 gap: streaming now
-**participates in the ReAct loop**. If the provider streams `tool_calls`,
+`provider.stream_complete()`. Streaming **participates in the ReAct
+loop**: if the provider streams `tool_calls`,
 the specialist executes the tools and starts another streaming iteration.
 
 See [`examples/05_streaming.py`](https://github.com/frangelbarrera/ARNES/blob/main/examples/05_streaming.py)

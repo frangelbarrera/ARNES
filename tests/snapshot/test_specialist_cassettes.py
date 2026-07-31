@@ -1,7 +1,6 @@
-"""VCR cassette tests for the ``@coder`` and ``@reviewer`` specialists (R15).
+"""VCR cassette tests for the ``@coder`` and ``@reviewer`` specialists.
 
-R15 closes part of the R13→R14 ``only 1 vcrpy cassette`` gap by shipping
-two additional hand-authored cassettes alongside the existing
+These tests ship two hand-authored cassettes alongside the existing
 ``test_planner_basic.yaml``:
 
 - ``cassettes/test_coder_basic.yaml`` — a recorded OpenAI response

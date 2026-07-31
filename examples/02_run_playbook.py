@@ -11,7 +11,7 @@ Expected output:
     Playbook: hello-world
     Success: True
     Steps executed: 2
-    Bitácora saved to: bitacora-hello-world-<timestamp>.md
+    Run log saved to: arnes-run-hello-world-<timestamp>.md
 """
 
 import asyncio
@@ -84,12 +84,12 @@ async def main():
     print(f"Tokens in/out: {result.total_tokens_in}/{result.total_tokens_out}")
     print(f"Cost: ${result.total_cost_usd:.4f}")
 
-    # Save bitácora
+    # Save run log
     from datetime import datetime
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    bitacora_path = f"bitacora-{playbook.metadata.name}-{ts}.md"
-    Path(bitacora_path).write_text(result.to_markdown(), encoding="utf-8")
-    print(f"\nBitácora saved to: {bitacora_path}")
+    run_log_path = f"arnes-run-{playbook.metadata.name}-{ts}.md"
+    Path(run_log_path).write_text(result.to_markdown(), encoding="utf-8")
+    print(f"\nRun log saved to: {run_log_path}")
 
 
 if __name__ == "__main__":

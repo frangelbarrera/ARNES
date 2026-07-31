@@ -150,7 +150,7 @@ approval.
 ### Audit Log
 
 Every LLM call, every tool execution, every CostGuard decision is logged to
-the markdown bitácora. The bitácora is auditable and re-executable.
+the markdown audit log. The audit log is auditable and re-executable.
 
 ## Current Limitations
 

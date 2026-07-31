@@ -1,12 +1,11 @@
 """ARNES CLI scaffolding — project init + manual template helpers.
 
-Extracted from ``cli/helpers.py`` in R15 to keep both files under the
-AGENTS.md 500-line rule. This module owns:
+This module owns the scaffolding surface for the CLI:
 
 - :func:`_scaffold_manual` — create a new playbook YAML from the EN/ES
   templates (used by ``arnes init --manual <name>``).
 - :func:`_init_project` — bootstrap an empty ARNES project structure
-  (``manuals/`` + ``bitacoras/`` + a starter ``hello-world.yaml``).
+  (``manuals/`` + ``run_logs/`` + a starter ``hello-world.yaml``).
 - :data:`_MANUAL_TEMPLATE_EN` / :data:`_MANUAL_TEMPLATE_ES` — the two
   playbook YAML templates that ship with the CLI. Kept here (not in
   ``templates/``) so they're always importable without filesystem access.
@@ -40,7 +39,7 @@ def _init_project() -> None:
     """Initialize a new ARNES project structure."""
     console.print("[bold cyan]ARNES — Initializing project[/bold cyan]\n")
 
-    dirs = ["manuals", "bitacoras"]
+    dirs = ["manuals", "run_logs"]
     for d in dirs:
         Path(d).mkdir(exist_ok=True)
         console.print(f"  [green]✓[/green] Created: {d}/")

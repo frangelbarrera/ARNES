@@ -1,4 +1,4 @@
-"""ARNES built-in tools — security helpers (extracted in R16).
+"""ARNES built-in tools — security helpers.
 
 Owns the security primitives shared by :mod:`arnes.tools.builtin`:
 
@@ -16,10 +16,9 @@ Owns the security primitives shared by :mod:`arnes.tools.builtin`:
   IP classifier.
 - Constants ``_DANGEROUS_PATTERNS``, ``_BLOCKED_HOSTS``, ``_BLOCKED_IPS``.
 
-R16 split rationale: ``tools/builtin.py`` was 668 lines and growing
-with each new tool. Extracting the security helpers (which are
-shared across tools, not specific to one) keeps ``builtin.py``
-focused on the tool classes themselves.
+These helpers are shared across tools rather than specific to one, so
+they live in a sibling module — ``builtin.py`` stays focused on the
+tool classes themselves.
 """
 
 from __future__ import annotations

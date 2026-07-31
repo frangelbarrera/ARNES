@@ -28,7 +28,7 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-## HTTP transport + SSE (R15)
+## HTTP transport + SSE
 
 ```bash
 # Loopback only — no auth required
@@ -47,7 +47,7 @@ ARNES_MCP_TOKEN="sk-..." arnes mcp serve --transport http --host 0.0.0.0 --port 
 | GET    | `/events`  | SSE stream — `event: <name>\ndata: <json>\n\n` frames.       |
 | GET    | `/sse`     | Alias for `/events`.                                         |
 
-### SSE wire format (R15 stub)
+### SSE wire format (ambient channel)
 
 ```http
 GET /events HTTP/1.1
@@ -67,10 +67,9 @@ data: {"server": "arnes", "version": "0.1.0a1", "protocol": "2024-11-05", "ts": 
 : ping
 ```
 
-R15 emits a single `server_info` event up-front, then idles on `: ping`
-heartbeats (15 s interval). v0.2 will replace the heartbeat loop with a
-real subscription to `PlaybookExecutor.stream` so subscribers see
-step-level transitions in real time.
+The ambient channel emits a single `server_info` event up-front, then idles on `: ping`
+heartbeats (15 s interval). Use `POST /runs/stream` for a per-run
+channel that streams step-level transitions in real time.
 
 ### Security
 

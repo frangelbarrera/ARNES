@@ -275,10 +275,10 @@ steps:
         assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_bitacora_generated(self, executor):
+    async def test_audit_log_generated(self, executor):
         yaml_str = """
-name: bitacora_test
-objective: Test bitácora
+name: audit_log_test
+objective: Test audit log
 steps:
   - id: s1
     specialist: "@planner"
@@ -287,12 +287,12 @@ steps:
         playbook = PlaybookCompiler.from_string(yaml_str)
         result = await executor.run(playbook)
 
-        bitacora = result.to_markdown()
-        assert "Bitácora ARNES" in bitacora
-        assert "step_started" in bitacora
-        assert "step_completed" in bitacora
-        assert "run_completed" in bitacora
-        assert "s1" in bitacora
+        audit_log = result.to_markdown()
+        assert "Audit log ARNES" in audit_log
+        assert "step_started" in audit_log
+        assert "step_completed" in audit_log
+        assert "run_completed" in audit_log
+        assert "s1" in audit_log
 
     @pytest.mark.asyncio
     async def test_budget_exceeded_aborts_run(self, mock_provider):

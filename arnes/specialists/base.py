@@ -203,7 +203,7 @@ class Specialist(ABC):
 
             # Emit an AssistantMessageEvent for every LLM call so the
             # conversation history and per-call token/cost are observable
-            # in the thread bitácora. The specialist has direct access to
+            # in the thread audit log. The specialist has direct access to
             # ctx.thread_id and ctx.step_id, so we can construct the event
             # with the correct ids (no nil-UUID patching needed). The
             # event is appended to the wrapped provider's shared event sink
@@ -280,10 +280,10 @@ class Specialist(ABC):
         arrive from the provider. The final chunk of each iteration carries
         the full ``LLMUsage`` (``tokens_in``, ``tokens_out``, ``cost_usd``).
 
-        Streaming ReAct loop (R15):
+        Streaming ReAct loop:
 
         Unlike the v0.1 streaming path (which bypassed tool execution), the
-        R15 streaming path **participates in the ReAct loop**. For each
+        current streaming path **participates in the ReAct loop**. For each
         iteration up to ``config.max_iterations``:
 
         1. Stream chunks from ``provider.stream_complete()`` with the
@@ -414,7 +414,7 @@ class Specialist(ABC):
                 )
                 return
 
-            # Emit the per-iteration AssistantMessageEvent for the bitácora.
+            # Emit the per-iteration AssistantMessageEvent for the audit log.
             # We construct a synthetic LLMResponse carrying the accumulated
             # content + final usage so we can reuse the same
             # _emit_assistant_message helper that run() uses.
@@ -595,7 +595,7 @@ class Specialist(ABC):
 
         The event carries the response content, the model used, and the
         per-call token usage and cost so that the conversation history is
-        fully observable in the thread bitácora. The event is appended to
+        fully observable in the thread audit log. The event is appended to
         the wrapped provider's shared ``_events`` sink (set up by
         ``CostGuard``); the ``PlaybookExecutor`` drains that sink after each
         step and appends the events to the ``Thread``.
@@ -805,11 +805,33 @@ def get_default_specialist_registry() -> SpecialistRegistry:
     """Return a registry with all built-in specialists registered."""
     registry = SpecialistRegistry()
     from arnes.specialists.coder import Coder
+    from arnes.specialists.cost_estimator import CostEstimator
+    from arnes.specialists.data_scientist import DataScientist
     from arnes.specialists.debugger import Debugger
+    from arnes.specialists.devops_engineer import DevOpsEngineer
+    from arnes.specialists.market_analyst import MarketAnalyst
     from arnes.specialists.planner import Planner
+    from arnes.specialists.product_manager import ProductManager
+    from arnes.specialists.researcher import Researcher
     from arnes.specialists.reviewer import Reviewer
+    from arnes.specialists.security_auditor import SecurityAuditor
     from arnes.specialists.tester import Tester
 
-    for cls in [Planner, Coder, Reviewer, Tester, Debugger]:
+    # Order matters only for the human-readable CLI table — registration
+    # is keyed by `config.name`, so duplicates would overwrite silently.
+    for cls in [
+        Planner,
+        Coder,
+        Reviewer,
+        Tester,
+        Debugger,
+        Researcher,
+        SecurityAuditor,
+        DevOpsEngineer,
+        DataScientist,
+        ProductManager,
+        MarketAnalyst,
+        CostEstimator,
+    ]:
         registry.register_class(cls)
     return registry

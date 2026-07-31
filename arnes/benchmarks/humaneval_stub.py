@@ -1,4 +1,4 @@
-"""HumanEval-style benchmark stub (R16).
+"""HumanEval-style benchmark stub.
 
 ARNES does not ship the real HumanEval dataset (164 problems, OpenAI
 non-commercial license — see ``docs/benchmarks.md`` for the rationale).

@@ -49,6 +49,3 @@ social media when discussing ARNES, and any official events.
 Adapted from the [Contributor Covenant](https://www.contributor-covenant.org/)
 version 2.1, available at
 https://www.contributor-covenant.org/version/2/1/code_of_conduct.html.
-
-ARNES was born in Latam. We especially welcome Spanish-speaking contributors
-and anyone who has felt that mainstream OSS does not speak their language.

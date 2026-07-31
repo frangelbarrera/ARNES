@@ -341,7 +341,7 @@ class PlaybookExecutor:
         via :meth:`arnes.specialists.base.Specialist.stream`; this
         executor-level stream yields step-level events, not token-level
         events. The two can be composed: a UI that wants both
-        token-by-token rendering AND a final bitácora can consume
+        token-by-token rendering AND a final audit log can consume
         ``Specialist.stream()`` for the rendering and rely on the
         ``AssistantMessageEvent`` emitted into the thread (by both
         ``Specialist.run()`` and ``Specialist.stream()``) for the

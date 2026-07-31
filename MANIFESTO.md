@@ -50,7 +50,7 @@ the way you reason about any procedural code.
 A reactive manifesto names what is wrong; a constructive one names what
 should exist. ARNES is for the world where:
 
-- **Every agent run leaves a paper trail.** A bitácora that compliance
+- **Every agent run leaves a paper trail.** An audit log that compliance
   can audit, security can review, and a researcher can cite. The
   transcript is the unit of trust — not the framework's promise.
 - **Budgets fail closed by default.** No agent ships to production
@@ -72,10 +72,11 @@ should exist. ARNES is for the world where:
   from its event log. HITL resume, episodic memory, and academic
   peer-review all build on the same primitive.
 
-ARNES was born south of the equator, where doing more with less is not
-aesthetic — it is survival. The constructive vision is not "catch up
-to Silicon Valley." It is "build the tool the next generation of
-developers worldwide deserves, and give it away."
+ARNES is for builders who refuse to cede control — engineers who want
+their prompts visible, their budgets enforced, and their vendors
+replaceable. The constructive vision is not "catch up to Silicon
+Valley." It is "build the tool the next generation of developers
+deserves, and give it away."
 
 ---
 
@@ -117,5 +118,4 @@ developers worldwide deserves, and give it away."
 
 ---
 
-*Manifesto v1.1 — Problem Statement + Constructive Vision added in R16.
-The ten declarations are unchanged from v1.0 (fixed on the first commit, immutable).*
+*Manifesto v1.0 — Fixed on the first commit. Immutable.*

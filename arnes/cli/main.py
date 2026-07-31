@@ -2,6 +2,8 @@
 ARNES CLI — command-line interface.
 
 Commands:
+    arnes plan "<request>"           Proactively analyze a request, estimate costs,
+                                     assess viability, and generate a playbook
     arnes init --manual <name>       Scaffold a new playbook
     arnes run <playbook.yaml>        Execute a playbook
     arnes run <playbook> --stream    Execute with real-time step streaming
@@ -14,11 +16,11 @@ Commands:
     arnes mcp serve                  Start MCP server (stdio or http)
     arnes --version                  Print version
 
-R15 split: the async runners, mock provider, scaffold helpers, and templates
-live in :mod:`arnes.cli.helpers` so this file stays under the AGENTS.md
-500-line rule. The command definitions here are thin click wrappers that
-delegate to the helpers — adding a new command stays a 10-line change in
-this file plus the helper in ``helpers.py``.
+The async runners, mock provider, scaffold helpers, and templates
+live in :mod:`arnes.cli.helpers` so this file stays slim. The
+command definitions here are thin click wrappers that delegate to
+the helpers — adding a new command stays a 10-line change in this
+file plus the helper in ``helpers.py``.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import sys
 from pathlib import Path
 
 import click
+from rich.panel import Panel
 from rich.table import Table
 
 from arnes import __version__
@@ -48,6 +51,67 @@ from arnes.specialists.base import get_default_specialist_registry
 def cli() -> None:
     """ARNES — The Open Agent Harness. Write the manual, ARNES runs it."""
     pass
+
+
+@cli.command()
+@click.argument("request")
+@click.option(
+    "--model", default="anthropic/claude-sonnet-4-20250514", help="LLM model for planning"
+)
+@click.option("--budget", type=float, default=5.0, help="Max USD budget for the planning call")
+@click.option("--save", is_flag=True, help="Save generated playbook to manuals/")
+def plan(request: str, model: str, budget: float, save: bool) -> None:
+    """Proactively analyze a request and generate a playbook.
+
+    ARNES doesn't just start coding. It researches market viability,
+    estimates costs, warns about risks, and proposes a plan BEFORE executing.
+
+    Examples:
+        arnes plan "Build a dating app for the Play Store"
+        arnes plan "Create a SaaS accounting tool" --save
+        arnes plan "Build a REST API for a blog" --model ollama/llama3.2
+    """
+    asyncio.run(_run_proactive_plan(request, model, budget, save))
+
+
+async def _run_proactive_plan(request: str, model: str, budget: float, save: bool) -> None:
+    """Run the proactive planner."""
+    from arnes.llm.factory import get_provider
+    from arnes.proactive import ProactivePlanner
+
+    provider = get_provider(model)
+    planner = ProactivePlanner(provider=provider, budget_usd=budget)
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]ARNES[/bold cyan] — Proactive Planning\n"
+            f"  [dim]Request:[/dim] {request[:80]}{'...' if len(request) > 80 else ''}\n"
+            f"  [dim]Model:[/dim] {model}\n"
+            f"  [dim]Budget:[/dim] ${budget:.2f}",
+            border_style="cyan",
+        )
+    )
+
+    with console.status(
+        "[cyan]Analyzing request... researching market, estimating costs, assessing risks...[/cyan]"
+    ):
+        plan_result = await planner.plan(request)
+
+    if "error" in plan_result:
+        console.print(f"[red]Error:[/red] {plan_result['error']}")
+        sys.exit(1)
+
+    summary = ProactivePlanner.format_plan_summary(plan_result)
+    console.print(summary)
+
+    if save:
+        yaml_content = ProactivePlanner.to_yaml(plan_result)
+        playbook_name = plan_result.get("proposed_playbook", {}).get("name", "generated")
+        path = Path("manuals") / f"{playbook_name}.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml_content, encoding="utf-8")
+        console.print(f"\n[cyan]Playbook saved to:[/cyan] {path}")
+        console.print(f"[dim]Review it, then run: arnes run {path}[/dim]")
 
 
 @cli.command()
@@ -72,7 +136,7 @@ def init(manual: str | None, lang: str) -> None:
 @click.option("--budget", type=float, default=0.50, help="Max USD budget for this run")
 @click.option("--mock", is_flag=True, help="Use mock LLM (no network, $0 cost)")
 @click.option("--interactive", is_flag=True, help="Enable interactive HITL prompts")
-@click.option("--output", "-o", type=click.Path(), help="Save bitácora to file")
+@click.option("--output", "-o", type=click.Path(), help="Save run log to file")
 @click.option(
     "--stream",
     is_flag=True,

@@ -43,7 +43,7 @@
 
 Most agent frameworks are black boxes: you can't see the prompts, can't control the costs, and can't audit what happened. ARNES fixes this with three principles:
 
-1. **Transparency** — Every prompt, decision, and cost is logged to a markdown bitácora you can `git diff`.
+1. **Transparency** — Every prompt, decision, and cost is logged to a markdown audit log you can `git diff`.
 2. **Cost control** — Hierarchical budget enforcement with circuit breaker. An agent can't burn your API budget silently.
 3. **Vendor neutrality** — Default model is local (Ollama, $0). Switching providers is one line. No vendor lock-in.
 
@@ -149,14 +149,14 @@ Duration: 0.01s
 Tokens in/out: 705/53
 Total cost: $0.0000
 
-Bitácora saved to: bitacora-hello-world-20260730-164244.md
+Run log saved to: arnes-run-hello-world-20260730-164244.md
 ```
 
-The bitácora is a markdown file with every step, every decision, every prompt
+The run log is a markdown file with every step, every decision, every prompt
 sent, every response received. You can diff it, version it, share it:
 
 ````markdown
-# Bitácora ARNES — Thread 0b6ac82e-2600-42f5-a6ca-62e016df7961
+# Audit log ARNES — Thread 0b6ac82e-2600-42f5-a6ca-62e016df7961
 
 **Total events:** 7
 
@@ -227,7 +227,7 @@ See [Recording a demo GIF](#recording-a-demo-gif) below for the `vhs` and
 | | Crew (sequential/hierarchical) | 🚧 v0.4 |
 | | A2A with trust | 🚧 v0.5 |
 | **Observability** | Structured event log | ✅ v0.1 |
-| | Auditable markdown bitácora | ✅ v0.1 |
+| | Auditable markdown audit log | ✅ v0.1 |
 | | OpenTelemetry exporter | 🚧 v0.3 |
 | **Benchmarks** | BenchmarkRunner with multi-seed + concurrent + p95 | ✅ v0.1 |
 
@@ -246,7 +246,6 @@ See [Recording a demo GIF](#recording-a-demo-gif) below for the `vhs` and
 | Budget enforcement | `max_tokens` basic | `max_tokens` basic | ❌ | **✅ Hierarchical + circuit breaker** |
 | Vendor-neutral | Partial | ✅ | ❌ | **✅ 100% (default Ollama local)** |
 | Prompts visible | ❌ | ❌ | ❌ | **✅ Files on disk** |
-| Latam identity | ❌ | ❌ | ❌ | **✅ Born in Latam, built for the world** |
 
 ---
 
@@ -263,7 +262,7 @@ ARNES aligns explicitly with the [12 factors](https://github.com/humanlayer/12-f
 | 5 | Simple but powerful primitives | ✅ Thread + Specialist + Tool |
 | 6 | Use the right tool for the job | ✅ Model routing |
 | 7 | Humans are tools, not gates | ✅ HITL as a typed tool call |
-| 8 | Make agents easy to debug | ✅ Markdown bitácora |
+| 8 | Make agents easy to debug | ✅ Markdown audit log |
 | 9 | Make agents observable | ✅ Event log + OTel (v0.3) |
 | 10 | Replayable from any point | ✅ Stateless reducer + checkpoint |
 | 11 | Be a state machine, not a DAG | ⚠️ We are a DAG by design (declarative) |
@@ -399,7 +398,7 @@ Results saved to: benchmark-results.json
 The JSON dump (default: `benchmark-results.json`, override with `--output`)
 is suitable for diffing across commits or pasting into a PR description.
 
-### Benchmark results (R15 reference run)
+### Benchmark results (sample run)
 
 The numbers below are from the bundled reference run
 (`docs/benchmark-results.json`, captured 2026-07-30 on the v0.1.0a1
@@ -446,7 +445,7 @@ production audit and scientific reproducibility.
 - **Mock-LLM runs.** The bundled `_SchemaValidMockLLMProvider` is fully
   deterministic: same input → same output, no time-of-day variation,
   no network calls, no API keys. `arnes run manuals/hello-world.yaml
-  --mock` produces a bit-for-byte identical bitácora across runs,
+  --mock` produces a bit-for-byte identical audit log across runs,
   machines, and OSes.
 - **Benchmark results.** `arnes benchmark --seeds N` runs each
   playbook N times with deterministic seeds. The resulting
@@ -470,7 +469,7 @@ production audit and scientific reproducibility.
 - **Real-LLM runs.** OpenAI / Anthropic / Ollama models are
   non-deterministic by design (temperature > 0, model-side sampling).
   ARNES cannot make a non-deterministic model deterministic. What
-  ARNES *can* do is record every real-LLM call into the bitácora
+  ARNES *can* do is record every real-LLM call into the audit log
   so a non-deterministic run is at least *auditable* after the fact.
 - **Real-time wall-clock durations.** Durations depend on machine
   load, network latency, and OS scheduling. The benchmark harness
@@ -486,9 +485,9 @@ production audit and scientific reproducibility.
 **Citation**
 
 If you use ARNES in published research, cite the version you used
-(see [CITATION.cff](CITATION.cff)) and include the bitácora +
+(see [CITATION.cff](CITATION.cff)) and include the run log +
 `benchmark-results.json` from your experimental runs as supplementary
-material. The bitácora is the auditable artifact that lets a reviewer
+material. The run log is the auditable artifact that lets a reviewer
 reproduce your agent's behaviour step-by-step.
 
 ---
@@ -510,12 +509,6 @@ reproduce your agent's behaviour step-by-step.
 - **Discussions:** [GitHub Discussions](https://github.com/frangelbarrera/ARNES/discussions)
 - **Issues:** [Bug reports and feature requests](https://github.com/frangelbarrera/ARNES/issues)
 - **Contributing:** read [CONTRIBUTING.md](CONTRIBUTING.md) — we accept PRs from day one.
-
-### Latam wedge
-
-500M Spanish-speaking developers underserved by the current offering. ARNES
-is born bilingual: README, docs, and quickstart in EN and ES. If you want
-to contribute translations, open an issue with the `i18n` label.
 
 ---
 
@@ -574,8 +567,6 @@ ARNES stands on the shoulders of:
 
 **[⭐ Star the repo](https://github.com/frangelbarrera/ARNES)** if this resonates.
 
-*From Latam to the world. 🌎*
-
 </div>
 
 ---
@@ -627,7 +618,7 @@ known issues that will be fixed in v0.2:
 ## Recording a demo GIF
 
 The repo ships `scripts/demo.sh`, a narrated, deterministic demo of the
-ARNES flow (run a manual → show the bitácora → list specialists → lint a
+ARNES flow (run a manual → show the run log → list specialists → lint a
 playbook). Two ways to turn it into a GIF for the README or a tweet:
 
 **Option A — [vhs](https://github.com/charmbracelet/vhs) (recommended, deterministic):**

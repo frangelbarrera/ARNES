@@ -443,10 +443,10 @@ class HumanApprovalTool(Tool):
             return ToolResult.fail("human_approval", "rich not installed for interactive prompt")
 
 
-# R16: security helpers extracted to :mod:`arnes.tools._security`
-# to keep this module under the AGENTS.md 500-line rule. Re-exported
-# here for backwards compatibility (tests import
-# ``_is_dangerous_command`` from ``arnes.tools.builtin``).
+# Security helpers live in :mod:`arnes.tools._security` to keep this
+# module focused on tool definitions. Re-exported here for backwards
+# compatibility (tests import ``_is_dangerous_command`` from
+# ``arnes.tools.builtin``).
 from arnes.tools._security import (  # noqa: E402,F401 - re-export
     _BLOCKED_HOSTS,
     _BLOCKED_IPS,

@@ -30,7 +30,7 @@ cd /tmp && rm -rf arnes-smoke && mkdir arnes-smoke && cd arnes-smoke
 arnes init --manual smoke-test
 arnes lint manuals/smoke-test.yaml
 arnes run manuals/smoke-test.yaml --mock
-# Expected: ✅ Manual executed, 3 steps, bitácora generated
+# Expected: ✅ Manual executed, 3 steps, run log generated
 ```
 
 If everything passes, continue. If anything fails, do NOT publish yet.
@@ -179,7 +179,7 @@ arnes run manuals/debug-python-issue.yaml \
 
 Verify that:
 - Specialists return valid JSON conforming to their schemas
-- The markdown bitácora is generated correctly
+- The markdown run log is generated correctly
 - The cost guard reports the correct spend
 - Events accumulate in the thread
 
@@ -209,8 +209,6 @@ A Python runtime for AI agents that respects your prompts, your context, your mo
 ✅ Default: local Ollama ($0 cost)
 ✅ Vendor-neutral: Apache 2.0
 
-From Latam to the world. 🌎
-
 github.com/frangelbarrera/ARNES
 
 #AgentHarness #AI #OpenSource #Python
@@ -221,7 +219,6 @@ github.com/frangelbarrera/ARNES
 - #AI #OpenSource #Python
 - #MCP #ModelContextProtocol
 - #LocalAI #Ollama
-- #LatamTech
 
 ### Optimal timing
 - Tuesday or Wednesday (not Monday or Friday)

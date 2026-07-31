@@ -75,7 +75,7 @@ For research papers using ARNES:
 1. **Fix the seed**: `arnes benchmark --seeds 42`
 2. **Record the environment**: Python version, OS, ARNES version
 3. **Use vcrpy cassettes**: For real-LLM experiments, record and commit cassettes
-4. **Share the bitácora**: The markdown audit trail is your reproducibility artifact
+4. **Share the run log**: The markdown audit trail is your reproducibility artifact
 5. **Cite ARNES**: Use the
    [CITATION.cff](https://github.com/frangelbarrera/ARNES/blob/main/CITATION.cff)
    file

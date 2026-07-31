@@ -33,5 +33,5 @@ class PlaybookRunResult(BaseModel):
     error: str | None = None
 
     def to_markdown(self) -> str:
-        """Render the run as a markdown bitácora."""
+        """Render the run as a markdown audit log."""
         return self.thread.to_markdown()

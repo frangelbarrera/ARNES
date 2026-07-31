@@ -194,7 +194,7 @@ class TestSpecialistStream:
         """Streaming with a provider that returns no tool_calls terminates
         after one ReAct iteration (no tool execution).
 
-        The R15 streaming path now participates in the ReAct loop — if the
+        The streaming path participates in the ReAct loop — if the
         provider streams tool_calls, the specialist executes the tools and
         starts another streaming iteration. This mock returns a complete
         JSON response without ``tool_calls``, so the loop exits after one
@@ -224,7 +224,7 @@ class TestSpecialistStream:
 
     @pytest.mark.asyncio
     async def test_stream_executes_react_tool_loop_when_tool_calls_present(self):
-        """R15: streaming now participates in the ReAct loop.
+        """Streaming participates in the ReAct loop.
 
         When the provider streams a final chunk with ``tool_calls`` populated,
         the specialist must execute the tool, append the result to messages,

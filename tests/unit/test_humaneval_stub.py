@@ -1,4 +1,4 @@
-"""Tests for the HumanEval-style benchmark stub (R16).
+"""Tests for the HumanEval-style benchmark stub.
 
 The stub at ``arnes.benchmarks.humaneval_stub`` ships 3 hand-authored
 HumanEval-style problems and a ``check`` helper. These tests pin:

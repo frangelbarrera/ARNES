@@ -19,10 +19,9 @@ ARNES CostGuard provides:
 - Hard stop: abort at 100% of budget
 - Audit log: every decision logged to Thread events via the event sink
 
-R16 split: :class:`BudgetExceeded` and :class:`CostBudget` were
-extracted to :mod:`arnes.middleware.budget` to keep this module
-under the AGENTS.md 500-line rule. They are re-exported here for
-backwards compatibility (existing
+:class:`BudgetExceeded` and :class:`CostBudget` live in
+:mod:`arnes.middleware.budget`; they are re-exported here for backwards
+compatibility (existing
 ``from arnes.middleware.cost_guard import CostBudget, BudgetExceeded``
 imports keep working).
 """
@@ -45,9 +44,8 @@ logger = structlog.get_logger(__name__)
 
 # Re-export ``BudgetExceeded`` and ``CostBudget`` for backwards
 # compatibility (existing imports of the shape
-# ``from arnes.middleware.cost_guard import CostBudget`` keep working
-# after the R16 split). The canonical home for these is
-# :mod:`arnes.middleware.budget`.
+# ``from arnes.middleware.cost_guard import CostBudget`` keep working).
+# The canonical home for these is :mod:`arnes.middleware.budget`.
 __all__ = ["BudgetExceeded", "CostBudget", "CostGuard"]
 
 
