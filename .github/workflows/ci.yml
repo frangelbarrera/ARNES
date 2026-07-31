@@ -25,26 +25,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-
       - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
 
       - name: Lint with ruff
-        run: uv run ruff check arnes/ tests/
+        run: ruff check arnes/ tests/
 
       - name: Format check with ruff
-        run: uv run ruff format --check arnes/ tests/
+        run: ruff format --check arnes/ tests/
 
       - name: Type check with mypy
-        run: uv run mypy arnes/ --strict
+        run: mypy arnes/ --strict
 
       - name: Test with pytest
-        run: uv run pytest tests/ --cov=arnes --cov-report=xml --cov-report=term --cov-fail-under=65
+        run: pytest tests/ --cov=arnes --cov-report=xml --cov-report=term --cov-fail-under=65
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
@@ -59,20 +60,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-
       - name: Set up Python
-        run: uv python install 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
 
       - name: Run bandit security scan
-        run: uv run bandit -r arnes/ -c pyproject.toml
+        run: bandit -r arnes/ -c pyproject.toml
 
       - name: Run pip-audit
-        run: uv run pip-audit --ignore-vuln PYSEC-2026-1845
+        run: pip-audit --ignore-vuln PYSEC-2026-1845
 
   build:
     name: Build package
@@ -81,17 +83,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-
       - name: Set up Python
-        run: uv python install 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
 
       - name: Build package
-        run: uv build
+        run: python -m build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

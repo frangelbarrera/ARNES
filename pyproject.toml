@@ -251,11 +251,5 @@ skips = ["B101"]  # assert_used in tests
 enable-by-default = false
 
 # ============================================================
-# UV — standalone project (not a workspace member)
 # ============================================================
-[tool.uv]
-package = true
-managed = true
 
-[tool.uv.workspace]
-members = []
