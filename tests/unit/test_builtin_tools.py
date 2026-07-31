@@ -101,7 +101,7 @@ class TestShellToolSandboxMode:
             new_callable=AsyncMock,
             return_value=mock_proc,
         ) as mock_exec:
-            result = await tool.execute({"command": "echo hello-from-sandbox"}, ctx)
+            result = await tool.execute({"command": "printf hello-from-sandbox"}, ctx)
 
         assert result.success is True
         assert result.output["sandbox"] == "docker-tier1"
@@ -181,7 +181,7 @@ class TestShellToolSandboxMode:
             new_callable=AsyncMock,
             side_effect=FileNotFoundError("docker binary not found"),
         ):
-            result = await tool.execute({"command": "echo hi"}, ctx)
+            result = await tool.execute({"command": "printf hi"}, ctx)
 
         assert result.success is False
         assert "Docker not available" in result.error
@@ -685,7 +685,7 @@ class TestIsDangerousCommand:
         """Common safe commands must NOT trip the regex."""
         safe = [
             "ls -la",
-            "echo hello",
+            "printf hello",
             "pwd",
             "cat README.md",
             "python script.py",

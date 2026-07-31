@@ -115,7 +115,7 @@ class TestShellTool:
         monkeypatch.delenv("ARNES_DEV_MODE", raising=False)
         ctx = ToolContext(thread_id=uuid4(), step_id="test", sandbox_enabled=False)
         tool = ShellTool()
-        result = await tool.execute({"command": "echo hello"}, ctx)
+        result = await tool.execute({"command": "printf hello"}, ctx)
         assert result.success is False
         assert "ARNES_DEV_MODE" in result.error
 

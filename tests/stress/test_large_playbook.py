@@ -1,4 +1,5 @@
 """Stress test: a 50-step playbook compiled and executed against the mock LLM.
+pytestmark = pytest.mark.timeout(120)
 
 Verifies that ARNES can handle a realistically large playbook end-to-end:
 

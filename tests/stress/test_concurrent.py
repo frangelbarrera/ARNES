@@ -1,4 +1,5 @@
 """ARNES Concurrent Execution Stress Test (STRESS-1).
+pytestmark = pytest.mark.timeout(120)
 
 Runs 50 playbooks concurrently via ``asyncio.gather`` with the
 ``SchemaValidMockProvider`` pattern (lifted from ``tests/integration/test_e2e.py``).
