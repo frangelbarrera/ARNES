@@ -1,9 +1,3 @@
-# CodeQL — semantic code analysis for Python source.
-#
-# Runs on every push/PR to main+develop, plus a weekly scheduled scan to
-# catch newly-published CVEs in patterns we already shipped. Findings flow
-# into the repo Security tab for triage.
-
 name: CodeQL
 
 on:
@@ -12,17 +6,11 @@ on:
   pull_request:
     branches: [main, develop]
   schedule:
-    # 04:17 UTC every Thursday — off-peak, before the weekly dependency bump.
     - cron: "17 4 * * 4"
 
 permissions:
   contents: read
-  # security-events: write is required for CodeQL to upload SARIF results
-  # to the repo's Security tab. Without it, the analyze step silently no-ops.
   security-events: write
-  # actions: read is required for CodeQL to introspect workflow files for
-  # the actions-language analysis (we don't enable that language here, but
-  # the permission is harmless to declare and future-proofs the matrix).
   actions: read
 
 jobs:
@@ -33,25 +21,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # CodeQL supports many languages; ARNES is Python-only at present.
-        # Add 'actions' here once we want workflow-file scanning.
         language: ["python"]
     steps:
-      - uses: actions/checkout@11bd7198bbe279f4140dcbf88bb6c56682c13f3d # v4.2.2
+      - uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@48ab28a5f58025a25818f2998db38a1ba4073988 # v3.28.0
+        uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          # Use the 'security-extended' query suite for deeper analysis —
-          # the default suite misses several relevant Python checks
-          # (e.g. unsafe deserialization, SQL construction patterns).
           queries: security-extended
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@b7bf0a3ed3ecfa44160715dcb6d26bf58493b3aa # v3.28.0
+        uses: github/codeql-action/autobuild@v3
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@5c55fb1e5f4b8b4a95f82a18eaf4b1d2d5d4e1e0 # v3.28.0
+        uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
