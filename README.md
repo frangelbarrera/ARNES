@@ -39,117 +39,22 @@
 
 > **If your framework needs a debugger for your debugger, it is the wrong framework.**
 
-## What it looks like
-
-```bash
-git clone https://github.com/frangelbarrera/ARNES.git
-cd ARNES
-uv sync --all-extras --dev
-uv run arnes run manuals/hello-world.yaml --mock
-```
-
----
-
 ## Why ARNES?
 
-Modern agent frameworks ship features; ARNES ships control. If you have
-ever lost a Friday night to "why did the agent send *that* prompt?",
-waited a month for a "$50 surprise" credit-card bill, or refused to
-upgrade a model because you weren't sure which call sites would silently
-change behaviour, ARNES was built for you.
+Most agent frameworks are black boxes: you can't see the prompts, can't control the costs, and can't audit what happened. ARNES fixes this with three principles:
 
-**The real-world problem ARNES solves**
-
-Teams building with LLMs in 2024–2026 hit the same four walls:
-
-1. **Opacity.** Most frameworks send prompts you can't see, route through
-   model selectors you can't diff, and persist state in objects you can't
-   print. When a run goes sideways, you reverse-engineer it from logs that
-   were never designed for replay.
-2. **Vendor capture.** Vendor-only features (OpenAI function-calling
-   shapes, Anthropic prompt-caching, Google grounding) get promoted to
-   first-class APIs. Switching providers means rewriting agent code, not
-   swapping a string.
-3. **Spend denial-of-service.** Without real budget enforcement, an
-   agent can burn $50 in 90 seconds in a retry loop. `max_tokens` is a
-   per-call cap, not a budget. By the time you notice, the bill is in.
-4. **Audit amnesia.** Compliance, security review, and academic
-   reproducibility all demand a transcript: what was asked, what was
-   returned, what tools were called, what it cost. Most frameworks treat
-   this as a logging afterthought rather than a primary artifact.
-
-ARNES treats the **manual** (a YAML playbook) as the source of truth
-and the **bitácora** (an append-only markdown transcript) as the audit
-trail. The manual is the spec; the bitácora is the proof. Both are
-files on disk — versionable, diffable, shareable.
-
-**What ARNES attacks directly**
-
-- **Opacity → transparency.** Every prompt sent is in the bitácora.
-  Every model-routed decision is a `MODEL_ROUTED` event. Every cost
-  threshold is a `COST_THRESHOLD` event. The thread is the audit log.
-- **Vendor capture → vendor neutrality.** Vendor-only features are not
-  promoted to first-class APIs. The provider is a string. Switching
-  from `openai/gpt-4o` to `anthropic/claude-sonnet-4-20250514` to
-  `ollama/llama3.2` is a one-line change.
-- **Spend DoS → CostGuard.** Hierarchical budget (org → project → agent
-  → task), temporal circuit breaker (max USD/minute), pre-flight
-  projection (reject calls guaranteed to overshoot), HITL pause at 95%,
-  hard stop at 100%.
-- **Audit amnesia → bitácora.** Every run emits an append-only
-  markdown transcript with every prompt, every response, every tool
-  call, every cost. Diffable across commits. Citeable in a paper.
-
-**Why now**
-
-The agent era is being written by people who can't fully explain what
-their agent did. That is a problem in production (compliance, security,
-cost). It is a bigger problem in research (reproducibility, peer
-review, scientific credit). ARNES makes the agent loop as inspectable
-as a Unix pipeline — because inspectable agents are the only ones
-worth shipping.
-
----
+1. **Transparency** — Every prompt, decision, and cost is logged to a markdown bitácora you can `git diff`.
+2. **Cost control** — Hierarchical budget enforcement with circuit breaker. An agent can't burn your API budget silently.
+3. **Vendor neutrality** — Default model is local (Ollama, $0). Switching providers is one line. No vendor lock-in.
 
 ## Who is ARNES for?
 
-ARNES is built for builders who refuse to cede control of their agent
-loop to a black box. Concretely:
+- **Backend engineers** who need production agents with budgets, audit trails, and compliance
+- **ML engineers** who need reproducible benchmarks across providers
+- **Researchers** who need citation-ready, replayable experiments
+- **DevOps teams** who need MCP server integration with auth and rate limiting
 
-- **Backend engineers shipping production agents.** You need budgets
-  that fail closed, prompts you can paste into a code review, and an
-  audit trail that satisfies compliance. ARNES is the harness between
-  your HTTP handler and the LLM.
-- **ML / AI engineers benchmarking models.** You need the *same* agent
-  loop to run reproducibly across providers, with per-call token and
-  cost telemetry, and a cassette-replayable test suite. ARNES ships
-  vcrpy cassettes, multi-seed benchmarking, and p95 reporting out of
-  the box.
-- **Researchers studying agent behaviour.** You need a transcript you
-  can cite, a deterministic mock LLM for control runs, and a
-  thread-replay primitive that lets you resume from any event.
-  ARNES treats the thread as the unit of state — `(state, event) →
-  state` — so every run is replayable from any checkpoint.
-- **Tooling / DX teams integrating agents into IDEs.** You need an MCP
-  server you can stand up in one command, with bearer-token auth,
-  per-IP rate limits, and an SSE endpoint your UI can subscribe to.
-  ARNES ships `arnes mcp serve` (stdio + HTTP+SSE transport) with
-  auth and rate limiting built in.
-- **Latin-American and Global-South developers.** 500M
-  Spanish-speaking developers are underserved by current tools. ARNES
-  is born bilingual (README, docs, quickstart in EN + ES), defaults to
-  Ollama on `localhost` (no API key, no network, no spend), and is
-  Apache-2.0 so it can be forked, hosted, and extended without asking.
-
-**Who ARNES is NOT for (yet)**
-
-- **No-code users.** If you want a chat UI to drag-and-drop agents,
-  ARNES is not your tool today (v0.4 may add a Studio UI on top of
-  the SSE endpoint).
-- **Multi-agent crew orchestration.** Single-agent default in v0.1.
-  Crew / A2A land in v0.4 / v0.5.
-- **Hosted SaaS.** ARNES will never have a hosted version (Manifesto
-  declaration #4). Self-host only.
+Not for you if you want a visual builder, hosted SaaS, or multi-agent crews (v0.4+).
 
 ---
 
