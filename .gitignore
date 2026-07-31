@@ -1,103 +1,84 @@
-skills/
-node_modules/
-tool-results/
-download/
-.env
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.bandit/
-pip-audit-output.json
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Type checkers
-.pyre/
-.pytype/
-
-# Jupyter
-.ipynb_checkpoints
 
 # ARNES runtime state
-.arnes/
-arnes_state.db
-arnes_cache.db
-*.arnes-thread.json
-bitacora-*.md
-
+# Byte-compiled / optimized / DLL files
+# C extensions
+# Distribution / packaging
+# Environments
+# IDEs
+# Installer logs
+# Jupyter
 # MkDocs build output (R15 docs site)
-site/
-
 # OS
-Thumbs.db
-tool-results/
-tool-results/
-tool-results/
-tool-results/
-download/
+# PyInstaller
+# Type checkers
+# Unit test / coverage reports
+*$py.class
+*.arnes-thread.json
+*.cover
+*.egg
+*.egg-info/
+*.manifest
+*.py,cover
+*.py[cod]
+*.so
+*.spec
+*.swo
+*.swp
+*~
+.DS_Store
+.Python
+.arnes/
+.bandit/
+.cache
+.coverage
+.coverage.*
+.eggs/
 .env
+.hypothesis/
+.idea/
+.installed.cfg
+.ipynb_checkpoints
+.mypy_cache/
+.nox/
+.pyre/
+.pytest_cache/
+.pytype/
+.ruff_cache/
+.tox/
+.venv
+.vscode/
+ENV/
+MANIFEST
+Thumbs.db
+__pycache__/
+arnes_cache.db
+arnes_state.db
+bitacora-*.md
+build/
+coverage.xml
+develop-eggs/
+dist/
+download/
+downloads/
+eggs/
+env.bak/
+env/
+htmlcov/
+lib/
+lib64/
+node_modules/
+nosetests.xml
+parts/
+pip-audit-output.json
+pip-delete-this-directory.txt
+pip-log.txt
+sdist/
+share/python-wheels/
+site/
 skills/
+tool-results/
 upload/
+var/
+venv.bak/
+venv/
+wheels/
