@@ -16,7 +16,7 @@
 
 <div align="center">
 
-<img src="docs/logo.svg" alt="ARNES logo" width="120" />
+<img src="docs/logo-ARNES.png" alt="ARNES logo" width="100" />
 
 # ARNES
 
