@@ -64,5 +64,6 @@ For researchers using ARNES:
 ## Security Disclosure
 
 If you discover a security vulnerability in ARNES, please report it privately
-via [GitHub Security Advisories](https://github.com/frangelbarrera/ARNES/security/advisories/new).
-Do not open a public issue. See [SECURITY.md](../SECURITY.md) for the full policy.
+via GitHub Security Advisories. Do not open a public issue. See the
+[Security Policy](https://github.com/frangelbarrera/ARNES/blob/main/SECURITY.md)
+for the full policy.
