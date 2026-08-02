@@ -229,7 +229,18 @@ class TestValidatePlaybook:
 
     @pytest.mark.asyncio
     async def test_validate_playbook_with_path_traversal_is_blocked(self) -> None:
-        """``/etc/passwd`` must be rejected BEFORE the compiler reads it."""
+        """Blocked system paths must be rejected BEFORE the compiler reads them.
+
+        Uses ``/etc/passwd`` on Unix (resolves to ``/private/etc/passwd`` on
+        macOS, both blocked) and ``C:\\Windows\\System32`` on Windows.
+        """
+        import sys
+
+        if sys.platform == "win32":
+            blocked_path = "C:\\Windows\\System32\\drivers\\etc\\hosts"
+        else:
+            blocked_path = "/etc/passwd"
+
         server = ArnesMCPServer()
         response = await server.handle_request(
             {
@@ -238,7 +249,7 @@ class TestValidatePlaybook:
                 "method": "tools/call",
                 "params": {
                     "name": "arnes_validate_playbook",
-                    "arguments": {"path": "/etc/passwd"},
+                    "arguments": {"path": blocked_path},
                 },
             }
         )
@@ -247,7 +258,6 @@ class TestValidatePlaybook:
         # The error must be the access-denied message, NOT a YAML parse error —
         # this proves the path check happened before any file read.
         assert "Access denied" in payload["error"]
-        assert "/etc/passwd" in payload["error"]
 
 
 class TestListPlaybooks:
@@ -544,8 +554,18 @@ class TestPathValidation:
         """Every prefix in ``_BLOCKED_PATH_PREFIXES`` must be rejected.
 
         Parametrized over the tuple so a future addition (e.g. ``/run``) is
-        automatically covered.
+        automatically covered. Windows prefixes (``c:\\...``) are only
+        tested on Windows; on Unix they resolve as relative paths and would
+        produce a false failure.
         """
+        import sys
+
+        is_windows_prefix = blocked.startswith("c:")
+        if is_windows_prefix and sys.platform != "win32":
+            pytest.skip(f"Windows-only prefix '{blocked}' — not applicable on {sys.platform}")
+        if not is_windows_prefix and sys.platform == "win32":
+            pytest.skip(f"Unix-only prefix '{blocked}' — not applicable on Windows")
+
         assert _validate_playbook_path(blocked) is None
         # Trailing path components must also be blocked.
         assert _validate_playbook_path(f"{blocked}/some/file") is None

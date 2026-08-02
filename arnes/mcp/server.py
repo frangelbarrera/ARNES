@@ -93,7 +93,21 @@ __all__ = [
 
 # System directories that playbook paths may NEVER touch, regardless of how
 # the caller resolves them. Mirrors the policy enforced in `_run_playbook`.
-_BLOCKED_PATH_PREFIXES: tuple[str, ...] = ("/etc", "/root", "/var", "/proc", "/sys", "/dev")
+_BLOCKED_PATH_PREFIXES: tuple[str, ...] = (
+    # Unix system directories
+    "/etc",
+    "/private/etc",  # macOS: /etc -> /private/etc
+    "/root",
+    "/var",
+    "/private/var",  # macOS: /var -> /private/var
+    "/proc",
+    "/sys",
+    "/dev",
+    # Windows system directories (lowercase for case-insensitive match)
+    "c:\\windows",
+    "c:\\program files",
+    "c:\\users\\public",
+)
 
 
 def _validate_playbook_path(path: str) -> Path | None:
@@ -109,8 +123,12 @@ def _validate_playbook_path(path: str) -> Path | None:
         resolved = Path(path).resolve(strict=False)
     except (ValueError, OSError):
         return None
-    path_str = str(resolved)
-    if any(path_str.startswith(prefix) for prefix in _BLOCKED_PATH_PREFIXES):
+    # Normalise to lowercase with forward slashes so the prefix match works
+    # consistently across Linux, macOS (where /etc -> /private/etc), and
+    # Windows (where C:\\Windows and c:\\windows are the same path).
+    path_str = str(resolved).lower().replace("\\", "/")
+    blocked = [p.replace("\\", "/") for p in _BLOCKED_PATH_PREFIXES]
+    if any(path_str.startswith(prefix) for prefix in blocked):
         return None
     return resolved
 
