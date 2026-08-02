@@ -1,0 +1,51 @@
+# Dockerfile.sandbox — arnes-sandbox:latest
+#
+# Tier 1 dev-local sandbox for ARNES specialists that need to execute
+# untrusted code (the @coder / @debugger ReAct loops, the shell tool, etc).
+#
+# Design constraints (enforced at runtime, not at build time):
+#   - No network: `docker run --network=none ...`
+#   - Read-only root filesystem: `docker run --read-only ...`
+#   - No new privileges: `docker run --security-opt=no-new-privileges ...`
+#   - Non-root user: `docker run -u 1000:1000 ...`
+#   - tmpfs for /tmp and /workspace (writable scratch space)
+#
+# The image itself is deliberately minimal: just enough OS to run `python3`
+# and the `git`/`curl` ARNES specialists invoke to fetch context. Anything
+# heavier (compilers, language runtimes, package managers with network
+# access) belongs in a downstream image layered on top of this one.
+#
+# Build:
+#   ./scripts/build-sandbox.sh
+# or:
+#   docker build -f Dockerfile.sandbox -t arnes-sandbox:latest .
+#
+# Run (Tier 1 hardening):
+#   docker run --rm \
+#     --network=none \
+#     --read-only \
+#     --security-opt=no-new-privileges \
+#     -u 1000:1000 \
+#     --tmpfs /tmp:rw,size=64m,mode=1777 \
+#     --tmpfs /workspace:rw,size=128m,mode=1777 \
+#     arnes-sandbox:latest \
+#     python3 -c 'print("hello from sandbox")'
+
+FROM python:3.12-slim
+
+# Single apt-get layer: install only the runtime tools ARNES specialists
+# expect on PATH (git for diff/context, curl for HTTP fetches, ca-certificates
+# so HTTPS works in any downstream image that re-enables network). Clean the
+# apt cache in the same layer to keep the image small and avoid leaking
+# package metadata into the read-only rootfs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# /workspace is the only writable path at runtime (via --tmpfs). ARNES
+# specialists write generated code, scratch files, and run-log fragments
+# here. Anything outside /workspace is read-only under --read-only.
+WORKDIR /workspace
+
+# No network, no privileges, read-only rootfs enforced at runtime.
+# See the docker run invocation in the comment block above.
+CMD ["python3"]

@@ -1,0 +1,42 @@
+# incident-postmortem.yaml — Generate an incident postmortem from a description
+name: incident-postmortem
+objective: Analyze an incident and generate a structured postmortem document
+budget_usd: 0.35
+
+variables:
+  incident_description: "API returned 500 errors for 30 minutes starting at 14:00 UTC"
+  severity: "SEV-2"
+  affected_service: "user-service"
+
+steps:
+  - id: analyze_timeline
+    specialist: "@debugger"
+    input:
+      error: "{{ variables.incident_description }}"
+      focus: "Reconstruct the timeline of events leading to the incident"
+
+  - id: identify_root_cause
+    specialist: "@debugger"
+    input:
+      error: "{{ variables.incident_description }}"
+      focus: "Identify the root cause (not symptoms)"
+
+  - id: assess_impact
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.incident_description }}"
+      focus: "Assess user impact, business impact, and severity validation"
+
+  - id: generate_action_items
+    specialist: "@planner"
+    input:
+      task: "Generate action items to prevent recurrence based on: root_cause={{ steps.identify_root_cause.output }}, impact={{ steps.assess_impact.output }}"
+
+  - id: compile_postmortem
+    specialist: "@coder"
+    input:
+      spec: "Compile a full postmortem document with: timeline, root cause, impact, action items"
+      timeline: "{{ steps.analyze_timeline.output }}"
+      root_cause: "{{ steps.identify_root_cause.output }}"
+      impact: "{{ steps.assess_impact.output }}"
+      action_items: "{{ steps.generate_action_items.output }}"

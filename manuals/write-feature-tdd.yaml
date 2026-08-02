@@ -1,0 +1,38 @@
+# write-feature-tdd.yaml — Implement a feature using TDD
+
+name: write-feature-tdd
+objective: Implement a feature using TDD (test → code → refactor)
+budget_usd: 0.40
+
+steps:
+  - id: plan
+    specialist: "@planner"
+    input:
+      task: "Plan the implementation of: add user authentication with JWT"
+
+  - id: write_tests
+    specialist: "@tester"
+    input:
+      spec: "Write tests for JWT auth: happy path, expired token, invalid signature, missing token"
+      context: "{{ steps.plan.output }}"
+
+  - id: write_code
+    specialist: "@coder"
+    input:
+      spec: "Implement JWT auth to make the tests pass"
+      tests: "{{ steps.write_tests.output }}"
+      context: "{{ steps.plan.output }}"
+
+  - id: review
+    specialist: "@reviewer"
+    input:
+      code: "{{ steps.write_code.output }}"
+      tests: "{{ steps.write_tests.output }}"
+      focus: "Review for security, correctness, idioms"
+
+  - id: verify_tests_pass
+    specialist: "@tester"
+    input:
+      code: "{{ steps.write_code.output }}"
+      tests: "{{ steps.write_tests.output }}"
+      focus: "Run the tests and confirm they all pass"

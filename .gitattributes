@@ -1,0 +1,24 @@
+# Normalize line endings: repo-side LF, check-out native. This prevents
+# CRLF/LF flip-flops between Windows and Unix contributors that break ruff
+# format --check and shell heredocs in CI.
+* text=auto eol=lf
+
+# Ensure these text files always check out with LF (they contain Unix
+# heredocs / shell snippets that break under CRLF).
+*.sh text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+Dockerfile* text eol=lf
+
+# Binary assets — never normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

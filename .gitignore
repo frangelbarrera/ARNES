@@ -1,0 +1,86 @@
+
+# ARNES runtime state
+# Byte-compiled / optimized / DLL files
+# C extensions
+# Distribution / packaging
+# Environments
+# IDEs
+# Installer logs
+# Jupyter
+# MkDocs build output (R15 docs site)
+# OS
+# PyInstaller
+# Type checkers
+# Unit test / coverage reports
+*$py.class
+*.arnes-thread.json
+*.cover
+*.egg
+*.egg-info/
+*.manifest
+*.py,cover
+*.py[cod]
+*.so
+*.spec
+*.swo
+*.swp
+*~
+.DS_Store
+.Python
+.arnes/
+.bandit/
+.cache
+.coverage
+.coverage.*
+.eggs/
+.env
+.hypothesis/
+.idea/
+.installed.cfg
+.ipynb_checkpoints
+.mypy_cache/
+.nox/
+.pyre/
+.pytest_cache/
+.pytype/
+.ruff_cache/
+.tox/
+.venv
+.vscode/
+ENV/
+MANIFEST
+Thumbs.db
+__pycache__/
+arnes_cache.db
+arnes_state.db
+bitacora-*.md
+build/
+coverage.xml
+develop-eggs/
+dist/
+download/
+downloads/
+eggs/
+env.bak/
+env/
+htmlcov/
+lib/
+lib64/
+node_modules/
+nosetests.xml
+parts/
+pip-audit-output.json
+pip-delete-this-directory.txt
+pip-log.txt
+sdist/
+share/python-wheels/
+site/
+skills/
+tool-results/
+upload/
+var/
+venv.bak/
+venv/
+wheels/
+uv.lock
+arnes-run-*.md

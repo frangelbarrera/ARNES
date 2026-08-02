@@ -1,0 +1,1069 @@
+"""
+ARNES Playbook Executor — runs a compiled Playbook as a DAG.
+
+The executor:
+1. Walks the playbook steps in order.
+2. For each step, invokes the specialist or tool.
+3. Applies conditional branches (if/elif/else).
+4. Runs parallel branches concurrently.
+5. Retry execution: v0.2 (schemas defined, not yet wired).
+6. HITL execution: v0.2 (schemas defined, not yet wired).
+7. Tracks budget via CostGuard.
+8. Appends events to the Thread.
+9. Returns a PlaybookRunResult with full trace.
+
+The executor is async and supports both fire-and-forget and streaming modes.
+
+Helper modules (split out so each file stays focused and testable):
+
+- ``arnes.playbooks.result``: ``PlaybookRunResult`` model.
+- ``arnes.playbooks.sandbox``: ``DEFAULT_SANDBOX_CONTAINER`` + ``_is_docker_available``.
+- ``arnes.playbooks.events``: ``_drain_middleware_events`` + ``_filter_internal_keys``.
+- ``arnes.playbooks.template``: ``_TEMPLATE_RE`` + ``_resolve_input`` / ``_resolve_template`` /
+  ``_resolve_expr``.
+- ``arnes.playbooks.parallel``: ``_execute_parallel_branch``.
+
+These symbols are imported into this module's namespace so callers can use
+``from arnes.playbooks.executor import PlaybookRunResult`` (and the other
+legacy import aliases). They are NOT re-bound as methods on the
+``PlaybookExecutor`` class — call sites that used
+``executor._resolve_template(...)`` etc. should call the standalone
+functions in ``arnes.playbooks.template`` directly.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import AsyncIterator
+from typing import Any
+
+import structlog
+
+from arnes.llm.base import LLMProvider
+from arnes.llm.factory import get_provider
+from arnes.middleware.cost_guard import BudgetExceeded, CostBudget, CostGuard
+from arnes.playbooks.events import (
+    _drain_middleware_events,
+    _emit_review_completed,
+    _emit_review_event,
+    _filter_internal_keys,
+)
+from arnes.playbooks.parallel import _execute_parallel_branch
+from arnes.playbooks.result import PlaybookRunResult
+from arnes.playbooks.sandbox import DEFAULT_SANDBOX_CONTAINER, _is_docker_available
+from arnes.playbooks.schema import ConditionalBranch, Playbook, PlaybookStep, ReviewLoop
+from arnes.playbooks.template import _TEMPLATE_RE, _resolve_expr, _resolve_input, _resolve_template
+from arnes.specialists.base import SpecialistRegistry, get_default_specialist_registry
+from arnes.thread import Thread
+from arnes.thread.events import (
+    ConditionalBranchEvent,
+    Event,
+    RunCompletedEvent,
+    RunFailedEvent,
+    StepCompletedEvent,
+    StepFailedEvent,
+    StepStartedEvent,
+)
+from arnes.tools.base import ToolContext, ToolRegistry
+from arnes.tools.registry import get_default_registry
+
+logger = structlog.get_logger(__name__)
+
+# Public re-exports for backwards compatibility. The canonical
+# homes for these symbols are the dedicated modules above; the names are
+# intentionally re-bound here so existing `from arnes.playbooks.executor
+# import X` imports and `unittest.mock.patch("arnes.playbooks.executor.X")`
+# patches keep working.
+#
+# Note: the legacy delegating *methods* on ``PlaybookExecutor``
+# (``_resolve_input``, ``_resolve_template``, ``_resolve_expr``,
+# ``_drain_middleware_events``) and the ``_TEMPLATE_RE`` class attribute
+# have been removed. Call sites that used ``executor.foo(...)`` should call
+# the standalone functions in ``arnes.playbooks.template`` /
+# ``arnes.playbooks.events`` directly.
+__all__ = [
+    "DEFAULT_SANDBOX_CONTAINER",
+    "_TEMPLATE_RE",
+    "PlaybookExecutor",
+    "PlaybookRunResult",
+    "_drain_middleware_events",
+    "_filter_internal_keys",
+    "_is_docker_available",
+    "_resolve_expr",
+    "_resolve_input",
+    "_resolve_template",
+]
+
+
+class PlaybookExecutor:
+    """Executes a compiled Playbook.
+
+    Usage:
+        playbook = PlaybookCompiler.from_file("manuals/audit-pr.yaml")
+        executor = PlaybookExecutor()
+        result = await executor.run(playbook)
+        print(result.to_markdown())
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: LLMProvider | None = None,
+        specialist_registry: SpecialistRegistry | None = None,
+        tool_registry: ToolRegistry | None = None,
+        cost_budget: CostBudget | None = None,
+        interactive: bool = False,
+        sandbox_enabled: bool | None = None,
+        sandbox_container: str | None = None,
+        model: str | None = None,
+        enable_review_loops: bool = False,
+    ) -> None:
+        self.provider = provider or get_provider()
+        self.specialist_registry = specialist_registry or get_default_specialist_registry()
+        self.tool_registry = tool_registry or get_default_registry()
+        self.cost_budget = cost_budget or CostBudget()
+        self.interactive = interactive
+        # When set, this model string overrides every specialist's default_model,
+        # letting the caller (CLI, MCP server) force a single model for the whole
+        # playbook run (e.g. ``openrouter/google/gemma`` for testing).
+        self._model_override = model
+        # When True, every specialist step that does NOT declare its own
+        # ``review`` config gets a default ReviewLoop (critic=@reviewer,
+        # max_iterations=3). Steps that DO declare a review config are
+        # honoured as-is regardless of this flag.
+        self._enable_review_loops = enable_review_loops
+
+        # Sandbox wiring (see SECURITY.md for the sandbox model).
+        #
+        # Default behaviour:
+        #   - If ``sandbox_enabled`` is explicitly passed, honour it (caller
+        #     knows best — e.g. tests, Harness, MCP server).
+        #   - Otherwise, auto-detect: enable the Docker sandbox when the
+        #     ``docker`` CLI is on PATH, fall back to non-sandboxed mode
+        #     when it isn't.
+        #
+        # In non-sandboxed mode the ShellTool requires ``ARNES_DEV_MODE=1``
+        # as a double-gate before it will execute commands locally. We log
+        # a warning so operators know shell calls will be gated rather than
+        # sandboxed.
+        if sandbox_enabled is not None:
+            self._sandbox_enabled = sandbox_enabled
+            self._sandbox_container = sandbox_container or (
+                DEFAULT_SANDBOX_CONTAINER if sandbox_enabled else None
+            )
+        elif _is_docker_available():
+            self._sandbox_enabled = True
+            self._sandbox_container = sandbox_container or DEFAULT_SANDBOX_CONTAINER
+            logger.info(
+                "sandbox_docker_detected",
+                container=self._sandbox_container,
+                mode="docker-tier1",
+            )
+        else:
+            self._sandbox_enabled = False
+            self._sandbox_container = None
+            logger.warning(
+                "sandbox_docker_unavailable",
+                fallback="ARNES_DEV_MODE=1 required for local shell execution",
+                hint="Install Docker or build arnes-sandbox:latest to enable the sandbox",
+            )
+
+    async def run(
+        self,
+        playbook: Playbook,
+        *,
+        initial_input: dict[str, Any] | None = None,
+    ) -> PlaybookRunResult:
+        """Execute a playbook. Returns a PlaybookRunResult."""
+        # Use a mutable list to hold the thread (so step helpers can append)
+        thread_holder: list[Thread] = [Thread.create()]
+        start_time = time.monotonic()
+        outputs: dict[str, Any] = dict(playbook.variables)
+        if initial_input:
+            outputs.update(initial_input)
+
+        # Track cost guard at the run level (shared across steps)
+        cost_guard = CostGuard(self.provider, budget=self.cost_budget)
+
+        steps_executed = 0
+        steps_failed = 0
+        total_tokens_in = 0
+        total_tokens_out = 0
+        total_cost_usd = 0.0
+        aborted = False
+        abort_error: str | None = None
+
+        try:
+            for step in playbook.steps:
+                # Check if step should be skipped due to prior skip_to
+                skip_until = outputs.get("__skip_steps_until", {})
+                if skip_until:
+                    # If we've reached the target step, clear the skip marker
+                    if step.id in skip_until:
+                        del skip_until[step.id]
+                        if not skip_until:
+                            del outputs["__skip_steps_until"]
+                        logger.info("skip_to_reached", step_id=step.id)
+                        # Don't skip this step — execute it
+                    else:
+                        # Skip this step
+                        logger.info("step_skipped", step_id=step.id, reason="skip_to")
+                        continue
+
+                # Execute the step
+                step_result = await self._execute_step(
+                    step,
+                    thread_holder,
+                    outputs,
+                    cost_guard,
+                    playbook,
+                )
+
+                if step_result["success"]:
+                    steps_executed += 1
+                    outputs[step.id] = step_result.get("output")
+                    # Track usage
+                    usage = step_result.get("usage", {})
+                    total_tokens_in += usage.get("tokens_in", 0)
+                    total_tokens_out += usage.get("tokens_out", 0)
+                    total_cost_usd += usage.get("cost_usd", 0.0)
+                else:
+                    steps_failed += 1
+                    # Check if step has if_not_met fallback
+                    if step.if_not_met:
+                        branch_result = await self._handle_conditional_branch(
+                            step,
+                            step.if_not_met,
+                            thread_holder,
+                            outputs,
+                            cost_guard,
+                            playbook,
+                        )
+                        if branch_result.get("terminate"):
+                            logger.info(
+                                "run_terminated_by_conditional",
+                                step_id=step.id,
+                                termination=branch_result["terminate"],
+                            )
+                            break
+                    else:
+                        # No fallback — abort
+                        thread_holder[0] = thread_holder[0].append(
+                            RunFailedEvent(
+                                thread_id=thread_holder[0].id,
+                                step_id=step.id,
+                                data={
+                                    "error": step_result.get("error", "Unknown error"),
+                                    "recoverable": False,
+                                },
+                            )
+                        )
+                        aborted = True
+                        abort_error = step_result.get("error")
+                        break
+
+            # Run completed (or aborted)
+            if not aborted:
+                thread_holder[0] = thread_holder[0].append(
+                    RunCompletedEvent(
+                        thread_id=thread_holder[0].id,
+                        data={
+                            "steps_executed": steps_executed,
+                            "duration_s": time.monotonic() - start_time,
+                            "total_tokens": total_tokens_in + total_tokens_out,
+                            "total_cost_usd": total_cost_usd,
+                        },
+                    )
+                )
+
+            return PlaybookRunResult(
+                thread=thread_holder[0],
+                success=not aborted,
+                steps_executed=steps_executed,
+                steps_failed=steps_failed,
+                duration_s=time.monotonic() - start_time,
+                total_tokens_in=total_tokens_in,
+                total_tokens_out=total_tokens_out,
+                total_cost_usd=total_cost_usd,
+                outputs=_filter_internal_keys(outputs),
+                error=abort_error,
+            )
+
+        except BudgetExceeded as e:
+            logger.error("budget_exceeded", error=str(e), spent=e.spent, budget=e.budget)
+            thread_holder[0] = thread_holder[0].append(
+                RunFailedEvent(
+                    thread_id=thread_holder[0].id,
+                    data={
+                        "error": f"Budget exceeded: {e}",
+                        "spent_usd": e.spent,
+                        "budget_usd": e.budget,
+                        "level": e.level,
+                    },
+                )
+            )
+            return PlaybookRunResult(
+                thread=thread_holder[0],
+                success=False,
+                steps_executed=steps_executed,
+                steps_failed=steps_failed,
+                duration_s=time.monotonic() - start_time,
+                total_tokens_in=total_tokens_in,
+                total_tokens_out=total_tokens_out,
+                total_cost_usd=total_cost_usd,
+                outputs=_filter_internal_keys(outputs),
+                error=str(e),
+            )
+
+    async def stream(
+        self,
+        playbook: Playbook,
+        *,
+        initial_input: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Event | PlaybookRunResult]:
+        """Stream playbook execution, yielding events as each step completes.
+
+        Yields (in order):
+
+        - For each step that runs: the ``StepCompletedEvent`` (or
+          ``StepFailedEvent``) emitted when that step finishes. The
+          event is the *last* event appended to the thread by
+          :meth:`_execute_step` — intermediate events
+          (``StepStartedEvent``, ``AssistantMessageEvent``,
+          ``CostThresholdEvent``, …) stay in the thread and are visible
+          in the final ``PlaybookRunResult.thread``.
+        - ``RunCompletedEvent`` or ``RunFailedEvent`` at the end of the run
+          (also appended to the thread).
+        - Final yield: a :class:`PlaybookRunResult` with the full thread
+          and aggregate accounting (steps_executed, tokens, cost).
+
+        Best-effort streaming contract:
+
+        - Steps are still executed sequentially in definition order
+          (the ``run()`` semantics are preserved). What streaming gives
+          you is the ability to surface each step's completion event
+          to the caller *immediately* — without waiting for the whole
+          playbook to finish.
+        - Parallel branches stream in **completion order**, not
+          definition order: when a parallel step finishes, the
+          ``PARALLEL_BRANCH_COMPLETED`` event is yielded, but the
+          per-sub-step ``StepCompletedEvent`` events were appended
+          inside ``asyncio.gather`` and arrive in the merged-event
+          timestamp order (see :meth:`_execute_parallel`).
+        - The final ``PlaybookRunResult`` is always the last yield,
+          even on failure / budget-exceeded.
+
+        Per-token streaming of LLM responses within a step is available
+        via :meth:`arnes.specialists.base.Specialist.stream`; this
+        executor-level stream yields step-level events, not token-level
+        events. The two can be composed: a UI that wants both
+        token-by-token rendering AND a final audit log can consume
+        ``Specialist.stream()`` for the rendering and rely on the
+        ``AssistantMessageEvent`` emitted into the thread (by both
+        ``Specialist.run()`` and ``Specialist.stream()``) for the
+        audit trail.
+
+        Usage::
+
+            executor = PlaybookExecutor(provider=p)
+            async for event in executor.stream(playbook):
+                if isinstance(event, PlaybookRunResult):
+                    print(event.to_markdown())
+                else:
+                    print(f"event: {event.type.value}")
+        """
+        thread_holder: list[Thread] = [Thread.create()]
+        start_time = time.monotonic()
+        outputs: dict[str, Any] = dict(playbook.variables)
+        if initial_input:
+            outputs.update(initial_input)
+
+        cost_guard = CostGuard(self.provider, budget=self.cost_budget)
+
+        steps_executed = 0
+        steps_failed = 0
+        total_tokens_in = 0
+        total_tokens_out = 0
+        total_cost_usd = 0.0
+        aborted = False
+        abort_error: str | None = None
+
+        try:
+            for step in playbook.steps:
+                # Mirror run()'s skip-until logic verbatim.
+                skip_until = outputs.get("__skip_steps_until", {})
+                if skip_until:
+                    if step.id in skip_until:
+                        del skip_until[step.id]
+                        if not skip_until:
+                            del outputs["__skip_steps_until"]
+                        logger.info("skip_to_reached", step_id=step.id)
+                    else:
+                        logger.info("step_skipped", step_id=step.id, reason="skip_to")
+                        continue
+
+                step_result = await self._execute_step(
+                    step,
+                    thread_holder,
+                    outputs,
+                    cost_guard,
+                    playbook,
+                )
+
+                # Yield the last event appended by _execute_step. This is
+                # the StepCompletedEvent or StepFailedEvent — exactly the
+                # transition a streaming consumer cares about. (Earlier
+                # events like StepStartedEvent remain in the thread for
+                # the final PlaybookRunResult.)
+                last_event = thread_holder[0].last()
+                if last_event is not None:
+                    yield last_event
+
+                if step_result["success"]:
+                    steps_executed += 1
+                    outputs[step.id] = step_result.get("output")
+                    usage = step_result.get("usage", {})
+                    total_tokens_in += usage.get("tokens_in", 0)
+                    total_tokens_out += usage.get("tokens_out", 0)
+                    total_cost_usd += usage.get("cost_usd", 0.0)
+                else:
+                    steps_failed += 1
+                    if step.if_not_met:
+                        branch_result = await self._handle_conditional_branch(
+                            step,
+                            step.if_not_met,
+                            thread_holder,
+                            outputs,
+                            cost_guard,
+                            playbook,
+                        )
+                        if branch_result.get("terminate"):
+                            logger.info(
+                                "run_terminated_by_conditional",
+                                step_id=step.id,
+                                termination=branch_result["terminate"],
+                            )
+                            break
+                    else:
+                        run_failed = RunFailedEvent(
+                            thread_id=thread_holder[0].id,
+                            step_id=step.id,
+                            data={
+                                "error": step_result.get("error", "Unknown error"),
+                                "recoverable": False,
+                            },
+                        )
+                        thread_holder[0] = thread_holder[0].append(run_failed)
+                        aborted = True
+                        abort_error = step_result.get("error")
+                        # Yield the RunFailedEvent so streaming consumers
+                        # see the abort transition immediately (mirrors
+                        # the success path which yields RunCompletedEvent).
+                        yield run_failed
+                        break
+
+            if not aborted:
+                run_completed = RunCompletedEvent(
+                    thread_id=thread_holder[0].id,
+                    data={
+                        "steps_executed": steps_executed,
+                        "duration_s": time.monotonic() - start_time,
+                        "total_tokens": total_tokens_in + total_tokens_out,
+                        "total_cost_usd": total_cost_usd,
+                    },
+                )
+                thread_holder[0] = thread_holder[0].append(run_completed)
+                yield run_completed
+
+            yield self._build_run_result(
+                thread_holder[0],
+                success=not aborted,
+                steps_executed=steps_executed,
+                steps_failed=steps_failed,
+                start_time=start_time,
+                total_tokens_in=total_tokens_in,
+                total_tokens_out=total_tokens_out,
+                total_cost_usd=total_cost_usd,
+                outputs=outputs,
+                error=abort_error,
+            )
+        except BudgetExceeded as e:
+            logger.error("budget_exceeded", error=str(e), spent=e.spent, budget=e.budget)
+            run_failed = RunFailedEvent(
+                thread_id=thread_holder[0].id,
+                data={
+                    "error": f"Budget exceeded: {e}",
+                    "spent_usd": e.spent,
+                    "budget_usd": e.budget,
+                    "level": e.level,
+                },
+            )
+            thread_holder[0] = thread_holder[0].append(run_failed)
+            yield run_failed
+            yield self._build_run_result(
+                thread_holder[0],
+                success=False,
+                steps_executed=steps_executed,
+                steps_failed=steps_failed,
+                start_time=start_time,
+                total_tokens_in=total_tokens_in,
+                total_tokens_out=total_tokens_out,
+                total_cost_usd=total_cost_usd,
+                outputs=outputs,
+                error=str(e),
+            )
+
+    @staticmethod
+    def _build_run_result(
+        thread: Thread,
+        *,
+        success: bool,
+        steps_executed: int,
+        steps_failed: int,
+        start_time: float,
+        total_tokens_in: int,
+        total_tokens_out: int,
+        total_cost_usd: float,
+        outputs: dict[str, Any],
+        error: str | None,
+    ) -> PlaybookRunResult:
+        """Construct a :class:`PlaybookRunResult` from accumulated run state.
+
+        Shared by :meth:`run` and :meth:`stream` to avoid duplicating the
+        10-field construction (and to keep both methods under the ruff
+        PLR0915 statement-count limit).
+        """
+        return PlaybookRunResult(
+            thread=thread,
+            success=success,
+            steps_executed=steps_executed,
+            steps_failed=steps_failed,
+            duration_s=time.monotonic() - start_time,
+            total_tokens_in=total_tokens_in,
+            total_tokens_out=total_tokens_out,
+            total_cost_usd=total_cost_usd,
+            outputs=_filter_internal_keys(outputs),
+            error=error,
+        )
+
+    # ============================================================
+    # Step execution
+    # ============================================================
+
+    async def _execute_step(
+        self,
+        step: PlaybookStep,
+        thread_holder: list[Thread],
+        outputs: dict[str, Any],
+        cost_guard: CostGuard,
+        playbook: Playbook,
+    ) -> dict[str, Any]:
+        """Execute a single step (specialist, tool, or parallel branch)."""
+        thread_holder[0] = thread_holder[0].append(
+            StepStartedEvent(
+                thread_id=thread_holder[0].id,
+                step_id=step.id,
+                specialist=step.specialist or step.tool,
+                data={"step_id": step.id, "specialist": step.specialist or step.tool},
+            )
+        )
+
+        step_start = time.monotonic()
+
+        try:
+            # Parallel branch — delegates to the free function in
+            # ``arnes.playbooks.parallel`` (keeps the executor
+            # under the 800-line target without a backwards-compat
+            # wrapper method on the class).
+            if step.parallel:
+                result = await _execute_parallel_branch(
+                    self, step, thread_holder, outputs, cost_guard, playbook
+                )
+            # Specialist invocation
+            elif step.specialist:
+                result = await self._execute_specialist(
+                    step, thread_holder, outputs, cost_guard, playbook
+                )
+                # Actor-critic review loop: if the step has a review config
+                # (or the executor-wide flag is on), run the critic and
+                # re-iterate the actor with feedback until it passes.
+                review_cfg = self._effective_review_config(step)
+                if review_cfg is not None and result.get("success"):
+                    result = await self._run_review_loop(
+                        step, result, review_cfg, thread_holder, outputs, cost_guard, playbook
+                    )
+            # Tool invocation
+            elif step.tool:
+                result = await self._execute_tool(
+                    step, thread_holder, outputs, cost_guard, playbook
+                )
+            else:
+                raise ValueError(f"Step '{step.id}' has no action defined")
+
+            # Drain middleware event sink BEFORE recording completion so
+            # that AssistantMessageEvent / CostThresholdEvent / CACHE_HIT /
+            # REFUSAL_TRIGGERED events emitted during the step appear in
+            # the thread before the StepCompletedEvent. The middleware
+            # creates events with a nil thread_id placeholder (it does not
+            # have access to the Thread); we patch the real thread_id and
+            # step_id here.
+            _drain_middleware_events(thread_holder, cost_guard, step.id)
+
+            # Pull token / cost usage out of the step result so the
+            # StepCompletedEvent carries the per-step aggregate. The
+            # specialist returns ``usage`` as a model_dump() of LLMUsage
+            # (tokens_in, tokens_out, cost_usd, model, cached).
+            usage = result.get("usage") or {}
+
+            # Record completion (with token + cost accounting)
+            thread_holder[0] = thread_holder[0].append(
+                StepCompletedEvent(
+                    thread_id=thread_holder[0].id,
+                    step_id=step.id,
+                    specialist=step.specialist or step.tool,
+                    data={
+                        "step_id": step.id,
+                        "output": result.get("output"),
+                        "duration_s": time.monotonic() - step_start,
+                        "tokens_in": usage.get("tokens_in", 0),
+                        "tokens_out": usage.get("tokens_out", 0),
+                        "cost_usd": usage.get("cost_usd", 0.0),
+                    },
+                )
+            )
+
+            return result
+
+        except Exception as e:
+            logger.exception("step_failed", step_id=step.id, error=str(e))
+            # Drain any events emitted before the failure too — they are
+            # still useful for debugging (e.g. a CostThresholdEvent that
+            # fired right before the crash, or an AssistantMessageEvent
+            # from the failed LLM call).
+            _drain_middleware_events(thread_holder, cost_guard, step.id)
+            thread_holder[0] = thread_holder[0].append(
+                StepFailedEvent(
+                    thread_id=thread_holder[0].id,
+                    step_id=step.id,
+                    specialist=step.specialist or step.tool,
+                    data={"step_id": step.id, "error": str(e), "retry": False},
+                )
+            )
+            return {"success": False, "error": str(e)}
+
+    async def _execute_specialist(
+        self,
+        step: PlaybookStep,
+        thread_holder: list[Thread],
+        outputs: dict[str, Any],
+        cost_guard: CostGuard,
+        playbook: Playbook,
+    ) -> dict[str, Any]:
+        """Invoke a specialist."""
+        specialist = self.specialist_registry.get(step.specialist or "")
+        if not specialist:
+            return {
+                "success": False,
+                "error": f"Specialist '{step.specialist}' not registered. Available: {self.specialist_registry.list_names()}",
+            }
+
+        # Resolve input (may contain Jinja2-style template refs)
+        input_data = _resolve_input(step.input, outputs)
+
+        # Build tool context — sandbox state is detected once at executor
+        # construction time (see __init__) and propagated to every
+        # specialist invocation so the ShellTool can pick the right
+        # execution path (Docker sandbox vs. gated local execution).
+        ctx = ToolContext(
+            thread_id=thread_holder[0].id,
+            step_id=step.id,
+            specialist=step.specialist,
+            working_dir=".",
+            sandbox_enabled=self._sandbox_enabled,
+            sandbox_container=self._sandbox_container,
+            budget_remaining_usd=(
+                (cost_guard.budget.effective_budget() or 0) - cost_guard.spent_usd
+            ),
+            metadata={"interactive": self.interactive},
+        )
+
+        # Use the cost_guard-wrapped provider
+        result = await specialist.run(
+            input_data,
+            ctx,
+            provider=cost_guard,
+            tool_registry=self.tool_registry,
+            model_override=self._model_override,
+        )
+
+        success = result.get("success", False)
+        if not success and result.get("budget_exceeded"):
+            raise BudgetExceeded(
+                f"Budget exceeded during specialist '{step.specialist}' invocation",
+                spent=cost_guard.spent_usd,
+                budget=cost_guard.budget.effective_budget() or 0.0,
+                level="specialist",
+            )
+
+        # Propagate error message for non-budget failures
+        if not success and result.get("error"):
+            return {
+                "success": False,
+                "error": result["error"],
+                "output": None,
+                "usage": result.get("usage", {}),
+            }
+
+        return {
+            "success": success,
+            "output": result.get("output"),
+            "usage": result.get("usage", {}),
+        }
+
+    async def _execute_tool(
+        self,
+        step: PlaybookStep,
+        thread_holder: list[Thread],
+        outputs: dict[str, Any],
+        cost_guard: CostGuard,
+        playbook: Playbook,
+    ) -> dict[str, Any]:
+        """Invoke a tool directly (without going through a specialist).
+
+        Security note: the sandbox config and budget remaining are propagated
+        to the ToolContext so that ShellTool picks the right execution path
+        (Docker sandbox vs. gated local execution) and tools can refuse calls
+        that would overshoot the budget. Direct tool invocation does not go
+        through the HITL fingerprint check because the tool args come from
+        the playbook YAML (trusted author), not from an LLM.
+        """
+        tool = self.tool_registry.get(step.tool or "")
+        if not tool:
+            return {
+                "success": False,
+                "error": f"Tool '{step.tool}' not registered. Available: {self.tool_registry.list_names()}",
+            }
+
+        input_data = _resolve_input(step.input, outputs)
+
+        ctx = ToolContext(
+            thread_id=thread_holder[0].id,
+            step_id=step.id,
+            working_dir=".",
+            sandbox_enabled=self._sandbox_enabled,
+            sandbox_container=self._sandbox_container,
+            budget_remaining_usd=(
+                (cost_guard.budget.effective_budget() or 0) - cost_guard.spent_usd
+            ),
+            metadata={"interactive": self.interactive},
+        )
+
+        result = await tool.execute(input_data, ctx)
+        return {
+            "success": result.success,
+            "output": result.output if result.success else None,
+            "error": result.error,
+        }
+
+    # ============================================================
+    # Actor-critic review loop
+    # ============================================================
+
+    def _effective_review_config(self, step: PlaybookStep) -> ReviewLoop | None:
+        """Return the ReviewLoop to apply to ``step``, or ``None``.
+
+        Precedence:
+        1. If ``step.review`` is explicitly set, use it (honour ``enabled`` flag).
+        2. Else if the executor-wide ``enable_review_loops`` flag is on,
+           synthesise a default ReviewLoop for this step.
+        3. Else return ``None`` (no review).
+        """
+        if step.review is not None:
+            return step.review if step.review.enabled else None
+        if self._enable_review_loops and step.specialist:
+            # Default loop: @reviewer critic, 3 iterations, non-interactive.
+            return ReviewLoop(
+                enabled=True,
+                critic="@reviewer",
+                max_iterations=3,
+                pass_threshold=0.8,
+                interactive=False,
+            )
+        return None
+
+    async def _run_review_loop(
+        self,
+        step: PlaybookStep,
+        actor_result: dict[str, Any],
+        review: ReviewLoop,
+        thread_holder: list[Thread],
+        outputs: dict[str, Any],
+        cost_guard: CostGuard,
+        playbook: Playbook,
+    ) -> dict[str, Any]:
+        """Run the actor-critic loop for a completed specialist step.
+
+        ``actor_result`` is the result of the first actor invocation. The
+        loop runs the critic; if the critic approves (verdict == "approve"
+        or score >= pass_threshold), the original result is returned. If
+        not, the actor is re-invoked with the critic's feedback appended to
+        its input, up to ``review.max_iterations`` times.
+
+        Every iteration emits a ``REVIEW_ITERATION`` event; the final
+        outcome emits a ``REVIEW_COMPLETED`` event. Both are appended to
+        the Thread for audit.
+        """
+        critic_name = review.critic
+        critic = self.specialist_registry.get(critic_name)
+        if critic is None:
+            logger.warning(
+                "review_loop_critic_not_found",
+                step_id=step.id,
+                critic=critic_name,
+            )
+            return actor_result
+
+        current_result = actor_result
+        actor_output = current_result.get("output")
+
+        for iteration in range(1, review.max_iterations + 1):
+            # --- Run the critic on the actor's current output ---
+            critic_input = {
+                "code": str(actor_output),
+                "focus": review.focus
+                or f"Review the output of step '{step.id}' for correctness, completeness, and quality.",
+            }
+            critic_ctx = ToolContext(
+                thread_id=thread_holder[0].id,
+                step_id=f"{step.id}__review_{iteration}",
+                specialist=critic_name,
+                working_dir=".",
+                sandbox_enabled=self._sandbox_enabled,
+                sandbox_container=self._sandbox_container,
+                budget_remaining_usd=(
+                    (cost_guard.budget.effective_budget() or 0) - cost_guard.spent_usd
+                ),
+                metadata={"interactive": False},
+            )
+            try:
+                critic_result = await critic.run(
+                    critic_input,
+                    critic_ctx,
+                    provider=cost_guard,
+                    tool_registry=self.tool_registry,
+                    model_override=self._model_override,
+                )
+            except Exception as exc:
+                logger.exception("review_loop_critic_failed", step_id=step.id, iteration=iteration)
+                _emit_review_event(
+                    thread_holder,
+                    step.id,
+                    iteration,
+                    verdict="error",
+                    feedback=str(exc)[:500],
+                    approved=False,
+                )
+                break
+
+            _drain_middleware_events(thread_holder, cost_guard, f"{step.id}__review_{iteration}")
+
+            if not critic_result.get("success"):
+                logger.warning(
+                    "review_loop_critic_returned_error",
+                    step_id=step.id,
+                    iteration=iteration,
+                    error=critic_result.get("error"),
+                )
+                break
+
+            critic_output = critic_result.get("output", {})
+            verdict = self._extract_verdict(critic_output)
+            score = self._extract_score(critic_output)
+            feedback = self._extract_feedback(critic_output)
+
+            approved = verdict == "approve" or (
+                score is not None and score >= review.pass_threshold
+            )
+
+            _emit_review_event(
+                thread_holder,
+                step.id,
+                iteration,
+                verdict=verdict,
+                score=score,
+                feedback=feedback,
+                approved=approved,
+            )
+
+            if approved:
+                logger.info(
+                    "review_loop_approved",
+                    step_id=step.id,
+                    iteration=iteration,
+                    verdict=verdict,
+                    score=score,
+                )
+                _emit_review_completed(
+                    thread_holder,
+                    step.id,
+                    iterations=iteration,
+                    approved=True,
+                    final_verdict=verdict,
+                )
+                return current_result
+
+            # --- Not approved: re-run the actor with the critic's feedback ---
+            if iteration >= review.max_iterations:
+                logger.info(
+                    "review_loop_exhausted",
+                    step_id=step.id,
+                    iterations=iteration,
+                    final_verdict=verdict,
+                )
+                _emit_review_completed(
+                    thread_holder,
+                    step.id,
+                    iterations=iteration,
+                    approved=False,
+                    final_verdict=verdict,
+                )
+                return current_result
+
+            # Build the re-run input: original input + critic feedback.
+            original_input = _resolve_input(step.input, outputs)
+            rerun_input: dict[str, Any] = (
+                dict(original_input)
+                if isinstance(original_input, dict)
+                else {"task": str(original_input)}
+            )
+            rerun_input["previous_output"] = str(actor_output)
+            rerun_input["review_feedback"] = feedback
+            rerun_input["iteration"] = iteration
+
+            actor_ctx = ToolContext(
+                thread_id=thread_holder[0].id,
+                step_id=f"{step.id}__iter_{iteration + 1}",
+                specialist=step.specialist,
+                working_dir=".",
+                sandbox_enabled=self._sandbox_enabled,
+                sandbox_container=self._sandbox_container,
+                budget_remaining_usd=(
+                    (cost_guard.budget.effective_budget() or 0) - cost_guard.spent_usd
+                ),
+                metadata={"interactive": self.interactive},
+            )
+            actor_specialist = self.specialist_registry.get(step.specialist or "")
+            if actor_specialist is None:
+                break
+            try:
+                current_result = await actor_specialist.run(
+                    rerun_input,
+                    actor_ctx,
+                    provider=cost_guard,
+                    tool_registry=self.tool_registry,
+                    model_override=self._model_override,
+                )
+            except Exception:
+                logger.exception(
+                    "review_loop_actor_rerun_failed",
+                    step_id=step.id,
+                    iteration=iteration + 1,
+                )
+                break
+            _drain_middleware_events(thread_holder, cost_guard, f"{step.id}__iter_{iteration + 1}")
+
+            if not current_result.get("success"):
+                logger.warning(
+                    "review_loop_actor_rerun_failed",
+                    step_id=step.id,
+                    iteration=iteration + 1,
+                    error=current_result.get("error"),
+                )
+                break
+            actor_output = current_result.get("output")
+
+        _emit_review_completed(
+            thread_holder,
+            step.id,
+            iterations=review.max_iterations,
+            approved=False,
+            final_verdict="exhausted",
+        )
+        return current_result
+
+    @staticmethod
+    def _extract_verdict(critic_output: Any) -> str:
+        """Extract the verdict string from the critic's output."""
+        if isinstance(critic_output, dict):
+            v = critic_output.get("verdict")
+            if isinstance(v, str):
+                return v.lower()
+        return "unknown"
+
+    @staticmethod
+    def _extract_score(critic_output: Any) -> float | None:
+        """Extract a numeric score (0..1) from the critic's output, if present."""
+        if isinstance(critic_output, dict):
+            score = critic_output.get("score")
+            if isinstance(score, int | float):
+                # Normalise 0-10 scales to 0-1.
+                return float(score) / 10.0 if score > 1.0 else float(score)
+        return None
+
+    @staticmethod
+    def _extract_feedback(critic_output: Any) -> str:
+        """Extract the feedback text from the critic's output."""
+        if isinstance(critic_output, dict):
+            for key in ("feedback", "summary", "issues", "review"):
+                val = critic_output.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val
+                if isinstance(val, list) and val:
+                    return "; ".join(str(x) for x in val)
+        return "No feedback provided."
+
+    async def _handle_conditional_branch(
+        self,
+        step: PlaybookStep,
+        branch: ConditionalBranch,
+        thread_holder: list[Thread],
+        outputs: dict[str, Any],
+        cost_guard: CostGuard,
+        playbook: Playbook,
+    ) -> dict[str, Any]:
+        """Handle an if_not_met or conditional branch."""
+        thread_holder[0] = thread_holder[0].append(
+            ConditionalBranchEvent(
+                thread_id=thread_holder[0].id,
+                step_id=step.id,
+                data={
+                    "condition": branch.when or "if_not_met",
+                    "action": branch.action,
+                },
+            )
+        )
+
+        if branch.action == "call" and branch.specialist:
+            # Invoke the fallback specialist
+            fallback_step = PlaybookStep(
+                id=f"{step.id}__fallback",
+                specialist=branch.specialist,
+                input=branch.input or {},
+            )
+            result = await self._execute_specialist(
+                fallback_step, thread_holder, outputs, cost_guard, playbook
+            )
+            outputs[fallback_step.id] = result.get("output")
+            return {"terminate": None, "result": result}
+
+        if branch.action == "terminate":
+            return {"terminate": branch.terminate}
+
+        if branch.action == "skip" and branch.skip_to:
+            # skip_to means "jump TO this step" — skip all steps between
+            # current and target
+            skip_set = outputs.setdefault("__skip_steps_until", {})
+            skip_set[branch.skip_to] = True  # Will be cleared when we reach it
+            return {"terminate": None}
+
+        return {"terminate": None}

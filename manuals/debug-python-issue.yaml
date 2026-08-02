@@ -1,0 +1,32 @@
+# debug-python-issue.yaml — Diagnose a Python bug from traceback to proposed fix
+# One of the "killer" playbooks that demonstrates ARNES value
+
+name: debug-python-issue
+objective: Diagnose a Python bug from traceback to proposed fix
+budget_usd: 0.30
+
+steps:
+  - id: read_traceback
+    specialist: "@debugger"
+    input:
+      error: |
+        Traceback (most recent call last):
+          File "src/app.py", line 42, in handle_request
+            result = process_user(user_id)
+          File "src/app.py", line 87, in process_user
+            return db.query(User).filter(User.id == user_id).one()
+          File "sqlalchemy/orm/query.py", line 3450, in one
+            raise NoResultFound("No row was found when one() was required")
+        sqlalchemy.exc.NoResultFound: No row was found when one() was required
+
+  - id: review_fix
+    specialist: "@reviewer"
+    input:
+      code: "{{ steps.read_traceback.output }}"
+      focus: "Does the proposed fix handle the None case correctly? Does it hide an underlying bug?"
+
+  - id: verify_tests
+    specialist: "@tester"
+    input:
+      code: "{{ steps.read_traceback.output }}"
+      focus: "Write a test that reproduces the original bug and verifies the fix"

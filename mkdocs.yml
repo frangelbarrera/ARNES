@@ -1,0 +1,102 @@
+# MkDocs configuration for ARNES.
+#
+# Run `mkdocs serve` from the repo root to preview the site locally.
+# Run `mkdocs build` to produce a static site under `site/`.
+#
+# The docs structure is intentionally minimal: the README is the
+# primary docs source (rendered as the index), and the manual stubs
+# under docs/*.md exist to (a) document the navigation skeleton, (b)
+# give the docs site a real shape so MkDocs Material renders more than
+# a single page, and (c) let contributors fill in the stubs incrementally
+# without restructuring the navigation. v0.2 will add API reference pages
+# generated from docstrings via `mkdocstrings`.
+
+site_name: ARNES — The Open Agent Harness
+site_description: >-
+  Write the manual. ARNES compiles it into a team of specialists.
+  Local-first, vendor-neutral, budget-guarded agent harness.
+site_author: Frangel Barrera
+site_url: https://github.com/frangelbarrera/ARNES
+repo_url: https://github.com/frangelbarrera/ARNES
+repo_name: frangelbarrera/ARNES
+edit_uri: edit/main/docs/
+
+# Theme: MkDocs Material — modern, responsive, dark-mode default.
+theme:
+  name: material
+  language: en
+  logo: logo-ARNES.png
+  favicon: logo-ARNES.png
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+# Markdown extensions — match the styling GitHub renders for the README
+# so the docs site looks consistent with the repo.
+markdown_extensions:
+  - admonition
+  - codehilite:
+      guess_lang: false
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+# Plugins — `search` ships with Material; `mkdocstrings` is reserved for
+# v0.2 when API reference pages are added.
+plugins:
+  - search:
+      lang: en
+
+# Navigation — explicit (not auto-generated) so the docs site has a
+# stable shape that contributors can extend without restructuring.
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Architecture: architecture.md
+  - Specialists: specialists.md
+  - Playbooks: playbooks.md
+  - MCP Server: mcp-server.md
+  - Benchmarking: benchmarking.md
+  - Standard Suites: benchmarks.md
+  - Statistics: statistics.md
+  - Comparison: comparison.md
+  - Ethics: ethics.md
+
+# Extra — GitHub stats badge + the social card used in link previews.
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/frangelbarrera/ARNES
+  generator: false
+
+# Strict mode — warns on broken links so the docs site can't silently
+# drift from the source tree.
+strict: true

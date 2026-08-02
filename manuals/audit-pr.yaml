@@ -1,0 +1,46 @@
+# audit-pr.yaml — Audit a Pull Request in a structured way
+# Demonstrates conditionals and parallelism
+
+name: audit-pr
+objective: Audit a PR checking security, quality, and tests
+budget_usd: 0.50
+
+variables:
+  pr_number: 1234
+  repo: "my-org/my-repo"
+
+steps:
+  - id: read_diff
+    specialist: "@reviewer"
+    input:
+      pr: "{{ variables.pr_number }}"
+      repo: "{{ variables.repo }}"
+      focus: "Read the diff and structure it for analysis"
+
+  - id: security_audit
+    specialist: "@reviewer"
+    input:
+      code: "{{ steps.read_diff.output }}"
+      focus: "Security review: auth flows, SQL injection, XSS, path traversal, secrets in diff"
+
+  - id: parallel
+    parallel:
+      - id: lint
+        specialist: "@reviewer"
+        input:
+          code: "{{ steps.read_diff.output }}"
+          focus: "Code quality: idioms, naming, complexity"
+      - id: tests
+        specialist: "@tester"
+        input:
+          code: "{{ steps.read_diff.output }}"
+          focus: "Verify tests cover the PR changes"
+
+  - id: synthesis
+    specialist: "@reviewer"
+    input:
+      diff: "{{ steps.read_diff.output }}"
+      security: "{{ steps.security_audit.output }}"
+      lint: "{{ steps.parallel.lint.output }}"
+      tests: "{{ steps.parallel.tests.output }}"
+      focus: "Synthesize into a final verdict: approve / request_changes / reject"

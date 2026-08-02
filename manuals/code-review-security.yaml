@@ -1,0 +1,43 @@
+# code-review-security.yaml — Security-focused code review
+name: code-review-security
+objective: Review code for security vulnerabilities following OWASP Top 10
+budget_usd: 0.40
+
+variables:
+  code_path: "src/"
+  language: "python"
+
+steps:
+  - id: scan_injection
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.code_path }}"
+      focus: "SQL injection, command injection, LDAP injection, XSS"
+
+  - id: scan_auth
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.code_path }}"
+      focus: "Authentication flaws, session management, access control"
+
+  - id: scan_crypto
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.code_path }}"
+      focus: "Weak cryptography, hardcoded secrets, insecure random"
+
+  - id: scan_config
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.code_path }}"
+      focus: "Security misconfiguration, error handling, logging"
+
+  - id: synthesize_report
+    specialist: "@reviewer"
+    input:
+      code: "{{ variables.code_path }}"
+      injection: "{{ steps.scan_injection.output }}"
+      auth: "{{ steps.scan_auth.output }}"
+      crypto: "{{ steps.scan_crypto.output }}"
+      config: "{{ steps.scan_config.output }}"
+      focus: "Synthesize all findings into a final security report with severity ratings"

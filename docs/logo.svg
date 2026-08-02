@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="arnesGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0E7490;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#155E75;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#EA580C;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#C2410C;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="url(#arnesGrad)" stroke="#0F172A" stroke-width="2"/>
+
+  <!-- Harness frame (geometric "A" shape representing harness + agent) -->
+  <g stroke="#FFFFFF" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- "A" frame -->
+    <path d="M 100 35 L 65 160"/>
+    <path d="M 100 35 L 135 160"/>
+    <!-- Harness crossbar -->
+    <path d="M 78 110 L 122 110" stroke-width="5"/>
+    <!-- Top accent (harness ring) -->
+    <circle cx="100" cy="35" r="8" fill="#FFFFFF" stroke="none"/>
+  </g>
+
+  <!-- Orange accent dot (the "agent" being harnessed) -->
+  <circle cx="100" cy="125" r="10" fill="url(#accentGrad)"/>
+
+  <!-- Connection lines from harness to agent -->
+  <g stroke="#EA580C" stroke-width="2.5" stroke-linecap="round" opacity="0.8">
+    <path d="M 82 118 L 95 122"/>
+    <path d="M 118 118 L 105 122"/>
+  </g>
+
+  <!-- Bottom label -->
+  <text x="100" y="185" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="#FFFFFF" letter-spacing="2">ARNES</text>
+</svg>
