@@ -589,7 +589,17 @@ class TestPathValidation:
         assert _validate_playbook_path(f"{blocked}/some/file") is None
 
     def test_validate_playbook_path_blocks_specific_system_dirs(self) -> None:
-        """The exact protected prefixes from the issue spec."""
+        """The exact protected prefixes from the issue spec.
+
+        Unix prefixes are only tested on Unix; on Windows they resolve as
+        relative paths under the current drive (e.g. D:\\etc) and are not
+        meaningful system directories.
+        """
+        import sys
+
+        if sys.platform == "win32":
+            pytest.skip("Unix system directories are not applicable on Windows")
+
         for path in ("/etc", "/root", "/var", "/proc", "/sys", "/dev"):
             assert _validate_playbook_path(path) is None, (
                 f"Path '{path}' should be blocked but was allowed."
