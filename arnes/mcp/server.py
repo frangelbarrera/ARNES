@@ -136,7 +136,11 @@ def _validate_playbook_path(path: str) -> Path | None:
     # per-user temp directory (/private/var/folders/...) which is where
     # pytest's tmp_path lives — blocking it would reject legitimate test
     # playbooks and user temp files.
-    if path_str.startswith("/private/var/") and not path_str.startswith("/private/var/folders/"):
+    # Note: check both with and without trailing slash so /var and /var/x
+    # are both caught.
+    if (
+        path_str == "/private/var" or path_str.startswith("/private/var/")
+    ) and not path_str.startswith("/private/var/folders/"):
         return None
     return resolved
 
