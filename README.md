@@ -181,9 +181,6 @@ Want to see the whole flow end-to-end? Run the narrated demo script:
 ./scripts/demo.sh --record demo.tape && vhs demo.tape   # render a GIF
 ```
 
-See [Recording a demo GIF](#recording-a-demo-gif) below for the `vhs` and
-`agg` recipes.
-
 ---
 
 ## Features
