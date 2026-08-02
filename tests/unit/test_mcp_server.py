@@ -311,7 +311,18 @@ class TestListPlaybooks:
 
     @pytest.mark.asyncio
     async def test_list_playbooks_with_blocked_directory_is_blocked(self) -> None:
-        """``arnes_list_playbooks('/etc')`` must refuse to enumerate /etc."""
+        """``arnes_list_playbooks`` must refuse to enumerate blocked system dirs.
+
+        Uses ``/etc`` on Unix (resolves to ``/private/etc`` on macOS) and
+        ``C:\\Windows`` on Windows.
+        """
+        import sys
+
+        if sys.platform == "win32":
+            blocked_dir = "C:\\Windows"
+        else:
+            blocked_dir = "/etc"
+
         server = ArnesMCPServer()
         response = await server.handle_request(
             {
@@ -320,7 +331,7 @@ class TestListPlaybooks:
                 "method": "tools/call",
                 "params": {
                     "name": "arnes_list_playbooks",
-                    "arguments": {"dir": "/etc"},
+                    "arguments": {"dir": blocked_dir},
                 },
             }
         )
@@ -507,6 +518,13 @@ class TestRunPlaybook:
     @pytest.mark.asyncio
     async def test_run_playbook_with_path_traversal_is_blocked(self) -> None:
         """Path-traversal attempts must be rejected before the compiler runs."""
+        import sys
+
+        if sys.platform == "win32":
+            blocked_path = "C:\\Windows\\System32\\drivers\\etc\\hosts"
+        else:
+            blocked_path = "/etc/passwd"
+
         server = ArnesMCPServer()
         response = await server.handle_request(
             {
@@ -515,7 +533,7 @@ class TestRunPlaybook:
                 "method": "tools/call",
                 "params": {
                     "name": "arnes_run_playbook",
-                    "arguments": {"path": "/etc/passwd"},
+                    "arguments": {"path": blocked_path},
                 },
             }
         )
