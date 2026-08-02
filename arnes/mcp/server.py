@@ -99,10 +99,12 @@ _BLOCKED_PATH_PREFIXES: tuple[str, ...] = (
     "/private/etc",  # macOS: /etc -> /private/etc
     "/root",
     "/var",
-    "/private/var",  # macOS: /var -> /private/var
     "/proc",
     "/sys",
     "/dev",
+    # NOTE: /private/var is intentionally NOT blocked — on macOS the
+    # per-user temp directory lives under /private/var/folders/... and
+    # blocking it would reject legitimate playbook paths in pytest tmp_path.
     # Windows system directories (lowercase for case-insensitive match)
     "c:\\windows",
     "c:\\program files",
@@ -129,6 +131,12 @@ def _validate_playbook_path(path: str) -> Path | None:
     path_str = str(resolved).lower().replace("\\", "/")
     blocked = [p.replace("\\", "/") for p in _BLOCKED_PATH_PREFIXES]
     if any(path_str.startswith(prefix) for prefix in blocked):
+        return None
+    # On macOS, /var -> /private/var. Block /private/var EXCEPT for the
+    # per-user temp directory (/private/var/folders/...) which is where
+    # pytest's tmp_path lives — blocking it would reject legitimate test
+    # playbooks and user temp files.
+    if path_str.startswith("/private/var/") and not path_str.startswith("/private/var/folders/"):
         return None
     return resolved
 
