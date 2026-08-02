@@ -594,5 +594,3 @@ known issues that will be fixed in v0.2:
 - ✅ argsFingerprint for HITL rug-pull detection
 - ✅ `mypy --strict` enforced in CI and passing on all source files
 - ✅ Test coverage above the 65% PR gate (unit + integration + stress)
-
----
