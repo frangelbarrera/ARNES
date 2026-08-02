@@ -362,7 +362,9 @@ class TestFilesystemReadSizes:
     async def test_read_small_file(self, tmp_ctx: ToolContext) -> None:
         """Sanity check — a normal small file reads back verbatim."""
         path = Path(tmp_ctx.working_dir) / "small.txt"
-        path.write_text("hello world\n", encoding="utf-8")
+        # Use newline="" so Python does NOT translate \n to \r\n on Windows
+        # (the default text mode on Windows would corrupt the byte-exact check).
+        path.write_bytes(b"hello world\n")
 
         tool = FilesystemReadTool()
         result = await tool.execute({"path": "small.txt"}, tmp_ctx)
@@ -429,7 +431,7 @@ class TestFilesystemWriteAppend:
     async def test_append_mode_preserves_existing_content(self, tmp_ctx: ToolContext) -> None:
         """``mode="a"`` appends to existing content (does not overwrite)."""
         path = Path(tmp_ctx.working_dir) / "log.txt"
-        path.write_text("first line\n", encoding="utf-8")
+        path.write_bytes(b"first line\n")
 
         tool = FilesystemWriteTool()
         result = await tool.execute(
@@ -438,7 +440,7 @@ class TestFilesystemWriteAppend:
         )
         assert result.success is True
         assert result.output["bytes_written"] == len("second line\n")
-        assert path.read_text() == "first line\nsecond line\n"
+        assert path.read_bytes() == b"first line\nsecond line\n"
 
     @pytest.mark.asyncio
     async def test_append_mode_creates_file_if_missing(self, tmp_ctx: ToolContext) -> None:
@@ -458,7 +460,7 @@ class TestFilesystemWriteAppend:
     async def test_write_mode_overwrites_existing(self, tmp_ctx: ToolContext) -> None:
         """``mode="w"`` (default) replaces existing content."""
         path = Path(tmp_ctx.working_dir) / "replace.txt"
-        path.write_text("old\n", encoding="utf-8")
+        path.write_bytes(b"old\n")
 
         tool = FilesystemWriteTool()
         result = await tool.execute(
@@ -466,7 +468,7 @@ class TestFilesystemWriteAppend:
             tmp_ctx,
         )
         assert result.success is True
-        assert path.read_text() == "new\n"
+        assert path.read_bytes() == b"new\n"
 
     @pytest.mark.asyncio
     async def test_invalid_mode_rejected(self, tmp_ctx: ToolContext) -> None:

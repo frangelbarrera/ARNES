@@ -382,8 +382,12 @@ class FilesystemWriteTool(Tool):
 
         try:
             safe_path.parent.mkdir(parents=True, exist_ok=True)
-            with safe_path.open(validated.mode) as f:
-                f.write(validated.content)
+            # Open in binary mode so \n is NOT translated to \r\n on Windows.
+            # The content is encoded as UTF-8 explicitly to control the encoding
+            # (the default text-mode encoding is platform-dependent).
+            mode = validated.mode + "b"
+            with safe_path.open(mode) as f:
+                f.write(validated.content.encode("utf-8"))
             return ToolResult.ok(
                 "fs_write",
                 {"path": str(safe_path), "bytes_written": len(validated.content)},
