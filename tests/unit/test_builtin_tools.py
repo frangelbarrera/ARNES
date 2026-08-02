@@ -383,19 +383,32 @@ class TestFilesystemReadSizes:
 
     @pytest.mark.asyncio
     async def test_read_permission_error(self, tmp_ctx: ToolContext) -> None:
-        """A permission-denied file returns a fail result, not a raised exception."""
+        """A permission-denied file returns a fail result when the platform
+        actually enforces the deny.
+
+        This test is inherently runner-dependent: ``chmod(0o000)`` is not
+        honoured on Windows, and even on some macOS CI runners the
+        filesystem ACL still allows the owner to read. We detect those
+        cases with ``os.access`` and skip instead of producing a false
+        failure — the test only asserts when the OS actually denies.
+        """
         path = Path(tmp_ctx.working_dir) / "noperm.txt"
         path.write_text("secret", encoding="utf-8")
+
+        if sys.platform == "win32":
+            pytest.skip("chmod-based permission semantics are unreliable on Windows runners")
+
         path.chmod(0o000)
 
         try:
-            # Skip on root (CI containers sometimes run as root, which bypasses
-            # perms). ``os.geteuid`` only exists on Unix; on Windows we always
-            # run the test (Windows ACLs honour chmod 0o000 for the current user
-            # only when the file is on an NTFS volume with no admin override).
             _geteuid = getattr(os, "geteuid", None)
             if _geteuid is not None and _geteuid() == 0:
                 pytest.skip("Running as root — permission test would not exercise the deny path")
+
+            # Some macOS runners / mounted filesystems may still allow access
+            # despite chmod(0o000). If so, skip instead of producing a false failure.
+            if os.access(path, os.R_OK):
+                pytest.skip("Runner filesystem/ACL still allows reading after chmod(0o000)")
 
             tool = FilesystemReadTool()
             result = await tool.execute({"path": "noperm.txt"}, tmp_ctx)
