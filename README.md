@@ -265,15 +265,13 @@ ARNES aligns explicitly with the [12 factors](https://github.com/humanlayer/12-f
 
 ## Installation
 
-ARNES is not yet on PyPI. Install from source with `uv` (recommended) or `pip`:
+```bash
+pip install arnes
+```
+
+Or install from source for development:
 
 ```bash
-# With uv (recommended)
-git clone https://github.com/frangelbarrera/ARNES.git
-cd ARNES
-uv sync --all-extras --dev
-
-# With pip (editable)
 git clone https://github.com/frangelbarrera/ARNES.git
 cd ARNES
 pip install -e ".[dev]"
@@ -282,7 +280,7 @@ pip install -e ".[dev]"
 ## Quickstart (60 seconds)
 
 ```bash
-# 1. Clone and install (see Installation above)
+# 1. Install (see Installation above)
 
 # 2. Create your first manual
 arnes init --manual hello-world
