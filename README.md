@@ -24,7 +24,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/frangelbarrera/ARNES/actions/workflows/ci.yml/badge.svg)](https://github.com/frangelbarrera/ARNES/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/badge/PyPI-not%20yet%20published-lightgrey.svg)](https://pypi.org/project/arnes/)
+[![PyPI](https://img.shields.io/pypi/v/arnes?color=blue)](https://pypi.org/project/arnes/)
 
 [Manifesto](MANIFESTO.md) · [Documentation](https://github.com/frangelbarrera/ARNES#readme) · [Examples](examples/) · [Contributing](CONTRIBUTING.md)
 
