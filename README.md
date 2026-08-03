@@ -30,9 +30,19 @@
 
 </div>
 
+<p align="center">
+  <img src="docs/arnes-demo.gif" alt="ARNES demo" width="700" />
+</p>
+
 ---
 
 > **If your framework needs a debugger for your debugger, it is the wrong framework.**
+
+## Quick install
+
+```bash
+pip install arnes
+```
 
 ## Why ARNES?
 
@@ -490,11 +500,9 @@ reproduce your agent's behaviour step-by-step.
 
 ## Roadmap
 
-- **v0.1.0 (Q1 2026)** — MVP: 12 specialists, 13 domain templates (Playbook Library + TaskRouter), playbook DSL, MCP server (stdio), Token Optimizer, Verification Layer, Cost Guard, Docker sandbox auto-detect, parallel branches, actor-critic review loops, OpenRouter + 14 vendor support.
-- **v0.2.0** — Bidirectional MCP client, HITL as tool, AG-UI streaming, retry execution, full HTTP/SSE MCP transport.
-- **v0.3.0** — Episodic memory, context compaction, confidence gate, few-shot pruning.
-- **v0.4.0** — Multi-agent Crew, PolicyEngine, gVisor sandbox.
-- **v1.0.0** — A2A with trust, auto-learning skills, playbook marketplace.
+**v0.1 (now)** — 12 specialists, 13 domain templates, playbook DSL, MCP server, Cost Guard, review loops, 14 LLM vendors, 470+ tests.
+
+**Next** — Retry execution, HITL resume, HTTP/SSE transport, context compaction, multi-agent crews.
 
 ---
 
