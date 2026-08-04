@@ -647,13 +647,15 @@ class TestRateLimiter:
 
     def test_window_slides_after_expiry(self) -> None:
         """After the window expires, requests from the same IP are allowed again."""
-        limiter = _RateLimiter(max_requests=1, window_s=0.05)
+        # Use a tiny window with a generous sleep to avoid flakiness on
+        # Windows where time.sleep() resolution is ~15ms.
+        limiter = _RateLimiter(max_requests=1, window_s=0.01)
         assert limiter.allow("3.3.3.3") is True
         assert limiter.allow("3.3.3.3") is False
-        # Wait past the window.
+        # Wait well past the window.
         import time
 
-        time.sleep(0.06)
+        time.sleep(0.15)
         assert limiter.allow("3.3.3.3") is True
 
     def test_unknown_ip_is_allowed(self) -> None:
