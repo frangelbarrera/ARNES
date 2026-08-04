@@ -1,8 +1,8 @@
-# CLAUDE.md — Specific guidance for Claude Code / Claude Desktop contributing to ARNES
+# CLAUDE.md — Specific guidance for Claude Code / Claude Desktop contributing to Agentic Harness
 
 This file extends `AGENTS.md` with Claude-specific notes.
 
-## When You're Editing ARNES Code
+## When You're Editing Agentic Harness Code
 
 - Always read `MANIFESTO.md` first. Every PR must respect the 10 declarations.
 - Use `arnes` idioms, not `langchain` idioms. No `Runnable`, `Chain`, `Agent` classes.

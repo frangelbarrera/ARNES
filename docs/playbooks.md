@@ -1,7 +1,7 @@
 # Playbooks
 
 A playbook is a YAML file that names the specialists you want and the
-order they should run in. ARNES compiles it into a DAG and executes it.
+order they should run in. Agentic Harness compiles it into a DAG and executes it.
 
 ## Minimal example
 
@@ -14,7 +14,7 @@ steps:
   - id: plan
     specialist: "@planner"
     input:
-      task: "Plan a blog post about ARNES."
+      task: "Plan a blog post about Agentic Harness."
 
   - id: write
     specialist: "@coder"

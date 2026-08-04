@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-ARNES follows semantic versioning. Only the latest minor version receives
+Agentic Harness follows semantic versioning. Only the latest minor version receives
 security updates.
 
 | Version | Security Support |
@@ -14,13 +14,13 @@ security updates.
 
 **DO NOT open a public GitHub issue to report security vulnerabilities.**
 
-ARNES uses
-[GitHub Security Advisories](https://github.com/frangelbarrera/ARNES/security/advisories/new)
+Agentic Harness uses
+[GitHub Security Advisories](https://github.com/frangelbarrera/agentic-harness/security/advisories/new)
 to receive private vulnerability reports.
 
 ### Process
 
-1. **Report** via [private GitHub Security Advisory](https://github.com/frangelbarrera/ARNES/security/advisories/new)
+1. **Report** via [private GitHub Security Advisory](https://github.com/frangelbarrera/agentic-harness/security/advisories/new)
    or email `frangelbarrera@users.noreply.github.com`.
 2. **Acknowledge**: we respond within 72 hours confirming receipt.
 3. **Investigation**: we will keep you informed of progress every 7 days.
@@ -32,7 +32,7 @@ to receive private vulnerability reports.
 
 ## Security Scope
 
-ARNES executes code (via `shell`, `fs_write` tools) and calls external APIs.
+Agentic Harness executes code (via `shell`, `fs_write` tools) and calls external APIs.
 Any issue that allows:
 
 - Arbitrary code execution outside the sandbox
@@ -120,7 +120,7 @@ The `shell` tool:
 
 ### Cost Guard
 
-Each run has a declared USD budget. ARNES enforces it at three thresholds:
+Each run has a declared USD budget. Agentic Harness enforces it at three thresholds:
 
 - **75%** (`warn_at_pct`): emits a `CostThresholdEvent(level="warn")` and
   logs a warning. Execution continues.

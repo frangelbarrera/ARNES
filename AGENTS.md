@@ -1,10 +1,10 @@
-# AGENTS.md — System prompt for AI coding agents contributing to ARNES
+# AGENTS.md — System prompt for AI coding agents contributing to Agentic Harness
 
-You are contributing to **ARNES**, an open-source agent harness for Python.
+You are contributing to **Agentic Harness**, an open-source agent harness for Python.
 
 ## Project Context
 
-ARNES is NOT a framework. It is a **harness** — the control layer that lets
+Agentic Harness is NOT a framework. It is a **harness** — the control layer that lets
 developers orchestrate AI agents without surrendering their prompts, context,
 model choice, or budget. Read `MANIFESTO.md` for the full philosophy.
 
@@ -23,7 +23,7 @@ model choice, or budget. Read `MANIFESTO.md` for the full philosophy.
    only in Anthropic, it is a leak, not a feature.
 2. **No classes named `Runnable`, `Chain`, `Workflow`, or `Agent`.** Composition = functions.
 3. **Token counter is on by default.** If you don't know what you spent, you didn't ship.
-4. **No hosted version. Ever.** If you add code that requires ARNES Cloud, you're breaking the manifesto.
+4. **No hosted version. Ever.** If you add code that requires Agentic Harness Cloud, you're breaking the manifesto.
 5. **No hidden prompts.** Every prompt sent to an LLM is a file on disk.
 6. **No magic.** If a line does something you can't explain, it's a bug.
 7. **No API keys in code.** Read from env. Never log. Never store.

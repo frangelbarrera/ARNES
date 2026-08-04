@@ -11,14 +11,14 @@
 # without restructuring the navigation. v0.2 will add API reference pages
 # generated from docstrings via `mkdocstrings`.
 
-site_name: ARNES — The Open Agent Harness
+site_name: Agentic Harness — The Open Agent Harness
 site_description: >-
   Write the manual. ARNES compiles it into a team of specialists.
   Local-first, vendor-neutral, budget-guarded agent harness.
 site_author: Frangel Barrera
-site_url: https://github.com/frangelbarrera/ARNES
-repo_url: https://github.com/frangelbarrera/ARNES
-repo_name: frangelbarrera/ARNES
+site_url: https://github.com/frangelbarrera/agentic-harness
+repo_url: https://github.com/frangelbarrera/agentic-harness
+repo_name: frangelbarrera/agentic-harness
 edit_uri: edit/main/docs/
 
 # Theme: MkDocs Material — modern, responsive, dark-mode default.
@@ -94,7 +94,7 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/frangelbarrera/ARNES
+      link: https://github.com/frangelbarrera/agentic-harness
   generator: false
 
 # Strict mode — warns on broken links so the docs site can't silently

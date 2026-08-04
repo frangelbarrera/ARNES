@@ -1,6 +1,6 @@
-# Contributing to ARNES
+# Contributing to Agentic Harness
 
-Thank you for considering contributing to ARNES! This document guides you through the process.
+Thank you for considering contributing to Agentic Harness! This document guides you through the process.
 
 ## Code of Conduct
 
@@ -10,8 +10,8 @@ By participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md
 
 ```bash
 # 1. Fork + clone
-git clone https://github.com/YOUR-USERNAME/ARNES.git
-cd ARNES
+git clone https://github.com/YOUR-USERNAME/agentic-harness.git
+cd agentic-harness
 
 # 2. Install uv (package manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -110,7 +110,7 @@ uv run pytest -m slow
 
 ### Snapshot Tests with VCRpy
 
-ARNES uses [vcrpy](https://github.com/kevin1024/vcrpy) to record LLM responses
+Agentic Harness uses [vcrpy](https://github.com/kevin1024/vcrpy) to record LLM responses
 and replay them in tests. This enables reproducible tests without spending tokens.
 
 ```python
@@ -204,9 +204,9 @@ inkscape docs/social-card.svg --export-type=png \
 
 ## Reporting Bugs
 
-Open an [issue](https://github.com/frangelbarrera/ARNES/issues/new?template=bug_report.md) with:
+Open an [issue](https://github.com/frangelbarrera/agentic-harness/issues/new?template=bug_report.md) with:
 
-1. **ARNES version**: `arnes --version`
+1. **Agentic Harness version**: `arnes --version`
 2. **Python version**: `python --version`
 3. **OS**: Linux/macOS/Windows + version
 4. **Minimal reproduction**: minimal code that reproduces the bug
@@ -217,7 +217,7 @@ Open an [issue](https://github.com/frangelbarrera/ARNES/issues/new?template=bug_
 
 **DO NOT open a public issue for security vulnerabilities.**
 
-Open a private [GitHub Security Advisory](https://github.com/frangelbarrera/ARNES/security/advisories/new)
+Open a private [GitHub Security Advisory](https://github.com/frangelbarrera/agentic-harness/security/advisories/new)
 or email `frangelbarrera@users.noreply.github.com` with:
 - Description of the problem
 - Steps to reproduce
@@ -225,7 +225,7 @@ or email `frangelbarrera@users.noreply.github.com` with:
 - PoC if you have one
 
 We respond within 72h. If the vulnerability is valid, we publish an advisory on
-[GitHub Security Advisories](https://github.com/frangelbarrera/ARNES/security/advisories)
+[GitHub Security Advisories](https://github.com/frangelbarrera/agentic-harness/security/advisories)
 and give you credit (unless you prefer to remain anonymous).
 
 ## License

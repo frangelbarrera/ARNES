@@ -2,7 +2,7 @@
 
 ## Built-in Benchmark Suite
 
-ARNES includes a benchmark runner that measures playbook performance with
+Agentic Harness includes a benchmark runner that measures playbook performance with
 statistical rigor.
 
 ### Quick Start
@@ -44,7 +44,7 @@ This tests:
 
 ## Standard Benchmark Suites (Roadmap)
 
-ARNES does not yet integrate with standard evaluation suites. Planned for v0.2:
+Agentic Harness does not yet integrate with standard evaluation suites. Planned for v0.2:
 
 | Suite | What it tests | Status |
 |---|---|---|
@@ -70,14 +70,14 @@ ARNES does not yet integrate with standard evaluation suites. Planned for v0.2:
 
 ## Reproducibility Guidelines
 
-For research papers using ARNES:
+For research papers using Agentic Harness:
 
 1. **Fix the seed**: `arnes benchmark --seeds 42`
-2. **Record the environment**: Python version, OS, ARNES version
+2. **Record the environment**: Python version, OS, Agentic Harness version
 3. **Use vcrpy cassettes**: For real-LLM experiments, record and commit cassettes
 4. **Share the run log**: The markdown audit trail is your reproducibility artifact
-5. **Cite ARNES**: Use the
-   [CITATION.cff](https://github.com/frangelbarrera/ARNES/blob/main/CITATION.cff)
+5. **Cite Agentic Harness**: Use the
+   [CITATION.cff](https://github.com/frangelbarrera/agentic-harness/blob/main/CITATION.cff)
    file
 
 ### Example Citation
@@ -85,10 +85,10 @@ For research papers using ARNES:
 ```bibtex
 @software{arnes,
   author = {Barrera, Frangel},
-  title = {ARNES — The Open Agent Harness},
+  title = {Agentic Harness — The Open Agent Harness},
   version = {0.1.0a1},
   year = {2026},
-  url = {https://github.com/frangelbarrera/ARNES},
+  url = {https://github.com/frangelbarrera/agentic-harness},
   license = {Apache-2.0}
 }
 ```

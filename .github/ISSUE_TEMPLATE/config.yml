@@ -3,15 +3,15 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💬 Discussions (questions, ideas, chat)
-    url: https://github.com/frangelbarrera/ARNES/discussions
+    url: https://github.com/frangelbarrera/agentic-harness/discussions
     about: |
       Ask questions, share ideas, or start an open-ended conversation.
       Use Discussions instead of Issues when there is nothing to "fix".
   - name: 🔒 Security report (private)
-    url: https://github.com/frangelbarrera/ARNES/security/advisories/new
+    url: https://github.com/frangelbarrera/agentic-harness/security/advisories/new
     about: |
       Report a security vulnerability privately. Do NOT open a public issue
       for security problems. See SECURITY.md for our disclosure policy.
   - name: 📖 Documentation
-    url: https://github.com/frangelbarrera/ARNES#readme
+    url: https://github.com/frangelbarrera/agentic-harness#readme
     about: Read the README, CONTRIBUTING.md, and ARCHITECTURE docs before filing.

@@ -1,12 +1,12 @@
-# Statistical significance testing for ARNES benchmarks
+# Statistical significance testing for Agentic Harness benchmarks
 
-ARNES's built-in benchmark harness reports per-playbook success rate,
+Agentic Harness built-in benchmark harness reports per-playbook success rate,
 avg / p95 duration, tokens, and cost. These are **descriptive
 statistics** — they tell you what happened in the runs you executed.
 They do **not** tell you whether a difference between two runs is
 real or noise.
 
-This doc is the methodology ARNES recommends for going from
+This doc is the methodology Agentic Harness recommends for going from
 descriptive statistics to **inferential statistics**: confidence
 intervals, significance tests, effect sizes, and power analysis.
 The `arnes benchmark --stats` flag that automates this lands in
@@ -228,6 +228,6 @@ For the specific case of LLM benchmarking, see also:
 - **Chen et al. (2021).** *Evaluating Large Language Models Trained
   on Code (HumanEval).* — the canonical `pass@k` paper.
 
-If you use ARNES in published research and follow this methodology,
-cite ARNES via `CITATION.cff` (repo root) and include the
+If you use Agentic Harness in published research and follow this methodology,
+cite Agentic Harness via `CITATION.cff` (repo root) and include the
 `benchmark-stats.json` (once v0.2 ships) as supplementary material.

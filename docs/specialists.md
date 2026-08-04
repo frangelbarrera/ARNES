@@ -1,6 +1,6 @@
 # Specialists
 
-ARNES ships 12 built-in specialists. Each is a
+Agentic Harness ships 12 built-in specialists. Each is a
 `(system_prompt + tools + output_schema)` bundle that runs a ReAct-style
 tool-use loop with pydantic-validated structured output.
 
@@ -62,7 +62,7 @@ class CoderOutput(BaseModel):
 loop**: if the provider streams `tool_calls`,
 the specialist executes the tools and starts another streaming iteration.
 
-See [`examples/05_streaming.py`](https://github.com/frangelbarrera/ARNES/blob/main/examples/05_streaming.py)
+See [`examples/05_streaming.py`](https://github.com/frangelbarrera/agentic-harness/blob/main/examples/05_streaming.py)
 for a runnable example.
 
 ## Using specialists as critics

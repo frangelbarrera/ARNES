@@ -1,6 +1,6 @@
 # MCP Server
 
-ARNES exposes itself as an MCP (Model Context Protocol) server so you can
+Agentic Harness exposes itself as an MCP (Model Context Protocol) server so you can
 use it from Claude Desktop, Cursor, Cline, Zed, or any MCP-compatible
 client.
 

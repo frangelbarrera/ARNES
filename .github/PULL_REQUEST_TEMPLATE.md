@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to ARNES! Please fill out the sections below. -->
+<!-- Thanks for contributing to Agentic Harness! Please fill out the sections below. -->
 
 ## Summary
 

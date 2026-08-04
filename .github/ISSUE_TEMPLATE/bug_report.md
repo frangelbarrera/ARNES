@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report something that is broken or behaves unexpectedly in ARNES
+about: Report something that is broken or behaves unexpectedly in Agentic Harness
 title: "[bug] "
 labels: ["bug", "triage"]
 assignees: []
@@ -11,7 +11,7 @@ assignees: []
 Thank you for taking the time to file a bug report! Please fill out the
 sections below so we can reproduce and fix it as fast as possible.
 
-## ARNES version
+## Agentic Harness version
 
 Run `arnes --version` and paste the output here.
 
@@ -96,6 +96,6 @@ sharing.**
 
 **Checklist before submitting:**
 
-- [ ] I have searched [existing issues](https://github.com/frangelbarrera/ARNES/issues) for duplicates.
+- [ ] I have searched [existing issues](https://github.com/frangelbarrera/agentic-harness/issues) for duplicates.
 - [ ] I have redacted secrets / PII from logs.
 - [ ] I can reproduce this on the latest `main` branch.

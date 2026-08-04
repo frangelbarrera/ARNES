@@ -3,7 +3,7 @@
 ## Our Commitment
 
 In the interest of fostering an open and welcoming environment, we as
-contributors and maintainers pledge to make participation in ARNES and our
+contributors and maintainers pledge to make participation in Agentic Harness and our
 community a harassment-free experience for everyone, regardless of age, body
 size, disability, ethnicity, gender identity and expression, level of
 experience, education, socio-economic status, nationality, personal
@@ -32,7 +32,7 @@ Examples of unacceptable behavior:
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported by opening a private discussion with the maintainers via
-[GitHub Discussions](https://github.com/frangelbarrera/ARNES/discussions)
+[GitHub Discussions](https://github.com/frangelbarrera/agentic-harness/discussions)
 or by emailing `frangelbarrera@users.noreply.github.com`. All complaints
 will be reviewed and investigated and will result in a response that is
 deemed necessary and appropriate to the circumstances. The maintainers are
@@ -41,8 +41,8 @@ incident.
 
 ## Scope
 
-This Code of Conduct applies in all ARNES community spaces, including GitHub,
-social media when discussing ARNES, and any official events.
+This Code of Conduct applies in all Agentic Harness community spaces, including GitHub,
+social media when discussing Agentic Harness, and any official events.
 
 ## Attribution
 

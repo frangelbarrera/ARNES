@@ -3,9 +3,9 @@ requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [project]
-name = "arnes"
+name = "agentic-harness"
 version = "0.1.0a1"
-description = "ARNES — The Open Agent Harness. Write the manual, ARNES compiles it into a team of specialists."
+description = "Agentic Harness — The Open Agent Harness. Write the manual, it compiles it into a team of specialists."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -26,7 +26,7 @@ keywords = [
     "a2a",
     "human-in-the-loop",
     "stateless-reducer",
-    "arnes",
+    "agentic-harness",
     "agent-runtime",
     "agentic-ai",
     "self-hosted",
@@ -80,14 +80,15 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/frangelbarrera/ARNES"
-Documentation = "https://github.com/frangelbarrera/ARNES#readme"
-Repository = "https://github.com/frangelbarrera/ARNES"
-Issues = "https://github.com/frangelbarrera/ARNES/issues"
-Changelog = "https://github.com/frangelbarrera/ARNES/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/frangelbarrera/agentic-harness"
+Documentation = "https://github.com/frangelbarrera/agentic-harness#readme"
+Repository = "https://github.com/frangelbarrera/agentic-harness"
+Issues = "https://github.com/frangelbarrera/agentic-harness/issues"
+Changelog = "https://github.com/frangelbarrera/agentic-harness/blob/main/CHANGELOG.md"
 
 [project.scripts]
-arnes = "arnes.cli.main:cli"
+agentic-harness = "arnes.cli.main:cli"
+arnes = "arnes.cli.main:cli"  # backwards-compat alias
 
 [tool.hatch.build.targets.wheel]
 packages = ["arnes"]
@@ -206,7 +207,7 @@ markers = [
 filterwarnings = [
     # We do not promote third-party deprecation/resource warnings to errors:
     # they are noisy and vary across OS / Python / dependency versions, which
-    # makes CI flaky on macOS and Windows for reasons unrelated to ARNES itself.
+    # makes CI flaky on macOS and Windows for reasons unrelated to Agentic Harness itself.
     # Real bugs surface via ruff, mypy --strict, bandit and explicit assertions.
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",

@@ -1,6 +1,6 @@
 # Benchmarking
 
-ARNES ships a benchmark harness for measuring playbook success rate,
+Agentic Harness ships a benchmark harness for measuring playbook success rate,
 duration, tokens, and cost across multiple seeds and concurrent runs.
 
 ## Quick run
@@ -63,11 +63,11 @@ Overall: success=100%, avg_dur=0.0134s, avg_tokens=170, avg_cost=$0.000000
 
 ## vcrpy cassettes
 
-ARNES uses [vcrpy](https://vcrpy.readthedocs.io/) to record real LLM HTTP
+Agentic Harness uses [vcrpy](https://vcrpy.readthedocs.io/) to record real LLM HTTP
 traffic once, then replay it on every test run — no API spend, fully
 deterministic.
 
-ARNES ships 3 cassettes under `tests/snapshot/cassettes/`:
+Agentic Harness ships 3 cassettes under `tests/snapshot/cassettes/`:
 
 | Cassette                    | Specialist | Provider         |
 |-----------------------------|------------|------------------|

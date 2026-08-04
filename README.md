@@ -3,35 +3,35 @@
   GitHub Settings → Social preview. The Open Graph / Twitter tags below
   are picked up by some third-party renderers that parse the raw README.
 -->
-<meta property="og:title" content="ARNES — The Open Agent Harness" />
-<meta property="og:description" content="Write the manual. ARNES compiles it into a team of specialists that follows it to the letter." />
-<meta property="og:url" content="https://github.com/frangelbarrera/ARNES" />
+<meta property="og:title" content="Agentic Harness — The Open Agent Harness" />
+<meta property="og:description" content="Write the manual. Agentic Harness compiles it into a team of specialists that follows it to the letter." />
+<meta property="og:url" content="https://github.com/frangelbarrera/agentic-harness" />
 <meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="ARNES — The Open Agent Harness" />
-<meta name="twitter:description" content="Write the manual. ARNES compiles it into a team of specialists that follows it to the letter." />
+<meta name="twitter:title" content="Agentic Harness — The Open Agent Harness" />
+<meta name="twitter:description" content="Write the manual. Agentic Harness compiles it into a team of specialists that follows it to the letter." />
 
 <div align="center">
 
-<img src="docs/logo-ARNES.png" alt="ARNES logo" width="200" />
+<img src="docs/logo-agentic-harness.png" alt="Agentic Harness logo" width="200" />
 
-# ARNES
+# Agentic Harness
 
 ### The Open Agent Harness
 
-**Write the manual. ARNES compiles it into a team of specialists that follows it to the letter.**
+**Write the manual. Agentic Harness compiles it into a team of specialists that follows it to the letter.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![CI](https://github.com/frangelbarrera/ARNES/actions/workflows/ci.yml/badge.svg)](https://github.com/frangelbarrera/ARNES/actions/workflows/ci.yml)
+[![CI](https://github.com/frangelbarrera/agentic-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/frangelbarrera/agentic-harness/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/arnes?color=blue)](https://pypi.org/project/arnes/)
 
-[Manifesto](MANIFESTO.md) · [Documentation](https://github.com/frangelbarrera/ARNES#readme) · [Examples](examples/) · [Contributing](CONTRIBUTING.md)
+[Manifesto](MANIFESTO.md) · [Documentation](https://github.com/frangelbarrera/agentic-harness#readme) · [Examples](examples/) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
 <p align="center">
-  <img src="docs/arnes-demo.gif" alt="ARNES demo" width="700" />
+  <img src="docs/agentic-harness-demo.gif" alt="Agentic Harness demo" width="700" />
 </p>
 
 ---
@@ -41,18 +41,18 @@
 ## Quick install
 
 ```bash
-pip install arnes
+pip install agentic-harness
 ```
 
-## Why ARNES?
+## Why Agentic Harness?
 
-Most agent frameworks are black boxes: you can't see the prompts, can't control the costs, and can't audit what happened. ARNES fixes this with three principles:
+Most agent frameworks are black boxes: you can't see the prompts, can't control the costs, and can't audit what happened. Agentic Harness fixes this with three principles:
 
 1. **Transparency** — Every prompt, decision, and cost is logged to a markdown audit log you can `git diff`.
 2. **Cost control** — Hierarchical budget enforcement with circuit breaker. An agent can't burn your API budget silently.
 3. **Vendor neutrality** — Default model is local (Ollama, $0). Switching providers is one line. No vendor lock-in.
 
-## Who is ARNES for?
+## Who is Agentic Harness for?
 
 - **Backend engineers** who need production agents with budgets, audit trails, and compliance
 - **ML engineers** who need reproducible benchmarks across providers
@@ -129,15 +129,15 @@ You run it (mock LLM, no network, $0 cost):
 $ arnes run manuals/hello-world.yaml --mock
 ```
 
-ARNES compiles the manual into a DAG, wakes the specialists in sequence,
+Agentic Harness compiles the manual into a DAG, wakes the specialists in sequence,
 applies token optimization and verification layer on every LLM call, and
 returns:
 
 ```
 ╭────────────────────────────────────────────────────────────────────╮
-│ ARNES — Executing playbook                                         │
+│ Agentic Harness — Executing playbook                                         │
 │   Name: hello-world                                                │
-│   Objective: Demonstrate the basic ARNES flow with a simple manual │
+│   Objective: Demonstrate the basic Agentic Harness flow with a simple manual │
 │   Model: ollama/llama3.2                                           │
 │   Budget: $0.50                                                    │
 ╰────────────────────────────────────────────────────────────────────╯
@@ -161,7 +161,7 @@ The run log is a markdown file with every step, every decision, every prompt
 sent, every response received. You can diff it, version it, share it:
 
 ````markdown
-# Audit log ARNES — Thread 0b6ac82e-2600-42f5-a6ca-62e016df7961
+# Audit log Agentic Harness — Thread 0b6ac82e-2600-42f5-a6ca-62e016df7961
 
 **Total events:** 7
 
@@ -208,8 +208,8 @@ Want to see the whole flow end-to-end? Run the narrated demo script:
 | | Retry with backoff | 🚧 v0.2 (schema defined, execution pending) |
 | | HITL gates (pause and request approval) | ⚠️ v0.1 (auto-reject in non-interactive) |
 | | Actor-critic review loop (`--loops`, `step.review`) | ✅ v0.1 |
-| **MCP** | ARNES as MCP server (Claude Desktop, Cursor, Cline, Zed) | ✅ v0.1 |
-| | ARNES as MCP client (consume external MCP servers) | 🚧 v0.2 |
+| **MCP** | Agentic Harness as MCP server (Claude Desktop, Cursor, Cline, Zed) | ✅ v0.1 |
+| | Agentic Harness as MCP client (consume external MCP servers) | 🚧 v0.2 |
 | | HTTP/SSE transport | 🚧 v0.2 (stdio only in v0.1) |
 | **Token Optimization** | Automatic model routing by complexity | ✅ v0.1 |
 | | Semantic cache | ✅ v0.1 |
@@ -236,9 +236,9 @@ Want to see the whole flow end-to-end? Run the narrated demo script:
 
 ---
 
-## ARNES vs the rest
+## Agentic Harness vs the rest
 
-| Dimension | LangChain | CrewAI | OpenAI Agents SDK | **ARNES** |
+| Dimension | LangChain | CrewAI | OpenAI Agents SDK | **Agentic Harness** |
 |---|---|---|---|---|
 | How you define agents | Python procedural | `Agent/Crew/Task` classes | `@agent` decorator | **Declarative YAML** |
 | Distribution | pip library | pip library | pip library (OpenAI-only) | **MCP server + library** |
@@ -254,9 +254,9 @@ Want to see the whole flow end-to-end? Run the narrated demo script:
 
 ## Alignment with the 12-factor-agents manifesto
 
-ARNES aligns explicitly with the [12 factors](https://github.com/humanlayer/12-factor-agents):
+Agentic Harness aligns explicitly with the [12 factors](https://github.com/humanlayer/12-factor-agents):
 
-| Factor | Description | ARNES |
+| Factor | Description | Agentic Harness |
 |---|---|---|
 | 1 | Natural language > structured language | ✅ Declarative YAML |
 | 2 | Tools are structured outputs | ✅ Pydantic schemas |
@@ -276,14 +276,14 @@ ARNES aligns explicitly with the [12 factors](https://github.com/humanlayer/12-f
 ## Installation
 
 ```bash
-pip install arnes
+pip install agentic-harness
 ```
 
 Or install from source for development:
 
 ```bash
-git clone https://github.com/frangelbarrera/ARNES.git
-cd ARNES
+git clone https://github.com/frangelbarrera/agentic-harness.git
+cd agentic-harness
 pip install -e ".[dev]"
 ```
 
@@ -299,7 +299,7 @@ arnes init --manual hello-world
 arnes run manuals/hello-world.yaml --mock
 
 # 4. Stream a specialist's response token-by-token
-arnes stream @planner --task "Plan a blog post about ARNES" --mock
+arnes stream @planner --task "Plan a blog post about Agentic Harness" --mock
 
 # 5. Run it with Ollama local (free, requires `ollama pull llama3.2`)
 arnes run manuals/hello-world.yaml
@@ -311,8 +311,8 @@ arnes run manuals/hello-world.yaml --mock --stream
 arnes benchmark --seeds 5 --concurrent 4
 ```
 
-If you do not have Ollama installed, ARNES detects it and guides you. To use
-Anthropic/OpenAI, set the env var and ARNES does the rest:
+If you do not have Ollama installed, Agentic Harness detects it and guides you. To use
+Anthropic/OpenAI, set the env var and Agentic Harness does the rest:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -329,7 +329,7 @@ arnes run manuals/audit-pr.yaml --model anthropic/claude-sonnet-4-20250514
 └────────────────────────┬─────────────────────────────────────┘
                          ▼
 ┌──────────────────────────────────────────────────────────────┐
-│   ARNES MCP SERVER (1 install, 4 tools)                       │
+│   AGENTIC HARNESS MCP SERVER (1 install, 4 tools)                       │
 │   run · list · events · resume                                │
 └────────────────────────┬─────────────────────────────────────┘
                          ▼
@@ -363,7 +363,7 @@ arnes run manuals/audit-pr.yaml --model anthropic/claude-sonnet-4-20250514
 
 ## Benchmark
 
-ARNES ships a built-in benchmark runner that executes every playbook in
+Agentic Harness ships a built-in benchmark runner that executes every playbook in
 `manuals/` against a deterministic seeded mock LLM (no network, $0 spend)
 and reports per-playbook success rate, avg/p95 duration, tokens, and cost.
 Multi-seed runs give you statistical significance; concurrent runs let
@@ -442,7 +442,7 @@ token usage, or cost shows up in `git diff`.
 
 ## Reproducibility
 
-ARNES is built so that the *same* inputs produce the *same* outputs,
+Agentic Harness is built so that the *same* inputs produce the *same* outputs,
 byte-for-byte, on every run. This is a hard requirement for both
 production audit and scientific reproducibility.
 
@@ -474,8 +474,8 @@ production audit and scientific reproducibility.
 
 - **Real-LLM runs.** OpenAI / Anthropic / Ollama models are
   non-deterministic by design (temperature > 0, model-side sampling).
-  ARNES cannot make a non-deterministic model deterministic. What
-  ARNES *can* do is record every real-LLM call into the audit log
+  Agentic Harness cannot make a non-deterministic model deterministic. What
+  Agentic Harness *can* do is record every real-LLM call into the audit log
   so a non-deterministic run is at least *auditable* after the fact.
 - **Real-time wall-clock durations.** Durations depend on machine
   load, network latency, and OS scheduling. The benchmark harness
@@ -490,7 +490,7 @@ production audit and scientific reproducibility.
 
 **Citation**
 
-If you use ARNES in published research, cite the version you used
+If you use Agentic Harness in published research, cite the version you used
 (see [CITATION.cff](CITATION.cff)) and include the run log +
 `benchmark-results.json` from your experimental runs as supplementary
 material. The run log is the auditable artifact that lets a reviewer
@@ -508,8 +508,8 @@ reproduce your agent's behaviour step-by-step.
 
 ## Community
 
-- **Discussions:** [GitHub Discussions](https://github.com/frangelbarrera/ARNES/discussions)
-- **Issues:** [Bug reports and feature requests](https://github.com/frangelbarrera/ARNES/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/frangelbarrera/agentic-harness/discussions)
+- **Issues:** [Bug reports and feature requests](https://github.com/frangelbarrera/agentic-harness/issues)
 - **Contributing:** read [CONTRIBUTING.md](CONTRIBUTING.md) — we accept PRs from day one.
 
 ---
@@ -536,11 +536,11 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Citation
 
-If you use ARNES in academic research, please cite it. See [CITATION.cff](CITATION.cff) for the preferred citation format.
+If you use Agentic Harness in academic research, please cite it. See [CITATION.cff](CITATION.cff) for the preferred citation format.
 
 ## Acknowledgments
 
-ARNES stands on the shoulders of:
+Agentic Harness stands on the shoulders of:
 - [LangGraph](https://github.com/langchain-ai/langgraph) — DAG engine inspiration
 - [LiteLLM](https://github.com/BerriAI/litellm) — provider abstraction
 - [MCP SDK](https://github.com/modelcontextprotocol/python-sdk) — protocol
@@ -551,7 +551,7 @@ ARNES stands on the shoulders of:
 
 <div align="center">
 
-**[⭐ Star the repo](https://github.com/frangelbarrera/ARNES)** if this resonates.
+**[⭐ Star the repo](https://github.com/frangelbarrera/agentic-harness)** if this resonates.
 
 </div>
 

@@ -49,7 +49,7 @@ from arnes.specialists.base import get_default_specialist_registry
 @click.group()
 @click.version_option(__version__, prog_name="arnes")
 def cli() -> None:
-    """ARNES — The Open Agent Harness. Write the manual, ARNES runs it."""
+    """Agentic Harness — The Open Agent Harness. Write the manual, ARNES runs it."""
     pass
 
 

@@ -159,7 +159,7 @@ run "${ARNES[@]}" lint manuals/audit-pr.yaml
 
 header "Done"
 echo "Next steps:"
-echo "  - Read the README:    https://github.com/frangelbarrera/ARNES#readme"
+echo "  - Read the README:    https://github.com/frangelbarrera/agentic-harness#readme"
 echo "  - Browse the manuals: ls manuals/"
 echo "  - Record a GIF:       scripts/demo.sh --record demo.tape && vhs demo.tape"
 echo

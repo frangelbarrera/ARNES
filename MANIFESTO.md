@@ -1,4 +1,4 @@
-# ARNES Manifesto
+# Agentic Harness Manifesto
 
 > *The harness, not the horse.*
 
@@ -28,7 +28,7 @@ symptoms repeat across every team we have talked to:
 
 The cost of these symptoms is real: production incidents that can't
 be reconstructed, research results that can't be peer-reviewed, and
-credit-card bills that can't be explained. ARNES exists to make the
+credit-card bills that can't be explained. Agentic Harness exists to make the
 agent loop as inspectable as a Unix pipeline — because inspectable
 agents are the only ones worth shipping.
 
@@ -40,15 +40,15 @@ deliver is debt.
 An agent should not be a black box. Your prompts, your context, your choice
 of model, your money — all of it should be visible, substitutable, and yours.
 
-ARNES is not a framework. It is a **harness**: the control layer that lets
+Agentic Harness is not a framework. It is a **harness**: the control layer that lets
 you orchestrate AI agents without surrendering the reins. Designed so you can
 read every call, switch providers in one line, and reason about your system
 the way you reason about any procedural code.
 
-## Constructive vision — the world ARNES builds
+## Constructive vision — the world Agentic Harness builds
 
 A reactive manifesto names what is wrong; a constructive one names what
-should exist. ARNES is for the world where:
+should exist. Agentic Harness is for the world where:
 
 - **Every agent run leaves a paper trail.** An audit log that compliance
   can audit, security can review, and a researcher can cite. The
@@ -72,7 +72,7 @@ should exist. ARNES is for the world where:
   from its event log. HITL resume, episodic memory, and academic
   peer-review all build on the same primitive.
 
-ARNES is for builders who refuse to cede control — engineers who want
+Agentic Harness is for builders who refuse to cede control — engineers who want
 their prompts visible, their budgets enforced, and their vendors
 replaceable. The constructive vision is not "catch up to Silicon
 Valley." It is "build the tool the next generation of developers
@@ -86,35 +86,35 @@ deserves, and give it away."
 
 ## Ten declarations we will not break
 
-1. **ARNES does not expose vendor-only features as first-class APIs.**
+1. **Agentic Harness does not expose vendor-only features as first-class APIs.**
    If it only exists in OpenAI or only in Anthropic, it is a leak, not a feature.
 
-2. **ARNES will never have a class named `Runnable`, `Chain`, `Workflow`, or `Agent`.**
+2. **Agentic Harness will never have a class named `Runnable`, `Chain`, `Workflow`, or `Agent`.**
    Composition = functions. Inheritance is debt.
 
-3. **ARNES ships with a token counter by default.**
+3. **Agentic Harness ships with a token counter by default.**
    If you don't know what you spent, you didn't ship.
 
-4. **ARNES will never have a hosted version.**
+4. **Agentic Harness will never have a hosted version.**
    The day we host, we lose the moral right to argue against lock-in.
 
-5. **ARNES does not optimize for "time to hello world."**
+5. **Agentic Harness does not optimize for "time to hello world."**
    It optimizes for "time to I understand this codebase."
 
-6. **ARNES does not hide the LLM prompt.**
+6. **Agentic Harness does not hide the LLM prompt.**
    Every prompt sent is a file on disk you can open, diff, and version.
 
-7. **ARNES has no magic.**
+7. **Agentic Harness has no magic.**
    If a line does something you can't explain, it is a bug. Report it.
 
-8. **ARNES will not support vendors that cannot do structured outputs.**
+8. **Agentic Harness will not support vendors that cannot do structured outputs.**
    If your model cannot return valid JSON, it is not a model for production.
 
-9. **ARNES will never ask for your API key.**
-   API keys live in your environment. ARNES reads them, it does not store them.
+9. **Agentic Harness will never ask for your API key.**
+   API keys live in your environment. Agentic Harness reads them, it does not store them.
 
-10. **ARNES will die before it changes the manifesto.**
-    If we ever break one of these lines, it is because ARNES stopped being ARNES.
+10. **Agentic Harness will die before it changes the manifesto.**
+    If we ever break one of these lines, it is because Agentic Harness stopped being Agentic Harness.
 
 ---
 

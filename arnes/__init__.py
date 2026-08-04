@@ -1,5 +1,5 @@
 """
-ARNES — The Open Agent Harness.
+Agentic Harness — The Open Agent Harness.
 
 Write the manual. ARNES compiles it into a team of specialists that follows it
 to the letter.

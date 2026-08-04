@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use ARNES in your research, please cite it as below."
-title: "ARNES — The Open Agent Harness"
+message: "If you use Agentic Harness in your research, please cite it as below."
+title: "Agentic Harness — The Open Agent Harness"
 authors:
   - family-names: "Barrera"
     given-names: "Frangel"
@@ -8,21 +8,21 @@ type: software
 version: "0.1.0a1"
 date-released: "2026-07-28"
 license: Apache-2.0
-repository-code: "https://github.com/frangelbarrera/ARNES"
+repository-code: "https://github.com/frangelbarrera/agentic-harness"
 keywords:
   - ai-agents
   - agent-harness
   - llm
   - mcp
   - python
-abstract: "ARNES is an open-source Python agent harness that compiles declarative YAML manuals into executable DAGs of specialist agents, with built-in cost guardrails, anti-hallucination middleware, and MCP server integration."
+abstract: "Agentic Harness is an open-source Python agent harness that compiles declarative YAML manuals into executable DAGs of specialist agents, with built-in cost guardrails, anti-hallucination middleware, and MCP server integration."
 preferred-citation:
   type: software
-  title: "ARNES — The Open Agent Harness"
+  title: "Agentic Harness — The Open Agent Harness"
   authors:
     - family-names: "Barrera"
       given-names: "Frangel"
   version: "0.1.0a1"
   date-released: "2026-07-28"
   license: Apache-2.0
-  url: "https://github.com/frangelbarrera/ARNES"
+  url: "https://github.com/frangelbarrera/agentic-harness"

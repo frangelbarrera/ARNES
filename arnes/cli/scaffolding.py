@@ -57,7 +57,7 @@ def _init_project() -> None:
 
 _MANUAL_TEMPLATE = """\
 # {name}.yaml — ARNES playbook
-# Documentation: https://github.com/frangelbarrera/ARNES#readme
+# Documentation: https://github.com/frangelbarrera/agentic-harness#readme
 
 name: {name}
 objective: Describe what this playbook does

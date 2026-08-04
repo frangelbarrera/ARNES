@@ -38,7 +38,7 @@ arnes plan "..." --template osint            # force a specific template
 ## Stream a specialist
 
 ```bash
-arnes stream @planner --task "Plan a blog post about ARNES" --mock
+arnes stream @planner --task "Plan a blog post about Agentic Harness" --mock
 ```
 
 ## List specialists / playbooks

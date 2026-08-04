@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to ARNES will be documented in this file.
+All notable changes to Agentic Harness will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `arnes/playbooks/executor.py`: removed the legacy delegating wrappers. Internal call sites now use the canonical functions from `arnes.playbooks.events` / `arnes.playbooks.template` directly. File went from 1015 → ~720 lines.
 - `arnes/specialists/base.py`: `Specialist.stream()` rewritten to participate in the ReAct loop.
 - `MANIFESTO.md`: gained a Problem Statement section + a Constructive Vision section. The 10 declarations are unchanged (immutable).
-- `README.md`: gained "Why ARNES?", "Who is ARNES for?", "Reproducibility", and "Benchmark results" sections.
+- `README.md`: gained "Why Agentic Harness?", "Who is Agentic Harness for?", "Reproducibility", and "Benchmark results" sections.
 - `Thread.append()`: O(N²) → O(1) by mutating in place (8.8x speedup at 1000 events). Documented as append-only, not immutable.
 - Sandbox auto-detection: `PlaybookExecutor` detects Docker via `shutil.which("docker")` and enables the sandbox automatically.
 - CostGuard 95% pause: now emits `HumanApprovalRequestedEvent` and `RUN_PAUSED` in interactive mode.
@@ -116,5 +116,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HITL gates auto-reject in non-interactive mode (real HITL via MCP coming in v0.2).
 - No PyPI release yet (alpha tag only).
 
-[Unreleased]: https://github.com/frangelbarrera/ARNES/compare/v0.1.0a1...HEAD
-[0.1.0a1]: https://github.com/frangelbarrera/ARNES/releases/tag/v0.1.0a1
+[Unreleased]: https://github.com/frangelbarrera/agentic-harness/compare/v0.1.0a1...HEAD
+[0.1.0a1]: https://github.com/frangelbarrera/agentic-harness/releases/tag/v0.1.0a1

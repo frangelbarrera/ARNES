@@ -1,6 +1,6 @@
 # Architecture
 
-ARNES is built on 5 layers, each with a single responsibility:
+Agentic Harness is built on 5 layers, each with a single responsibility:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -18,23 +18,23 @@ ARNES is built on 5 layers, each with a single responsibility:
 
 ## The manifesto
 
-ARNES is governed by 10 immutable declarations (see
-[`MANIFESTO.md`](https://github.com/frangelbarrera/ARNES/blob/main/MANIFESTO.md)):
+Agentic Harness is governed by 10 immutable declarations (see
+[`MANIFESTO.md`](https://github.com/frangelbarrera/agentic-harness/blob/main/MANIFESTO.md)):
 
-1. ARNES does not expose vendor-only features as first-class APIs.
-2. ARNES will never have a class named `Runnable`, `Chain`, `Workflow`, or `Agent`.
-3. ARNES ships with a token counter by default.
-4. ARNES will never have a hosted version.
-5. ARNES does not optimize for "time to hello world."
-6. ARNES does not hide the LLM prompt.
-7. ARNES has no magic.
-8. ARNES will not support vendors that cannot do structured outputs.
-9. ARNES will never ask for your API key.
-10. ARNES will die before it changes the manifesto.
+1. Agentic Harness does not expose vendor-only features as first-class APIs.
+2. Agentic Harness will never have a class named `Runnable`, `Chain`, `Workflow`, or `Agent`.
+3. Agentic Harness ships with a token counter by default.
+4. Agentic Harness will never have a hosted version.
+5. Agentic Harness does not optimize for "time to hello world."
+6. Agentic Harness does not hide the LLM prompt.
+7. Agentic Harness has no magic.
+8. Agentic Harness will not support vendors that cannot do structured outputs.
+9. Agentic Harness will never ask for your API key.
+10. Agentic Harness will die before it changes the manifesto.
 
 ## Playbook Library (knowledge layer)
 
-ARNES ships a catalogue of 13 domain-specific task templates
+Agentic Harness ships a catalogue of 13 domain-specific task templates
 (`arnes.playbooks.library`). When a user runs `arnes plan`, a
 `TaskRouter` classifies the request into a domain (mobile app, OSINT,
 financial analysis, design, ...) using keyword heuristics — no LLM call
@@ -92,7 +92,7 @@ The HTTP transport exposes:
 
 Every action (LLM call, tool call, cost threshold) is an `Event` appended
 to a `Thread`. State is derived: `(state, event) → state`. This makes
-ARNES:
+Agentic Harness:
 
 - **Reproducible** — same input + same mock LLM ⇒ same audit log.
 - **Auditable** — the audit log is the entire forensic record.
