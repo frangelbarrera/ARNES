@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-harness"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Agentic Harness — The Open Agent Harness. Write the manual, it compiles it into a team of specialists."
 readme = "README.md"
 requires-python = ">=3.11"
