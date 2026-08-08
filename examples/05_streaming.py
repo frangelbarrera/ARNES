@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from arnes import Harness, HarnessConfig
-from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
+from arnes.llm.base import LLMProvider, LLMResponse, LLMUsage
 
 
 class StreamingMockProvider(LLMProvider):
