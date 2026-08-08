@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from arnes import Harness, HarnessConfig
-from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
+from arnes.llm.base import LLMProvider, LLMResponse, LLMUsage
 
 
 class DemoMockProvider(LLMProvider):
@@ -34,6 +34,10 @@ class DemoMockProvider(LLMProvider):
             usage=LLMUsage(tokens_in=50, tokens_out=20, cost_usd=0.0, model=model),
             model=model,
         )
+
+    async def stream_complete(self, messages, *, model="mock", **kwargs):
+        response = await self.complete(messages, model=model, **kwargs)
+        yield response
 
     def list_models(self):
         return ["mock"]

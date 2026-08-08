@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from arnes.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMUsage
+from arnes.llm.base import LLMProvider, LLMResponse, LLMUsage
 from arnes.middleware.cost_guard import CostBudget
 from arnes.playbooks.compiler import PlaybookCompiler
 from arnes.playbooks.executor import PlaybookExecutor
@@ -53,6 +53,10 @@ class DemoMockProvider(LLMProvider):
             ),
             model=model,
         )
+
+    async def stream_complete(self, messages, *, model="mock", **kwargs):
+        response = await self.complete(messages, model=model, **kwargs)
+        yield response
 
     def list_models(self):
         return ["mock"]
