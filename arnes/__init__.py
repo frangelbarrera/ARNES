@@ -35,7 +35,7 @@ from arnes.specialists import (
 from arnes.thread import Event, Thread
 from arnes.tools import Tool, ToolRegistry, ToolResult
 
-__version__ = "0.1.0a1"
+__version__ = "0.1.0a3"
 __all__ = [
     "Coder",
     "CostBudget",
