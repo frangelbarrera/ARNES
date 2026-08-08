@@ -337,8 +337,24 @@ def stream(specialist: str, task: str, model: str, mock: bool) -> None:
 @click.argument("playbook_path", type=click.Path(exists=True))
 def eval(playbook_path: str) -> None:
     """Run playbook with mock LLM for testing (no network, $0 cost)."""
+    try:
+        playbook = PlaybookCompiler.from_file(playbook_path)
+    except PlaybookCompileError as e:
+        console.print(f"[red]✗ Compile error:[/red]\n{e}")
+        sys.exit(1)
+    # Use the playbook's own budget (a $0 budget would abort the first
+    # mock call: CostGuard treats spent(0) >= abort_threshold(0) as a
+    # breach even though nothing has been spent).
+    budget = playbook.metadata.budget_usd if playbook.metadata else 0.50
     asyncio.run(
-        _run_playbook(playbook_path, "mock/test", 0.0, mock=True, interactive=False, output=None)
+        _run_playbook(
+            playbook_path,
+            "mock/test",
+            budget,
+            mock=True,
+            interactive=False,
+            output=None,
+        )
     )
 
 
