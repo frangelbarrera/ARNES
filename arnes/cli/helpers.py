@@ -44,6 +44,21 @@ console = Console()
 logger = structlog.get_logger(__name__)
 
 
+def _renderable_symbol(emoji: str, fallback: str) -> str:
+    """Return ``emoji`` when the terminal encoding can render it, else ``fallback``.
+
+    Rich's legacy Windows renderer encodes through the console's code page;
+    on cp1252 terminals (the Windows default) supplementary-plane glyphs
+    such as U+2705 (✅) raise ``UnicodeEncodeError`` and crash the CLI. The
+    fallback keeps the command usable where the emoji is not representable.
+    """
+    try:
+        emoji.encode(sys.stdout.encoding or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        return fallback
+    return emoji
+
+
 # ============================================================
 # Mock LLM provider for `arnes run --mock` / `arnes eval` / `arnes stream --mock`
 # ============================================================
@@ -227,9 +242,9 @@ async def _run_playbook(
 
     # Print results
     if result.success:
-        console.print("\n[green]✅ Manual executed[/green]")
+        console.print(f"\n[green]{_renderable_symbol('✅', '[OK]')} Manual executed[/green]")
     else:
-        console.print("\n[red]❌ Execution failed[/red]")
+        console.print(f"\n[red]{_renderable_symbol('❌', '[FAIL]')} Execution failed[/red]")
         if result.error:
             console.print(f"  [red]Error:[/red] {result.error}")
 
